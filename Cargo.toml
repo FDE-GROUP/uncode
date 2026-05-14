@@ -6,6 +6,7 @@ members = [
     "crates/uncode-llm",
     "crates/uncode-session",
     "crates/uncode-tools",
+    "crates/uncode-extensions",
     "crates/uncode-agent",
     "crates/uncode-tui",
     "crates/uncode-cli",
