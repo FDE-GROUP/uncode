@@ -311,7 +311,10 @@ impl TuiEngine {
                             self.layout_locked = true;
                             self.status_text = "uncode v0.1 | 布局已锁定".into();
                         }
-                        KeyCode::Esc => break,
+                        KeyCode::Char('c') if ctrl => break,
+                        KeyCode::Esc => {
+                            let _ = self.editor.handle_key(key_event);
+                        }
                         _ => {
                             let action = self.editor.handle_key(key_event);
                             match action {
