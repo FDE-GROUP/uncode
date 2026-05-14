@@ -1,13 +1,13 @@
 //! uncode-tui — 终端四面板交互界面
-//!
-//! 基于 ratatui + crossterm 实现，订阅 AgentLoop 事件流，
-//! 实时渲染四个面板：任务清单、工具调用、思考过程、阶段总结。
 
+pub mod input;
+
+use crate::input::{InputAction, InputEditor};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 use tokio::sync::broadcast;
 use uncode_core::event::{AgentEvent, TaskStatus};
 
@@ -19,6 +19,7 @@ pub struct TuiEngine {
     current_summary: String,
     status_text: String,
     session_id: String,
+    editor: InputEditor,
 }
 
 impl TuiEngine {
@@ -31,14 +32,13 @@ impl TuiEngine {
             current_summary: String::new(),
             status_text: "uncode v0.1 | 就绪".into(),
             session_id: String::new(),
+            editor: InputEditor::new(),
         }
     }
 
     pub fn handle_event(&mut self, event: AgentEvent) {
         match event {
-            AgentEvent::SessionStart {
-                ref session_id, ..
-            } => {
+            AgentEvent::SessionStart { ref session_id, .. } => {
                 self.session_id = session_id.clone();
                 self.status_text = format!("uncode v0.1 | 会话: {} | 运行中", &session_id[..8]);
             }
@@ -56,14 +56,10 @@ impl TuiEngine {
                 };
                 self.current_task = format!("{icon} {title}");
             }
-            AgentEvent::ContentDelta {
-                ref content, ..
-            } => {
+            AgentEvent::ContentDelta { ref content, .. } => {
                 self.current_thinking.push_str(content);
             }
-            AgentEvent::ToolCallStart {
-                ref tool_name, ..
-            } => {
+            AgentEvent::ToolCallStart { ref tool_name, .. } => {
                 self.current_tools.push(format!("🔄 {tool_name}"));
             }
             AgentEvent::ToolCallEnd {
@@ -152,9 +148,7 @@ impl TuiEngine {
         self.render_summary(f, bottom[1]);
 
         // Input area
-        let input = Paragraph::new("> ")
-            .block(Block::default().borders(Borders::TOP).title("输入"));
-        f.render_widget(input, chunks[2]);
+        self.editor.render(f, chunks[2]);
     }
 
     fn render_task_list(&self, f: &mut Frame, area: ratatui::layout::Rect) {
@@ -211,9 +205,9 @@ impl TuiEngine {
         f.render_widget(content, area);
     }
 
-    pub async fn run<F>(&mut self, mut event_rx: broadcast::Receiver<AgentEvent>, on_key: F)
+    pub async fn run<F>(&mut self, mut event_rx: broadcast::Receiver<AgentEvent>, on_submit: F)
     where
-        F: Fn(KeyCode),
+        F: Fn(String),
     {
         let mut terminal = ratatui::init();
         loop {
@@ -239,9 +233,15 @@ impl TuiEngine {
                         tokio::task::yield_now().await;
                     }
                 } => {
-                    on_key(key_event);
-                    if key_event == KeyCode::Esc {
-                        break;
+                    let action = self.editor.handle_key(key_event);
+                    match action {
+                        InputAction::Submit(text) => {
+                            on_submit(text);
+                        }
+                        InputAction::Cancel => {
+                            break;
+                        }
+                        InputAction::None => {}
                     }
                 }
             }
