@@ -9,12 +9,14 @@ pub mod diff_viewer;
 pub mod highlight;
 pub mod input;
 pub mod markdown;
+pub mod selector;
 pub mod slash;
 
 use crate::code_detail::CodeDetailView;
 use crate::complete::CompletionEngine;
 use crate::diff_viewer::DiffViewer;
 use crate::input::{InputAction, InputEditor};
+use crate::selector::OverlaySelector;
 use crate::slash::SlashCommands;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::Frame;
@@ -39,6 +41,7 @@ pub struct TuiEngine {
     slash: SlashCommands,
     completion: CompletionEngine,
     diff: DiffViewer,
+    selector: OverlaySelector,
 }
 
 impl TuiEngine {
@@ -57,6 +60,7 @@ impl TuiEngine {
             slash: SlashCommands::new(),
             completion: CompletionEngine::new(slash_commands()),
             diff: DiffViewer::new(),
+            selector: OverlaySelector::new(),
         }
     }
 
@@ -126,7 +130,7 @@ impl TuiEngine {
         }
     }
 
-    pub fn render(&self, f: &mut Frame) {
+    pub fn render(&mut self, f: &mut Frame) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -155,6 +159,7 @@ impl TuiEngine {
         if self.diff.is_visible() {
             self.diff.render(f, chunks[1]);
         }
+        self.selector.render(f, f.area());
     }
 
     fn render_full_layout(&self, f: &mut Frame, area: ratatui::layout::Rect) {
@@ -277,6 +282,9 @@ impl TuiEngine {
                         KeyCode::Char('e') => self.code_detail.toggle_fullscreen(),
                         KeyCode::Char('n') => self.diff.next_file(),
                         KeyCode::Char('p') => self.diff.prev_file(),
+                        KeyCode::Char('j') if self.selector.is_visible() => self.selector.next(),
+                        KeyCode::Char('k') if self.selector.is_visible() => self.selector.prev(),
+                        KeyCode::Enter if self.selector.is_visible() => self.selector.hide(),
                         KeyCode::Char('l') if !self.layout_locked => {
                             self.layout_locked = true;
                             self.status_text = "uncode v0.1 | 布局已锁定".into();
