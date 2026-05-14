@@ -2,6 +2,7 @@ use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
 use serde::Serialize;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
 use tracing::info;
 use uncode_session::store::{SessionError, SessionStore};
 
@@ -89,6 +90,9 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions/{id}", get(get_session))
+        .fallback_service(ServeDir::new(
+            std::env::var("UNCODE_FRONTEND_DIR").unwrap_or_else(|_| "apps/platform/dist".into()),
+        ))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
