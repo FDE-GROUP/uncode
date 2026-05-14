@@ -1,13 +1,18 @@
 //! uncode-tui — 终端四面板交互界面
+//!
+//! 基于 ratatui + crossterm 实现，订阅 AgentLoop 事件流，
+//! 实时渲染四个面板：任务清单、工具调用、思考过程、阶段总结。
 
+pub mod code_detail;
 pub mod input;
 
+use crate::code_detail::CodeDetailView;
 use crate::input::{InputAction, InputEditor};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::Frame;
 use tokio::sync::broadcast;
 use uncode_core::event::{AgentEvent, TaskStatus};
 
@@ -20,6 +25,7 @@ pub struct TuiEngine {
     status_text: String,
     session_id: String,
     editor: InputEditor,
+    code_detail: CodeDetailView,
 }
 
 impl TuiEngine {
@@ -33,12 +39,15 @@ impl TuiEngine {
             status_text: "uncode v0.1 | 就绪".into(),
             session_id: String::new(),
             editor: InputEditor::new(),
+            code_detail: CodeDetailView::new(),
         }
     }
 
     pub fn handle_event(&mut self, event: AgentEvent) {
         match event {
-            AgentEvent::SessionStart { ref session_id, .. } => {
+            AgentEvent::SessionStart {
+                ref session_id, ..
+            } => {
                 self.session_id = session_id.clone();
                 self.status_text = format!("uncode v0.1 | 会话: {} | 运行中", &session_id[..8]);
             }
@@ -56,10 +65,14 @@ impl TuiEngine {
                 };
                 self.current_task = format!("{icon} {title}");
             }
-            AgentEvent::ContentDelta { ref content, .. } => {
+            AgentEvent::ContentDelta {
+                ref content, ..
+            } => {
                 self.current_thinking.push_str(content);
             }
-            AgentEvent::ToolCallStart { ref tool_name, .. } => {
+            AgentEvent::ToolCallStart {
+                ref tool_name, ..
+            } => {
                 self.current_tools.push(format!("🔄 {tool_name}"));
             }
             AgentEvent::ToolCallEnd {
@@ -106,20 +119,14 @@ impl TuiEngine {
     pub fn render(&self, f: &mut Frame) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Min(0),
-                Constraint::Length(3),
-            ])
+            .constraints([Constraint::Length(1), Constraint::Min(0), Constraint::Length(3)])
             .split(f.area());
 
-        // Status bar
         let status = Paragraph::new(self.status_text.as_str())
             .style(Style::default().fg(Color::Gray))
             .block(Block::default());
         f.render_widget(status, chunks[0]);
 
-        // Main 4-panel layout
         let main = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
@@ -135,20 +142,16 @@ impl TuiEngine {
             .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
             .split(main[1]);
 
-        // Panel 1: 任务清单
         self.render_task_list(f, top[0]);
-
-        // Panel 2: 工具调用
         self.render_tool_calls(f, top[1]);
-
-        // Panel 3: 思考过程
         self.render_thinking(f, bottom[0]);
-
-        // Panel 4: 阶段总结
         self.render_summary(f, bottom[1]);
 
-        // Input area
         self.editor.render(f, chunks[2]);
+
+        if self.code_detail.is_visible() {
+            self.code_detail.render(f, chunks[1]);
+        }
     }
 
     fn render_task_list(&self, f: &mut Frame, area: ratatui::layout::Rect) {
@@ -171,7 +174,7 @@ impl TuiEngine {
             self.current_tools.join("\n")
         };
 
-        let content = Paragraph::new(text.to_string())
+        let content = Paragraph::new(text)
             .block(Block::default().borders(Borders::ALL).title("🛠️ 工具调用"))
             .style(Style::default().fg(Color::Cyan));
         f.render_widget(content, area);
@@ -186,7 +189,7 @@ impl TuiEngine {
             lines[start..].join("\n")
         };
 
-        let content = Paragraph::new(text.to_string())
+        let content = Paragraph::new(text)
             .block(Block::default().borders(Borders::ALL).title("💭 思考过程"))
             .style(Style::default().fg(Color::Yellow));
         f.render_widget(content, area);
@@ -205,8 +208,11 @@ impl TuiEngine {
         f.render_widget(content, area);
     }
 
-    pub async fn run<F>(&mut self, mut event_rx: broadcast::Receiver<AgentEvent>, on_submit: F)
-    where
+    pub async fn run<F>(
+        &mut self,
+        mut event_rx: broadcast::Receiver<AgentEvent>,
+        on_submit: F,
+    ) where
         F: Fn(String),
     {
         let mut terminal = ratatui::init();
@@ -233,15 +239,18 @@ impl TuiEngine {
                         tokio::task::yield_now().await;
                     }
                 } => {
-                    let action = self.editor.handle_key(key_event);
-                    match action {
-                        InputAction::Submit(text) => {
-                            on_submit(text);
+                    match key_event {
+                        KeyCode::Char('d') => self.code_detail.toggle(),
+                        KeyCode::Char('e') => self.code_detail.toggle_fullscreen(),
+                        KeyCode::Esc => break,
+                        _ => {
+                            let action = self.editor.handle_key(key_event);
+                            match action {
+                                InputAction::Submit(text) => on_submit(text),
+                                InputAction::Cancel => break,
+                                InputAction::None => {}
+                            }
                         }
-                        InputAction::Cancel => {
-                            break;
-                        }
-                        InputAction::None => {}
                     }
                 }
             }
