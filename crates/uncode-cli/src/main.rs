@@ -4,7 +4,7 @@ use anyhow::Context;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use uncode_agent::{AgentLoop, GitHubClient};
+use uncode_agent::{AgentLoop, ContextLoader, GitHubClient, SystemPromptBuilder};
 use uncode_core::config::AppConfig;
 use uncode_core::message::{ContentBlock, Message, Role};
 use uncode_llm::registry::ProviderRegistry;
@@ -30,18 +30,6 @@ struct Cli {
 
     prompt: Option<String>,
 }
-
-const DEFAULT_SYSTEM_PROMPT: &str = r#"You are an AI coding agent. You help users with software engineering tasks.
-
-Available tools:
-- read: Read file contents
-- write: Write content to a file  
-- edit: Replace text in a file
-- grep: Search file contents with regex
-- bash: Execute shell commands
-
-When editing files, be precise. Prefer edit over write when modifying existing files.
-Always read files before editing them to understand their current content."#;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -72,11 +60,21 @@ async fn main() -> anyhow::Result<()> {
         .or_else(|| provider_registry.get("ollama"))
         .context("no LLM driver available")?;
 
+    let cwd = std::env::current_dir()?;
+    let ctx = ContextLoader::new(cwd).load();
+
+    let system_prompt = SystemPromptBuilder::new()
+        .base("你是一个 AI 编程助手。用中文回复。")
+        .add_tool_guide(&tool_registry.definitions())
+        .add_context(&ctx.agents_content)
+        .add_skills(&ctx.skills)
+        .build();
+
     let mut agent = AgentLoop::new(
         driver,
         tool_registry,
-        session_store.clone(),
-        DEFAULT_SYSTEM_PROMPT.into(),
+        session_store,
+        system_prompt,
         cli.model.clone(),
     );
 

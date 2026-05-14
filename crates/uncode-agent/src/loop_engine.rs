@@ -80,6 +80,21 @@ impl AgentLoop {
             turn += 1;
             debug!("turn {turn}/{}", MAX_TURNS);
 
+            // Compaction check before building request
+            let model_max: u64 = 128_000;
+            if crate::compaction::should_compact(&messages, model_max) {
+                if let Err(e) = crate::compaction::compact_messages(
+                    &mut messages,
+                    &self.driver,
+                    &self.model,
+                    model_max,
+                )
+                .await
+                {
+                    tracing::warn!("compaction failed: {e}");
+                }
+            }
+
             let request = CompletionRequest {
                 model: self.model.clone(),
                 messages: messages.clone(),
