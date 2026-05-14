@@ -141,12 +141,12 @@ impl InputEditor {
                 InputAction::None
             }
             KeyCode::Char('w') if ctrl_pressed() => {
-                while self.cursor > 0 && self.buffer.as_bytes().get(self.cursor - 1) == Some(&b' ')
+                while self.cursor > 0 && self.buffer[..self.cursor].ends_with(' ')
                 {
                     self.cursor -= 1;
                     self.buffer.remove(self.cursor);
                 }
-                while self.cursor > 0 && self.buffer.as_bytes().get(self.cursor - 1) != Some(&b' ')
+                while self.cursor > 0 && !self.buffer[..self.cursor].ends_with(' ')
                 {
                     self.cursor -= 1;
                     self.buffer.remove(self.cursor);
