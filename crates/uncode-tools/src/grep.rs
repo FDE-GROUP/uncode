@@ -52,7 +52,12 @@ impl ToolExecutor for GrepTool {
 
             if let Some(inc) = include {
                 if let Some(ext) = entry.path().extension() {
-                    let pattern = inc.trim_start_matches("*.");
+                    let Some(pattern) = inc.strip_prefix("*.") else {
+                        continue;
+                    };
+                    if ext != pattern {
+                        continue;
+                    }
                     if ext != pattern {
                         continue;
                     }

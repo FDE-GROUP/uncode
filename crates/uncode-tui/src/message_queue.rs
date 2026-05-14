@@ -1,9 +1,9 @@
 /// 消息队列 — Agent 工作时用户可排队发送指令
 ///
 /// 两种排队策略（参照 Pi）：
-/// - FollowUp：Agent 完成全部工作后投递（默认）
-/// - Steering：当前工具调用完成后立即投递（用于修正方向）
-
+///  - FollowUp：Agent 完成全部工作后投递（默认）
+///  - Steering：当前工具调用完成后立即投递（用于修正方向）
+///
 /// 排队消息类型
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueueType {
@@ -54,7 +54,8 @@ impl MessageQueue {
             .filter(|m| m.queue_type == QueueType::Steering)
             .map(|m| m.text.clone())
             .collect();
-        self.messages.retain(|m| m.queue_type != QueueType::Steering);
+        self.messages
+            .retain(|m| m.queue_type != QueueType::Steering);
         steering
     }
 

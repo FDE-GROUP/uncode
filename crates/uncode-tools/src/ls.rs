@@ -26,17 +26,18 @@ impl ToolExecutor for LsTool {
         let entries = fs::read_dir(path)
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("ls {path}: {e}")))?;
 
-        let mut results = Vec::new();
-        for entry in entries.flatten().take(500) {
-            let file_type = entry.file_type().ok();
-            let is_dir = file_type.map(|t| t.is_dir()).unwrap_or(false);
-            let name = entry.file_name().to_string_lossy().to_string();
-            if is_dir {
-                results.push(format!("{name}/"));
-            } else {
-                results.push(name);
-            }
-        }
+        let mut results: Vec<String> = entries
+            .flatten()
+            .take(500)
+            .map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                if e.file_type().is_ok_and(|t| t.is_dir()) {
+                    format!("{name}/")
+                } else {
+                    name
+                }
+            })
+            .collect();
 
         if results.is_empty() {
             Ok("(empty)".into())

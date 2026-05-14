@@ -28,22 +28,19 @@ impl ToolExecutor for FindTool {
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("pattern required".into()))?;
         let root = arguments["path"].as_str().unwrap_or(".");
 
-        let mut results = Vec::new();
-        for entry in glob::glob(&format!("{root}/{pattern}"))
+        let mut results: Vec<String> = glob::glob(&format!("{root}/{pattern}"))
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("glob: {e}")))?
             .flatten()
             .take(200)
-        {
-            results.push(entry.display().to_string());
-        }
+            .map(|e| e.display().to_string())
+            .collect();
 
         if results.is_empty() {
-            Ok("no files found".into())
-        } else if results.len() >= 200 {
-            results.push("... (truncated)".into());
-            Ok(results.join("\n"))
-        } else {
-            Ok(results.join("\n"))
+            return Ok("no files found".into());
         }
+        if results.len() >= 200 {
+            results.push("... (truncated)".into());
+        }
+        Ok(results.join("\n"))
     }
 }

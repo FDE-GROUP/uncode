@@ -10,9 +10,10 @@ const EST_CHARS_PER_TOKEN: u64 = 4;
 
 /// 估算消息列表的总 token 数
 pub fn estimate_context_tokens(messages: &[Message]) -> u64 {
-    let mut total: u64 = 0;
-    for msg in messages {
-        for block in &msg.content {
+    messages
+        .iter()
+        .flat_map(|msg| msg.content.iter())
+        .map(|block| {
             let text = match block {
                 ContentBlock::Text { text } => text,
                 ContentBlock::Thinking { text } => text,
@@ -21,10 +22,9 @@ pub fn estimate_context_tokens(messages: &[Message]) -> u64 {
                 ContentBlock::Image { .. } => "[image]",
                 _ => "",
             };
-            total += (text.len() as u64).div_ceil(EST_CHARS_PER_TOKEN);
-        }
-    }
-    total
+            (text.len() as u64).div_ceil(EST_CHARS_PER_TOKEN)
+        })
+        .sum()
 }
 
 /// 判断是否超过模型上下文窗口 80% 阈值

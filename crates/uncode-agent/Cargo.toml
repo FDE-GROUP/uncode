@@ -6,6 +6,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish = false
+authors.workspace = true
 
 [dependencies]
 uncode-core.workspace = true
@@ -24,3 +26,6 @@ chrono.workspace = true
 futures.workspace = true
 reqwest.workspace = true
 dirs.workspace = true
+
+[lints]
+workspace = true

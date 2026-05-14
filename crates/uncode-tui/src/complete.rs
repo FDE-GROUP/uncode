@@ -12,8 +12,6 @@ impl CompletionEngine {
     pub fn complete(&self, input: &str) -> Vec<String> {
         if input.starts_with('/') {
             self.complete_slash(input)
-        } else if input.contains(' ') {
-            self.complete_path(input)
         } else {
             self.complete_path(input)
         }
@@ -61,7 +59,7 @@ impl CompletionEngine {
             .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
             .map(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
-                let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                let is_dir = e.file_type().is_ok_and(|t| t.is_dir());
                 if is_dir { format!("{name}/") } else { name }
             })
             .collect();

@@ -150,12 +150,19 @@ impl AgentLoop {
 
             let mut stream = self.driver.complete(request).await?;
             let mut current_text = String::new();
+            let mut current_thinking = String::new();
             let mut pending_tool_calls = Vec::new();
+            let mut tool_results = Vec::new();
             let mut turn_input_tokens: u64 = 0;
             let mut turn_output_tokens: u64 = 0;
 
             while let Some(event) = stream.next().await {
                 match event {
+                    StreamEvent::ThinkingDelta(text) => {
+                        if !text.is_empty() {
+                            current_thinking.push_str(&text);
+                        }
+                    }
                     StreamEvent::TextDelta(text) => {
                         if text.is_empty() {
                             continue;
@@ -233,13 +240,12 @@ impl AgentLoop {
                             }
                         };
 
-                        messages.push(Message::new(
-                            Role::Tool,
-                            vec![ContentBlock::ToolResult(uncode_core::message::ToolResult {
+                        tool_results.push(ContentBlock::ToolResult(
+                            uncode_core::message::ToolResult {
                                 tool_call_id: id,
                                 content: result,
                                 is_error: false,
-                            })],
+                            },
                         ));
                     }
                     StreamEvent::Usage(usage) => {
@@ -257,13 +263,50 @@ impl AgentLoop {
                         });
                     }
                     StreamEvent::Done => {
+                        tracing::debug!(
+                            "Done event: thinking={} text={} tool_calls={} tool_results={}",
+                            !current_thinking.is_empty(),
+                            !current_text.is_empty(),
+                            pending_tool_calls.len(),
+                            tool_results.len()
+                        );
+                        let mut assistant_content: Vec<ContentBlock> = Vec::new();
+
+                        if !current_thinking.is_empty() {
+                            assistant_content.push(ContentBlock::Thinking {
+                                text: std::mem::take(&mut current_thinking),
+                            });
+                        }
+
                         if !current_text.is_empty() {
-                            let mut msg = Message::assistant(std::mem::take(&mut current_text));
+                            assistant_content.push(ContentBlock::Text {
+                                text: std::mem::take(&mut current_text),
+                            });
+                        }
+
+                        for (id, name, arguments) in &pending_tool_calls {
+                            let args: serde_json::Value =
+                                serde_json::from_str(arguments).unwrap_or_default();
+                            assistant_content.push(ContentBlock::ToolCall(
+                                uncode_core::message::ToolCall {
+                                    id: id.clone(),
+                                    name: name.clone(),
+                                    arguments: args,
+                                },
+                            ));
+                        }
+
+                        if !assistant_content.is_empty() {
+                            let mut msg = Message::new(Role::Assistant, assistant_content);
                             msg.usage = Some(UsageInfo {
                                 input_tokens: turn_input_tokens,
                                 output_tokens: turn_output_tokens,
                             });
                             messages.push(msg);
+                        }
+
+                        for result in tool_results.drain(..) {
+                            messages.push(Message::new(Role::Tool, vec![result]));
                         }
                     }
                 }
@@ -291,11 +334,11 @@ impl AgentLoop {
             session_id: session_id.clone(),
             total_turns: turn,
             total_tokens: total_usage,
-            exit_reason: if turn >= MAX_TURNS {
+            exit_reason: (if turn >= MAX_TURNS {
                 "max_turns"
             } else {
                 "completed"
-            }
+            })
             .into(),
         });
 

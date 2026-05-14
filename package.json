@@ -2,13 +2,24 @@
   "name": "uncode",
   "private": true,
   "scripts": {
-    "dev": "cargo run -p uncode-cli -- -i",
-    "run": "cargo run -p uncode-cli --",
+    "dev": "cargo run -p uncode-cli --",
+    "repl": "cargo run -p uncode-cli -- --repl",
     "build": "cargo build --release -p uncode-cli",
+    "build:dev": "cargo build -p uncode-cli",
     "test": "cargo test --workspace",
-    "lint": "cargo clippy --workspace",
-    "fmt": "cargo fmt && cd apps/platform && bun biome check --write src/",
+    "test:agent": "cargo test -p uncode-agent",
+    "test:tui": "cargo test -p uncode-tui",
+    "test:core": "cargo test -p uncode-core",
+    "test:tools": "cargo test -p uncode-tools",
+    "test:session": "cargo test -p uncode-session",
+    "test:llm": "cargo test -p uncode-llm",
+    "lint": "cargo clippy --workspace --all-targets --no-deps",
+    "fmt": "cargo fmt",
+    "fmt:check": "cargo fmt --check",
+    "check": "cargo check --workspace",
+    "clean": "cargo clean",
     "platform:dev": "cd apps/platform && bun dev",
-    "platform:build": "cd apps/platform && bun run build"
+    "platform:build": "cd apps/platform && bun run build",
+    "platform:lint": "cd apps/platform && bun run lint"
   }
 }

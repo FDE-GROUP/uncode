@@ -6,6 +6,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish = false
+authors.workspace = true
 
 [lib]
 proc-macro = true
@@ -14,3 +16,6 @@ proc-macro = true
 syn = { workspace = true, features = ["full", "extra-traits"] }
 quote.workspace = true
 proc-macro2.workspace = true
+
+[lints]
+workspace = true

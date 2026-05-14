@@ -6,17 +6,22 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish = false
+authors.workspace = true
 
 [dependencies]
 uncode-core.workspace = true
 uncode-session.workspace = true
 
 tokio.workspace = true
-axum = "0.8"
+axum.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
 dirs.workspace = true
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower-http.workspace = true
+
+[lints]
+workspace = true
