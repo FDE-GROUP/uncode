@@ -3,6 +3,7 @@ use std::sync::Arc;
 use uncode_llm::driver::LlmDriver;
 use uncode_session::store::{SessionResult, SessionStore};
 
+/// 运行时切换 LLM 模型并记录 ModelChange 到会话 JSONL
 pub fn switch_model(
     driver: &mut Arc<dyn LlmDriver>,
     new_driver: Arc<dyn LlmDriver>,

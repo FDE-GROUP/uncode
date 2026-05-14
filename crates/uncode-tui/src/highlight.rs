@@ -1,6 +1,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+/// 对代码进行关键词语法高亮
 pub fn highlight_code(code: &str, language: &str) -> Vec<Line<'static>> {
     if code.is_empty() {
         return vec![];
@@ -174,6 +175,7 @@ fn get_keywords(language: &str) -> Vec<String> {
     .collect()
 }
 
+/// 根据文件扩展名检测编程语言
 pub fn detect_language_from_path(path: &str) -> Option<&'static str> {
     let ext = std::path::Path::new(path).extension()?.to_str()?;
     match ext {

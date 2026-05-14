@@ -4,6 +4,7 @@ use crate::driver::CompletionRequest;
 use uncode_core::error::UncodeError;
 use uncode_core::message::{ContentBlock, Role};
 
+/// 将 HTTP 状态码映射为 UncodeError（401/403→Auth, 429→RateLimit）
 pub fn map_http_error(status: reqwest::StatusCode, body: String) -> UncodeError {
     match status.as_u16() {
         401 | 403 => UncodeError::LlmAuth(body),
@@ -12,6 +13,7 @@ pub fn map_http_error(status: reqwest::StatusCode, body: String) -> UncodeError 
     }
 }
 
+/// 将 CompletionRequest 中的消息转换为 LLM API 格式的 JSON
 pub fn build_chat_messages(request: &CompletionRequest) -> Vec<Value> {
     let mut messages: Vec<Value> = Vec::new();
 
