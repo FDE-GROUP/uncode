@@ -44,10 +44,7 @@ impl SlashCommands {
 
     pub fn execute(&self, input: &str) -> Option<String> {
         let input = input.trim_start_matches('/');
-        let (name, args) = match input.split_once(' ') {
-            Some((n, a)) => (n, a),
-            None => (input, ""),
-        };
+        let (name, args) = input.split_once(' ').unwrap_or((input, ""));
 
         self.commands.get(name).map(|(_, handler)| handler(args))
     }
