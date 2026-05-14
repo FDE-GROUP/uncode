@@ -112,6 +112,9 @@ impl LlmDriver for DeepSeekDriver {
 
 fn parse_deepseek_sse(text: &str) -> Vec<StreamEvent> {
     let mut events = Vec::new();
+    let mut pending_args: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line == "data: [DONE]" {
@@ -120,15 +123,54 @@ fn parse_deepseek_sse(text: &str) -> Vec<StreamEvent> {
         if let Some(json_str) = line.strip_prefix("data: ") {
             if let Ok(event) = serde_json::from_str::<serde_json::Value>(json_str) {
                 if let Some(choice) = event["choices"][0].as_object() {
-                    if let Some(delta) = choice.get("delta") {
-                        if let Some(content) = delta["content"].as_str() {
-                            if !content.is_empty() {
-                                events.push(StreamEvent::TextDelta(content.to_string()));
+                    // Tool calls (streaming fragments)
+                    if let Some(tool_calls) = choice["delta"]["tool_calls"].as_array() {
+                        for tc in tool_calls {
+                            let id = tc["id"].as_str().unwrap_or("").to_string();
+                            if let Some(func) = tc.get("function") {
+                                if let Some(name) = func["name"].as_str() {
+                                    events.push(StreamEvent::ToolCallStart {
+                                        id: id.clone(),
+                                        name: name.to_string(),
+                                    });
+                                }
+                                if let Some(args) = func["arguments"].as_str() {
+                                    pending_args.entry(id.clone()).or_default().push_str(args);
+                                }
                             }
                         }
                     }
-                    if let Some(finish_reason) = choice.get("finish_reason") {
-                        if finish_reason.as_str() == Some("stop") {
+                    // Text delta
+                    if let Some(content) = choice["delta"]["content"].as_str() {
+                        if !content.is_empty() {
+                            events.push(StreamEvent::TextDelta(content.to_string()));
+                        }
+                    }
+                    // Finish reason
+                    if let Some(reason) = choice.get("finish_reason") {
+                        if reason.as_str() == Some("stop") || reason.as_str() == Some("tool_calls")
+                        {
+                            // Flush pending tool call args
+                            for (id, args) in pending_args.drain() {
+                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&args)
+                                {
+                                    let name = events
+                                        .iter()
+                                        .rev()
+                                        .find_map(|e| match e {
+                                            StreamEvent::ToolCallStart {
+                                                id: tid, name, ..
+                                            } if tid == &id => Some(name.clone()),
+                                            _ => None,
+                                        })
+                                        .unwrap_or_default();
+                                    events.push(StreamEvent::ToolCallEnd {
+                                        id,
+                                        name,
+                                        arguments: parsed,
+                                    });
+                                }
+                            }
                             if let Some(usage) = event.get("usage") {
                                 events.push(StreamEvent::Usage(UsageInfo {
                                     input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
