@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use uncode_core::session::{SessionEntry, SessionHeader, SessionMetadata};
 
+/// 会话存储层的错误类型
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
     #[error("IO error: {0}")]
@@ -17,6 +18,7 @@ pub enum SessionError {
 
 pub type SessionResult<T> = Result<T, SessionError>;
 
+/// 会话存储后端，负责 JSONL 文件的读写操作
 pub struct SessionStore {
     base_dir: PathBuf,
 }

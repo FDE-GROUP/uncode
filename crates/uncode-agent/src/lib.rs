@@ -1,3 +1,8 @@
+//! uncode-agent — 代理循环引擎
+//!
+//! 编排 LLM 调用 → 工具执行 → 事件广播 → 循环的主流程。
+//! `AgentLoop` 是核心引擎，`GitHubClient` 提供 Issue/PR 集成能力。
+
 pub mod github;
 pub mod loop_engine;
 

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+/// 会话中的一条消息，由 role 和 content blocks 组成
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: String,
@@ -10,6 +11,7 @@ pub struct Message {
     pub usage: Option<UsageInfo>,
 }
 
+/// 消息发送者角色
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
@@ -19,15 +21,21 @@ pub enum Role {
     Tool,
 }
 
+/// 消息内容块，一条消息可以包含多种类型的块
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
+    /// 纯文本内容
     Text { text: String },
+    /// LLM 的思考/推理过程
     Thinking { text: String },
+    /// LLM 请求调用工具
     ToolCall(ToolCall),
+    /// 工具执行结果
     ToolResult(ToolResult),
 }
 
+/// LLM 请求的工具调用
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
@@ -35,6 +43,7 @@ pub struct ToolCall {
     pub arguments: serde_json::Value,
 }
 
+/// 工具调用的执行结果
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolResult {
     pub tool_call_id: String,
@@ -42,6 +51,7 @@ pub struct ToolResult {
     pub is_error: bool,
 }
 
+/// Token 用量统计
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UsageInfo {
     pub input_tokens: u64,

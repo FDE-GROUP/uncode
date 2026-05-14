@@ -40,10 +40,15 @@ pub struct UsageInfo {
     pub output_tokens: u64,
 }
 
+/// LLM 驱动 trait，所有供应商必须实现
+///
+/// 封装不同 LLM API 的差异，上层通过此 trait 统一调用
 #[async_trait]
 pub trait LlmDriver: Send + Sync {
+    /// 供应商名称标识
     fn provider_name(&self) -> &'static str;
 
+    /// 发送完成请求，返回流式事件流
     async fn complete(
         &self,
         request: CompletionRequest,
