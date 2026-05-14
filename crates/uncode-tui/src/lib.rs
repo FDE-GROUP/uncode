@@ -5,6 +5,7 @@
 
 pub mod code_detail;
 pub mod complete;
+pub mod diff_viewer;
 pub mod highlight;
 pub mod input;
 pub mod markdown;
@@ -12,6 +13,7 @@ pub mod slash;
 
 use crate::code_detail::CodeDetailView;
 use crate::complete::CompletionEngine;
+use crate::diff_viewer::DiffViewer;
 use crate::input::{InputAction, InputEditor};
 use crate::slash::SlashCommands;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -36,6 +38,7 @@ pub struct TuiEngine {
     layout_locked: bool,
     slash: SlashCommands,
     completion: CompletionEngine,
+    diff: DiffViewer,
 }
 
 impl TuiEngine {
@@ -53,6 +56,7 @@ impl TuiEngine {
             layout_locked: false,
             slash: SlashCommands::new(),
             completion: CompletionEngine::new(slash_commands()),
+            diff: DiffViewer::new(),
         }
     }
 
@@ -147,6 +151,9 @@ impl TuiEngine {
 
         if self.code_detail.is_visible() {
             self.code_detail.render(f, chunks[1]);
+        }
+        if self.diff.is_visible() {
+            self.diff.render(f, chunks[1]);
         }
     }
 
@@ -268,6 +275,8 @@ impl TuiEngine {
                     match key_event {
                         KeyCode::Char('d') => self.code_detail.toggle(),
                         KeyCode::Char('e') => self.code_detail.toggle_fullscreen(),
+                        KeyCode::Char('n') => self.diff.next_file(),
+                        KeyCode::Char('p') => self.diff.prev_file(),
                         KeyCode::Char('l') if !self.layout_locked => {
                             self.layout_locked = true;
                             self.status_text = "uncode v0.1 | 布局已锁定".into();
