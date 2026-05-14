@@ -81,6 +81,7 @@ impl TuiEngine {
                     TaskStatus::Done => "✅",
                     TaskStatus::Failed => "❌",
                     TaskStatus::Blocked => "🚫",
+                    _ => "❓",
                 };
                 self.current_task = format!("{icon} {title}");
             }
@@ -136,6 +137,7 @@ impl TuiEngine {
                     uncode_core::event::ErrorCategory::Config => {
                         format!("⚠️ 配置错误: {message}")
                     }
+                    _ => format!("⚠️ 未知错误: {message}"),
                 };
                 self.status_text = friendly;
             }
@@ -273,9 +275,10 @@ impl TuiEngine {
     {
         let mut terminal = ratatui::init();
         loop {
-            terminal
-                .draw(|f| self.render(f))
-                .expect("terminal draw failed");
+            if let Err(e) = terminal.draw(|f| self.render(f)) {
+                eprintln!("terminal draw failed: {e}");
+                break;
+            }
 
             tokio::select! {
                 Ok(event) = event_rx.recv() => {
@@ -350,10 +353,13 @@ impl Default for TuiEngine {
 }
 
 fn slash_commands() -> Vec<String> {
-    [
-        "simple", "full", "unlock", "help", "quit", "think", "issues",
+    vec![
+        "simple".into(),
+        "full".into(),
+        "unlock".into(),
+        "help".into(),
+        "quit".into(),
+        "think".into(),
+        "issues".into(),
     ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect()
 }

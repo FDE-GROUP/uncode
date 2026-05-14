@@ -6,6 +6,7 @@ use crate::message::UsageInfo;
 /// Agent 向 TUI/Platform 广播的事件，驱动四个面板的更新
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum AgentEvent {
     SessionStart {
         session_id: String,
@@ -64,6 +65,7 @@ pub enum AgentEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum TaskStatus {
     Pending,
     Running,
@@ -74,6 +76,7 @@ pub enum TaskStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum DeltaType {
     Thinking,
     Text,
@@ -81,6 +84,7 @@ pub enum DeltaType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ProgressType {
     Spinner,
     Percentage { current: u64, total: u64 },
@@ -89,6 +93,7 @@ pub enum ProgressType {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ToolCallStatus {
     Success,
     Failed,
@@ -97,6 +102,7 @@ pub enum ToolCallStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ErrorCategory {
     Llm,
     Tool,

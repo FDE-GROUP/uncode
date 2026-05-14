@@ -11,8 +11,6 @@ pub struct InputEditor {
     cursor: usize,
     history: VecDeque<String>,
     history_index: Option<usize>,
-    #[allow(dead_code)]
-    multiline: bool,
     completions: Vec<String>,
     completion_index: usize,
 }
@@ -31,7 +29,6 @@ impl InputEditor {
             cursor: 0,
             history: VecDeque::with_capacity(MAX_HISTORY),
             history_index: None,
-            multiline: false,
             completions: Vec::new(),
             completion_index: 0,
         }

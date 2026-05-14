@@ -3,9 +3,10 @@ use uncode_core::message::{ContentBlock, Message, Role};
 use uncode_llm::LlmDriver;
 use uncode_llm::driver::CompletionRequest;
 
-const COMPACTION_THRESHOLD: f32 = 0.8;
+const COMPACTION_THRESHOLD_NUM: u64 = 80;
+const COMPACTION_THRESHOLD_DEN: u64 = 100;
 const KEEP_RECENT: usize = 5;
-const EST_CHARS_PER_TOKEN: f32 = 4.0;
+const EST_CHARS_PER_TOKEN: u64 = 4;
 
 /// 估算消息列表的总 token 数
 pub fn estimate_context_tokens(messages: &[Message]) -> u64 {
@@ -18,8 +19,9 @@ pub fn estimate_context_tokens(messages: &[Message]) -> u64 {
                 ContentBlock::ToolCall(tc) => &tc.name,
                 ContentBlock::ToolResult(tr) => &tr.content,
                 ContentBlock::Image { .. } => "[image]",
+                _ => "",
             };
-            total += (text.len() as f32 / EST_CHARS_PER_TOKEN).ceil() as u64;
+            total += (text.len() as u64).div_ceil(EST_CHARS_PER_TOKEN);
         }
     }
     total
@@ -28,7 +30,7 @@ pub fn estimate_context_tokens(messages: &[Message]) -> u64 {
 /// 判断是否超过模型上下文窗口 80% 阈值
 pub fn should_compact(messages: &[Message], model_max_tokens: u64) -> bool {
     let estimated = estimate_context_tokens(messages);
-    let threshold = (model_max_tokens as f32 * COMPACTION_THRESHOLD) as u64;
+    let threshold = model_max_tokens * COMPACTION_THRESHOLD_NUM / COMPACTION_THRESHOLD_DEN;
     estimated > threshold
 }
 
@@ -109,7 +111,7 @@ fn extract_text(content: &[ContentBlock]) -> String {
         .filter_map(|block| match block {
             ContentBlock::Text { text } => Some(text.as_str()),
             ContentBlock::Thinking { .. } => None,
-            ContentBlock::ToolCall(_) => Some("🔧"),
+            ContentBlock::ToolCall(_) => Some("\u{1f527}"),
             ContentBlock::ToolResult(tr) => {
                 if tr.content.len() > 200 {
                     Some(&tr.content[..200])
@@ -118,6 +120,7 @@ fn extract_text(content: &[ContentBlock]) -> String {
                 }
             }
             ContentBlock::Image { .. } => Some("[image]"),
+            _ => None,
         })
         .collect::<Vec<_>>()
         .join(" ")
