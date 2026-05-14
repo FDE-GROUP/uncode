@@ -240,11 +240,11 @@ fn load_config() -> anyhow::Result<AppConfig> {
     let config_path = dirs::config_dir()
         .unwrap_or_default()
         .join("uncode")
-        .join("config.toml");
+        .join("config.json");
 
     if config_path.exists() {
         let content = std::fs::read_to_string(&config_path)?;
-        let config: AppConfig = toml::from_str(&content)?;
+        let config: AppConfig = serde_json::from_str(&content)?;
         Ok(config)
     } else {
         Ok(AppConfig::default())

@@ -22,10 +22,13 @@ uncode 是一个使用 Rust 开发的终端 AI Agent Coding 系统。参照 [ear
 ```bash
 # 1. 配置 LLM API key
 mkdir -p ~/.config/uncode
-cat > ~/.config/uncode/config.toml << 'EOF'
-model = "deepseek-v3"
-[providers.deepseek]
-api_key = "sk-xxx"
+cat > ~/.config/uncode/config.json << 'EOF'
+{
+  "model": "deepseek-v3",
+  "providers": {
+    "deepseek": { "api_key": "sk-xxx" }
+  }
+}
 EOF
 
 # 2. 构建
