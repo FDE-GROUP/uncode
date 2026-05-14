@@ -237,4 +237,63 @@ mod tests {
 
         fs::remove_dir_all(dir).ok();
     }
+
+    #[test]
+    fn test_find_most_recent_empty() {
+        let dir = temp_dir();
+        let store = SessionStore::new(dir.clone());
+
+        let result = store.find_most_recent().unwrap();
+        assert!(result.is_none());
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_find_most_recent_single() {
+        let dir = temp_dir();
+        let store = SessionStore::new(dir.clone());
+
+        store
+            .init_session("only-session", "deepseek-v3", "/test")
+            .unwrap();
+
+        let result = store.find_most_recent().unwrap();
+        assert_eq!(result.unwrap().id, "only-session");
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_find_most_recent_returns_latest() {
+        use std::io::Write;
+
+        let dir = temp_dir();
+        let store = SessionStore::new(dir.clone());
+
+        // 创建第一个会话
+        store
+            .init_session("older-session", "deepseek-v3", "/test")
+            .unwrap();
+
+        // 稍等后创建第二个会话（updated_at 更新）
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        store
+            .init_session("newer-session", "glm-5.1", "/test")
+            .unwrap();
+
+        // 手动 touch 第一个文件使其更新时间更晚
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let older_path = dir.join("older-session.jsonl");
+        let content = fs::read_to_string(&older_path).unwrap();
+        {
+            let mut f = fs::File::create(&older_path).unwrap();
+            write!(f, "{content}").unwrap();
+        }
+
+        let result = store.find_most_recent().unwrap();
+        assert_eq!(result.unwrap().id, "older-session");
+
+        fs::remove_dir_all(dir).ok();
+    }
 }
