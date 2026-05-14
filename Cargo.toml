@@ -9,6 +9,7 @@ members = [
     "crates/uncode-extensions",
     "crates/uncode-agent",
     "crates/uncode-tui",
+    "crates/uncode-platform",
     "crates/uncode-cli",
 ]
 default-members = ["crates/uncode-cli"]
