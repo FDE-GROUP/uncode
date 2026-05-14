@@ -17,6 +17,7 @@ pub fn estimate_message_tokens(msg: &Message) -> u64 {
                 estimate_tokens(&tc.name) + estimate_tokens(&args)
             }
             ContentBlock::ToolResult(tr) => estimate_tokens(&tr.content),
+            ContentBlock::Image { .. } => 200, // rough estimate for images
         };
     }
     total

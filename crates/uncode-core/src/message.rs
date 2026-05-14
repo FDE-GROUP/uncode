@@ -44,6 +44,8 @@ pub enum ContentBlock {
     ToolCall(ToolCall),
     /// 工具执行结果
     ToolResult(ToolResult),
+    /// 图片内容（base64 编码）
+    Image { mime_type: String, data: String },
 }
 
 /// LLM 请求的工具调用
