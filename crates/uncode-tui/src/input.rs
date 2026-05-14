@@ -83,9 +83,7 @@ impl InputEditor {
                         self.history_index = None;
                         self.buffer.clear();
                     }
-                    None => {
-                        return InputAction::None;
-                    }
+                    None => return InputAction::None,
                 }
                 self.cursor = self.buffer.len();
                 InputAction::None
@@ -112,50 +110,43 @@ impl InputEditor {
             }
             KeyCode::Backspace => {
                 if self.cursor > 0 {
-                    self.cursor -= 1;
-                    self.buffer.remove(self.cursor);
+                    let prev = self.prev_char_boundary();
+                    self.buffer.drain(prev..self.cursor);
+                    self.cursor = prev;
                 }
                 InputAction::None
             }
             KeyCode::Delete => {
                 if self.cursor < self.buffer.len() {
-                    self.buffer.remove(self.cursor);
+                    let next = self.next_char_boundary();
+                    self.buffer.drain(self.cursor..next);
                 }
                 InputAction::None
             }
-            KeyCode::Char('a') if ctrl_pressed() => {
+            KeyCode::Char('a') => {
                 self.cursor = 0;
                 InputAction::None
             }
-            KeyCode::Char('e') if ctrl_pressed() => {
+            KeyCode::Char('e') => {
                 self.cursor = self.buffer.len();
                 InputAction::None
             }
-            KeyCode::Char('k') if ctrl_pressed() => {
+            KeyCode::Char('k') => {
                 self.buffer.truncate(self.cursor);
                 InputAction::None
             }
-            KeyCode::Char('u') if ctrl_pressed() => {
+            KeyCode::Char('u') => {
                 self.buffer.drain(..self.cursor);
                 self.cursor = 0;
                 InputAction::None
             }
-            KeyCode::Char('w') if ctrl_pressed() => {
-                while self.cursor > 0 && self.buffer[..self.cursor].ends_with(' ')
-                {
-                    self.cursor -= 1;
-                    self.buffer.remove(self.cursor);
-                }
-                while self.cursor > 0 && !self.buffer[..self.cursor].ends_with(' ')
-                {
-                    self.cursor -= 1;
-                    self.buffer.remove(self.cursor);
-                }
+            KeyCode::Char('w') => {
+                self.delete_word_backward();
                 InputAction::None
             }
             KeyCode::Char(c) => {
                 self.buffer.insert(self.cursor, c);
-                self.cursor += 1;
+                self.cursor += c.len_utf8();
                 InputAction::None
             }
             KeyCode::Tab => {
@@ -163,8 +154,9 @@ impl InputEditor {
                     let idx = self.completion_index % self.completions.len();
                     self.completion_index = (idx + 1) % self.completions.len();
                     let selected = &self.completions[idx];
-                    if let Some(last) = self.buffer.rsplit_once(' ') {
-                        self.buffer = format!("{} {selected}", last.0);
+                    if let Some(pos) = self.buffer.rfind(' ') {
+                        self.buffer.truncate(pos + 1);
+                        self.buffer.push_str(selected);
                     } else {
                         self.buffer = selected.clone();
                     }
@@ -174,6 +166,42 @@ impl InputEditor {
             }
             _ => InputAction::None,
         }
+    }
+
+    fn delete_word_backward(&mut self) {
+        while self.cursor > 0 && self.last_char() == Some(' ') {
+            let prev = self.prev_char_boundary();
+            self.buffer.drain(prev..self.cursor);
+            self.cursor = prev;
+        }
+        while self.cursor > 0 && self.last_char() != Some(' ') {
+            let prev = self.prev_char_boundary();
+            self.buffer.drain(prev..self.cursor);
+            self.cursor = prev;
+        }
+    }
+
+    fn last_char(&self) -> Option<char> {
+        if self.cursor == 0 {
+            return None;
+        }
+        self.buffer[..self.cursor].chars().last()
+    }
+
+    fn prev_char_boundary(&self) -> usize {
+        let mut idx = self.cursor.saturating_sub(1);
+        while idx > 0 && !self.buffer.is_char_boundary(idx) {
+            idx -= 1;
+        }
+        idx
+    }
+
+    fn next_char_boundary(&self) -> usize {
+        let mut idx = self.cursor + 1;
+        while idx < self.buffer.len() && !self.buffer.is_char_boundary(idx) {
+            idx += 1;
+        }
+        idx
     }
 
     pub fn set_buffer(&mut self, text: String) {
@@ -211,8 +239,41 @@ impl Default for InputEditor {
     }
 }
 
-fn ctrl_pressed() -> bool {
-    // In ratatui, we check for Ctrl modifier through key event modifiers
-    // This is a best-effort check; actual Ctrl detection happens in key handling
-    false
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyCode;
+
+    #[test]
+    fn test_utf8_insert() {
+        let mut editor = InputEditor::new();
+        editor.handle_key(KeyCode::Char('你'));
+        editor.handle_key(KeyCode::Char('好'));
+        assert_eq!(editor.buffer(), "你好");
+    }
+
+    #[test]
+    fn test_utf8_backspace() {
+        let mut editor = InputEditor::new();
+        editor.set_buffer("你好".into());
+        editor.handle_key(KeyCode::Backspace);
+        assert_eq!(editor.buffer(), "你");
+    }
+
+    #[test]
+    fn test_delete_word_cjk() {
+        let mut editor = InputEditor::new();
+        editor.set_buffer("你好 世界".into());
+        editor.handle_key(KeyCode::Char('w'));
+        assert_eq!(editor.buffer(), "你好 ");
+    }
+
+    #[test]
+    fn test_submit_and_history() {
+        let mut editor = InputEditor::new();
+        editor.handle_key(KeyCode::Char('h'));
+        editor.handle_key(KeyCode::Char('i'));
+        let action = editor.handle_key(KeyCode::Enter);
+        assert_eq!(action, InputAction::Submit("hi".into()));
+    }
 }
