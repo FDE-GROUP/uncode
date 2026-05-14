@@ -3120,6 +3120,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "uncode-rpc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uncode-agent",
+ "uncode-core",
+ "uncode-llm",
+ "uncode-session",
+ "uncode-tools",
+]
+
+[[package]]
 name = "uncode-session"
 version = "0.1.0"
 dependencies = [
