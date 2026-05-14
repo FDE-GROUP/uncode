@@ -13,6 +13,8 @@ pub struct InputEditor {
     history_index: Option<usize>,
     #[allow(dead_code)]
     multiline: bool,
+    completions: Vec<String>,
+    completion_index: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,6 +32,8 @@ impl InputEditor {
             history: VecDeque::with_capacity(MAX_HISTORY),
             history_index: None,
             multiline: false,
+            completions: Vec::new(),
+            completion_index: 0,
         }
     }
 
@@ -155,7 +159,17 @@ impl InputEditor {
                 InputAction::None
             }
             KeyCode::Tab => {
-                // Tab completion placeholder - will be wired to completion engine
+                if !self.completions.is_empty() {
+                    let idx = self.completion_index % self.completions.len();
+                    self.completion_index = (idx + 1) % self.completions.len();
+                    let selected = &self.completions[idx];
+                    if let Some(last) = self.buffer.rsplit_once(' ') {
+                        self.buffer = format!("{} {selected}", last.0);
+                    } else {
+                        self.buffer = selected.clone();
+                    }
+                    self.cursor = self.buffer.len();
+                }
                 InputAction::None
             }
             _ => InputAction::None,
@@ -169,6 +183,11 @@ impl InputEditor {
 
     pub fn buffer(&self) -> &str {
         &self.buffer
+    }
+
+    pub fn set_completions(&mut self, completions: Vec<String>) {
+        self.completions = completions;
+        self.completion_index = 0;
     }
 
     pub fn render(&self, f: &mut Frame, area: Rect) {
