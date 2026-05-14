@@ -51,11 +51,14 @@ impl CodeDetailView {
 
     pub fn show_file(&mut self, path: &str, content: &str) {
         self.title = path.to_string();
-        self.content = content
-            .lines()
+        let lang = crate::highlight::detect_language_from_path(path);
+        let highlighted = crate::highlight::highlight_code(content, lang.unwrap_or(""));
+
+        self.content = highlighted
+            .iter()
             .enumerate()
             .map(|(i, line)| CodeLine {
-                text: line.to_string(),
+                text: line.spans.iter().map(|s| s.content.clone()).collect(),
                 line_no: i + 1,
                 kind: LineKind::Normal,
             })
