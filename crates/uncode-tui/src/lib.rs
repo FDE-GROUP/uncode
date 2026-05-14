@@ -4,6 +4,7 @@
 //! 实时渲染四个面板：任务清单、工具调用、思考过程、阶段总结。
 
 pub mod code_detail;
+pub mod highlight;
 pub mod input;
 pub mod markdown;
 pub mod slash;
