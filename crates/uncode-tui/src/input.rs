@@ -11,6 +11,7 @@ pub struct InputEditor {
     cursor: usize,
     history: VecDeque<String>,
     history_index: Option<usize>,
+    #[allow(dead_code)]
     multiline: bool,
 }
 
@@ -46,11 +47,7 @@ impl InputEditor {
                     }
                     self.history.push_back(text.clone());
                 }
-                if text.starts_with('/') {
-                    InputAction::Submit(text)
-                } else {
-                    InputAction::Submit(text)
-                }
+                InputAction::Submit(text)
             }
             KeyCode::Esc => {
                 self.buffer.clear();
