@@ -10,7 +10,7 @@ use uncode_agent::{AgentLoop, ContextLoader, GitHubClient, SystemPromptBuilder};
 use uncode_core::config::AppConfig;
 use uncode_core::message::{ContentBlock, Message, Role};
 use uncode_llm::registry::ProviderRegistry;
-use uncode_llm::{DeepSeekDriver, GlmDriver, OllamaDriver};
+use uncode_llm::{DeepSeekDriver, OllamaDriver};
 use uncode_session::store::SessionStore;
 use uncode_tools::registry::ToolRegistry;
 use uncode_tools::{BashTool, EditTool, GrepTool, ReadTool, WriteTool};
@@ -253,7 +253,13 @@ fn load_config() -> anyhow::Result<AppConfig> {
 
 fn register_providers(registry: &ProviderRegistry, config: &AppConfig) -> anyhow::Result<()> {
     if let Some(ref pc) = config.providers.glm {
-        registry.register("glm-4".into(), Arc::new(GlmDriver::new(pc.api_key.clone())));
+        registry.register(
+            "glm-5.1".into(),
+            Arc::new(DeepSeekDriver::with_base_url(
+                pc.api_key.clone(),
+                "https://open.bigmodel.cn/api/coding/paas/v4".into(),
+            )),
+        );
     }
     if let Some(ref pc) = config.providers.deepseek {
         let driver = if let Some(ref url) = pc.base_url {
@@ -262,6 +268,10 @@ fn register_providers(registry: &ProviderRegistry, config: &AppConfig) -> anyhow
             DeepSeekDriver::new(pc.api_key.clone())
         };
         registry.register("deepseek-v3".into(), Arc::new(driver));
+        registry.register(
+            "deepseek-v4-pro".into(),
+            Arc::new(DeepSeekDriver::new(pc.api_key.clone())),
+        );
     }
     if let Some(ref oc) = config.providers.ollama {
         let driver = OllamaDriver::with_host(oc.host.clone());

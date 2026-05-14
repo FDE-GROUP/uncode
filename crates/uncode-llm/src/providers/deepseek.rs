@@ -45,7 +45,21 @@ impl DeepSeekDriver {
         }
 
         if !request.tools.is_empty() {
-            body["tools"] = serde_json::to_value(&request.tools).unwrap_or_default();
+            let tools: Vec<serde_json::Value> = request
+                .tools
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "type": "function",
+                        "function": {
+                            "name": t.name,
+                            "description": t.description,
+                            "parameters": t.parameters
+                        }
+                    })
+                })
+                .collect();
+            body["tools"] = serde_json::json!(tools);
         }
 
         body
