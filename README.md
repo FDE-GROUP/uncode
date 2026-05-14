@@ -20,13 +20,22 @@ uncode 是一个使用 Rust 开发的终端 AI Agent Coding 系统。参照 [ear
 ## 快速开始
 
 ```bash
-# 构建
+# 1. 配置 LLM API key
+mkdir -p ~/.config/uncode
+cat > ~/.config/uncode/config.toml << 'EOF'
+model = "deepseek-v3"
+[providers.deepseek]
+api_key = "sk-xxx"
+EOF
+
+# 2. 构建
 cargo build --release
 
-# 运行
+# 3. 运行
 cargo run -p uncode-cli -- --model deepseek-v3 "帮我分析这个项目"
+cargo run -p uncode-cli -- -i          # 交互式 TUI
 
-# 从 GitHub Issue 开始工作
+# 4. 从 GitHub Issue 开始工作
 export GITHUB_TOKEN=ghp_xxx
 cargo run -p uncode-cli -- --issue 42
 ```
