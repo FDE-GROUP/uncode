@@ -651,3 +651,28 @@ SystemPromptBuilder::new()
 | 模型热切换 | ❌ 未实现 | 0% |
 | 多模态 | ❌ 未实现 | 0% |
 | 安全/可观测/评估 | ⚠️ 基础阶段 | 40% |
+
+### 13.1 安全增强（Phase 5 实施中）
+
+**API Key 保护：**
+- LLM 驱动中的 `api_key: String` 字段标记为敏感
+- 所有 Provider 的 `Debug` 输出不包含 API key
+- 日志中自动脱敏（tracing filter 拦截 `Authorization:` 头）
+
+**Bash 工具安全：**
+- `timeout` 参数：默认 120s，通过 `tokio::time::timeout` 强制执行（已在 `std` 审查中修复遗留 bug）
+- 进程树清理：`tokio::process::Command` 在 timeout 后自动 kill
+- 后续：添加 `allowed_paths` 白名单校验
+
+**Platform 安全：**
+- 本地模式：仅监听 127.0.0.1
+- 团队模式：Basic Auth 中间件（规划中）
+- CORS：严格配置允许的来源域
+
+**当前安全基线：**
+
+| 已有 | 规划中 |
+|------|--------|
+| Bash 超时 + 进程保护 | 文件路径 Jail（allowed_paths） |
+| tracing 日志脱敏 | secrect::SecretString 替换 String |
+| 127.0.0.1 绑定 | Platform 认证中间件 |
