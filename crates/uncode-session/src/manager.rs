@@ -41,4 +41,22 @@ impl SessionManager {
         let header = self.store.read_header(session_id)?;
         Ok(SessionMetadata::from(header))
     }
+
+    pub fn branch_session(&self, parent_id: &str, reason: &str) -> SessionResult<SessionMetadata> {
+        let new_id = Uuid::new_v4().to_string();
+        let parent = self.store.read_header(parent_id)?;
+        self.store
+            .init_session(&new_id, &parent.model, &parent.working_dir)?;
+
+        let branch = uncode_core::session::BranchEntry {
+            timestamp: chrono::Utc::now(),
+            parent_id: parent_id.to_string(),
+            reason: reason.to_string(),
+        };
+
+        self.store
+            .append_entry(&new_id, &uncode_core::session::SessionEntry::Branch(branch))?;
+
+        self.get_metadata(&new_id)
+    }
 }
