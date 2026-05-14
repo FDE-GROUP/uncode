@@ -6,6 +6,7 @@ use tracing_subscriber::EnvFilter;
 
 use uncode_agent::{AgentLoop, ContextLoader, GitHubClient, SystemPromptBuilder};
 use uncode_core::config::AppConfig;
+use uncode_core::context::expand_file_refs;
 use uncode_core::message::{ContentBlock, Message, Role};
 use uncode_llm::registry::ProviderRegistry;
 use uncode_llm::{DeepSeekDriver, OllamaDriver};
@@ -69,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
         .context("no LLM driver available")?;
 
     let cwd = std::env::current_dir()?;
-    let ctx = ContextLoader::new(cwd).load();
+    let ctx = ContextLoader::new(cwd.clone()).load();
 
     let system_prompt = SystemPromptBuilder::new()
         .base("你是一个 AI 编程助手。你可以使用工具来读写文件、搜索代码、执行命令。遇到需要分析代码的任务时，请主动使用工具读取文件。用中文回复。")
@@ -147,7 +148,8 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if let Some(prompt) = cli.prompt {
-        let messages = agent.run(Message::user(prompt)).await?;
+        let expanded = expand_file_refs(&prompt, &cwd);
+        let messages = agent.run(Message::user(expanded)).await?;
         print_messages(&messages);
         return Ok(());
     }
@@ -172,7 +174,8 @@ async fn main() -> anyhow::Result<()> {
             if input == "/quit" {
                 break;
             }
-            let messages = agent.run(Message::user(input)).await?;
+            let expanded = expand_file_refs(&input, &cwd);
+            let messages = agent.run(Message::user(expanded)).await?;
             print_messages(&messages);
         }
         return Ok(());
