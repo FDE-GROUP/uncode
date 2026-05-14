@@ -54,7 +54,8 @@ impl MessageQueue {
             .filter(|m| m.queue_type == QueueType::Steering)
             .map(|m| m.text.clone())
             .collect();
-        self.messages.retain(|m| m.queue_type != QueueType::Steering);
+        self.messages
+            .retain(|m| m.queue_type != QueueType::Steering);
         steering
     }
 

@@ -1,7 +1,6 @@
 /// 主题系统 — ~50 命名色，JSON 配置，热重载
 ///
 /// 结构化颜色分组：核心 UI、工具状态、Diff、Markdown、语法高亮、思考级别边框、Bash
-
 use ratatui::style::Color;
 use std::path::Path;
 
@@ -105,12 +104,12 @@ impl Theme {
                 header: Color::Cyan,
             },
             thinking_level_border: [
-                Color::White,      // Off
-                Color::DarkGray,   // Minimal
-                Color::Blue,       // Low
-                Color::Cyan,       // Medium
-                Color::Magenta,    // High
-                Color::Red,        // XHigh
+                Color::White,    // Off
+                Color::DarkGray, // Minimal
+                Color::Blue,     // Low
+                Color::Cyan,     // Medium
+                Color::Magenta,  // High
+                Color::Red,      // XHigh
             ],
             bash: BashColors {
                 command: Color::Yellow,

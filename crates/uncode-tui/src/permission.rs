@@ -200,12 +200,7 @@ mod tests {
     #[test]
     fn test_request_and_confirm() {
         let mut pm = PermissionManager::new();
-        pm.request_confirmation(
-            "t1".into(),
-            "edit".into(),
-            "src/main.rs".into(),
-            true,
-        );
+        pm.request_confirmation("t1".into(), "edit".into(), "src/main.rs".into(), true);
         assert!(pm.has_pending());
 
         let p = pm.confirm(ConfirmOption::Allow);
@@ -216,12 +211,7 @@ mod tests {
     #[test]
     fn test_deny() {
         let mut pm = PermissionManager::new();
-        pm.request_confirmation(
-            "t1".into(),
-            "edit".into(),
-            "src/main.rs".into(),
-            false,
-        );
+        pm.request_confirmation("t1".into(), "edit".into(), "src/main.rs".into(), false);
         let p = pm.deny();
         assert!(p.is_some());
         assert!(!pm.has_pending());

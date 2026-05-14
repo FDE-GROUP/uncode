@@ -23,13 +23,125 @@ use crate::message_queue::{MessageQueue, QueueType};
 use crate::permission::PermissionManager;
 use crate::selector::OverlaySelector;
 use crate::slash::SlashCommands;
+use crate::theme::Theme;
+use crate::tool_renderer::ToolRendererRegistry;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Wrap};
 use tokio::sync::broadcast;
 use uncode_core::event::AgentEvent;
+use uncode_core::message::UsageInfo;
+
+/// 页脚状态 — Token 统计、费用、上下文使用率
+struct FooterState {
+    workdir: String,
+    git_branch: String,
+    input_tokens: u64,
+    output_tokens: u64,
+    cost: f64,
+    context_percent: u8,
+}
+
+impl FooterState {
+    fn new() -> Self {
+        let workdir = std::env::current_dir()
+            .map(|p| {
+                let home = dirs::home_dir().unwrap_or_default();
+                p.strip_prefix(&home)
+                    .map(|s| format!("~/{}", s.display()))
+                    .unwrap_or_else(|_| format!("{}", p.display()))
+            })
+            .unwrap_or_default();
+
+        let git_branch = std::process::Command::new("git")
+            .args(["branch", "--show-current"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+
+        Self {
+            workdir,
+            git_branch,
+            input_tokens: 0,
+            output_tokens: 0,
+            cost: 0.0,
+            context_percent: 0,
+        }
+    }
+
+    fn update_usage(&mut self, usage: &UsageInfo) {
+        self.input_tokens = usage.input_tokens;
+        self.output_tokens = usage.output_tokens;
+        // 粗略费用估算：input $3/M, output $15/M (DeepSeek pricing)
+        let input_cost = (usage.input_tokens as f64) / 1_000_000.0 * 3.0;
+        let output_cost = (usage.output_tokens as f64) / 1_000_000.0 * 15.0;
+        self.cost += input_cost + output_cost;
+        // 上下文使用率：假设 128k 窗口
+        let total = usage.input_tokens + usage.output_tokens;
+        self.context_percent = ((total as f64 / 128_000.0) * 100.0).min(100.0) as u8;
+    }
+
+    fn render_line1(&self, session_id: &str) -> String {
+        let sid = if session_id.is_empty() {
+            String::new()
+        } else {
+            format!(" session:{}", &session_id[..session_id.len().min(8)])
+        };
+        format!("{} {}{}", self.workdir, self.git_branch, sid)
+    }
+
+    fn render_line2(&self, model: &str, level_icon: &str) -> Line<'static> {
+        let in_str = format_tokens(self.input_tokens);
+        let out_str = format_tokens(self.output_tokens);
+        let cost_str = format!("${:.4}", self.cost);
+        let ctx_color = if self.context_percent > 80 {
+            Color::Red
+        } else {
+            Color::DarkGray
+        };
+
+        Line::from(vec![
+            Span::styled(
+                format!("in:{in_str} "),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                format!("out:{out_str} "),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(format!("{cost_str} "), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("ctx:{}% ", self.context_percent),
+                Style::default().fg(ctx_color),
+            ),
+            Span::styled(model.to_string(), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(" {level_icon}"),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+    }
+}
+
+fn format_tokens(n: u64) -> String {
+    if n < 1000 {
+        format!("{n}")
+    } else if n < 1_000_000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    }
+}
 
 pub struct TuiEngine {
     chat: ChatState,
@@ -43,6 +155,9 @@ pub struct TuiEngine {
     queue: MessageQueue,
     agent_busy: bool,
     permission: PermissionManager,
+    footer: FooterState,
+    theme: Theme,
+    renderers: ToolRendererRegistry,
 }
 
 impl TuiEngine {
@@ -59,6 +174,9 @@ impl TuiEngine {
             queue: MessageQueue::new(),
             agent_busy: false,
             permission: PermissionManager::new(),
+            footer: FooterState::new(),
+            theme: Theme::default(),
+            renderers: ToolRendererRegistry::new(),
         }
     }
 
@@ -84,7 +202,7 @@ impl TuiEngine {
     }
 
     fn render_chat(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let lines = self.chat.render_lines(area);
+        let lines = self.chat.render_lines(area, &self.renderers, &self.theme);
         let content = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
             .block(Block::default());
@@ -97,52 +215,20 @@ impl TuiEngine {
         line1_area: ratatui::layout::Rect,
         line2_area: ratatui::layout::Rect,
     ) {
-        let cwd = std::env::current_dir()
-            .map(|p| {
-                let home = dirs::home_dir().unwrap_or_default();
-                p.strip_prefix(&home)
-                    .map(|s| format!("~/{}", s.display()))
-                    .unwrap_or_else(|_| format!("{}", p.display()))
-            })
-            .unwrap_or_default();
-
-        let branch = std::process::Command::new("git")
-            .args(["branch", "--show-current"])
-            .output()
-            .ok()
-            .and_then(|o| {
-                if o.status.success() {
-                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-
-        let sid = if self.session_id.is_empty() {
-            String::new()
-        } else {
-            format!(" session:{}", &self.session_id[..self.session_id.len().min(8)])
-        };
-
-        let footer_line1 = format!("{cwd} {branch}{sid}");
+        let line1 = self.footer.render_line1(&self.session_id);
         f.render_widget(
-            Paragraph::new(footer_line1).style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new(line1).style(Style::default().fg(self.theme.ui.footer_text)),
             line1_area,
         );
 
         let level = self.chat.thinking_level;
-        let level_icon = level.icon();
         let model_display = if self.model.is_empty() {
             "uncode"
         } else {
             &self.model
         };
-        let footer_line2 = format!("{model_display} {level_icon}");
-        f.render_widget(
-            Paragraph::new(footer_line2).style(Style::default().fg(Color::DarkGray)),
-            line2_area,
-        );
+        let line2 = self.footer.render_line2(model_display, level.icon());
+        f.render_widget(Paragraph::new(line2), line2_area);
     }
 
     pub async fn run<F>(&mut self, mut event_rx: broadcast::Receiver<AgentEvent>, on_submit: F)
@@ -292,9 +378,9 @@ impl TuiEngine {
             _ => {
                 if self.agent_busy {
                     self.queue.enqueue(text.clone(), QueueType::FollowUp);
-                    self.chat.messages.push(chat::ChatMessage::QueuedMessage {
-                        text,
-                    });
+                    self.chat
+                        .messages
+                        .push(chat::ChatMessage::QueuedMessage { text });
                 } else {
                     self.agent_busy = true;
                     self.chat.push_user_message(text.clone());
@@ -331,8 +417,13 @@ impl TuiEngine {
             AgentEvent::SessionStart { session_id, .. } => {
                 self.session_id = session_id.clone();
             }
-            AgentEvent::TurnEnd { .. } | AgentEvent::SessionEnd { .. } => {
+            AgentEvent::TurnEnd { usage, .. } => {
                 self.agent_busy = false;
+                self.footer.update_usage(usage);
+            }
+            AgentEvent::SessionEnd { total_tokens, .. } => {
+                self.agent_busy = false;
+                self.footer.update_usage(total_tokens);
             }
             _ => {}
         }

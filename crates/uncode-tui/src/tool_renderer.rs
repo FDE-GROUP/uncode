@@ -2,7 +2,6 @@
 ///
 /// 每个工具有独立的 render_call() 和 render_result() 函数，
 /// 用于内联折叠方框中的摘要和展开内容。
-
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use std::collections::HashMap;

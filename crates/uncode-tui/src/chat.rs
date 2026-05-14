@@ -1,3 +1,5 @@
+use crate::theme::Theme;
+use crate::tool_renderer::ToolRendererRegistry;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -164,7 +166,10 @@ impl ChatState {
     /// 处理 AgentEvent，更新对话消息列表
     pub fn handle_event(&mut self, event: &AgentEvent) {
         match event {
-            AgentEvent::ContentDelta { delta_type, content } => match delta_type {
+            AgentEvent::ContentDelta {
+                delta_type,
+                content,
+            } => match delta_type {
                 DeltaType::Text => self.append_assistant_text(content),
                 DeltaType::Thinking => self.append_thinking_text(content),
                 _ => {}
@@ -199,9 +204,7 @@ impl ChatState {
                 }
             }
             AgentEvent::ToolCallProgress {
-                tool_id,
-                detail,
-                ..
+                tool_id, detail, ..
             } => {
                 if let Some(ChatMessage::ToolCall { result, .. }) = self
                     .messages
@@ -229,15 +232,10 @@ impl ChatState {
                 ..
             } => {
                 let render_status = ToolCallRenderStatus::from(status.clone());
-                if let Some(msg) = self
-                    .messages
-                    .iter_mut()
-                    .rev()
-                    .find(|m| match m {
-                        ChatMessage::ToolCall { tool_id: tid, .. } => tid == tool_id,
-                        _ => false,
-                    })
-                {
+                if let Some(msg) = self.messages.iter_mut().rev().find(|m| match m {
+                    ChatMessage::ToolCall { tool_id: tid, .. } => tid == tool_id,
+                    _ => false,
+                }) {
                     if let ChatMessage::ToolCall {
                         status: s,
                         duration_ms: d,
@@ -248,15 +246,10 @@ impl ChatState {
                         *d = Some(*duration_ms);
                     }
                 }
-                if let Some(msg) = self
-                    .messages
-                    .iter_mut()
-                    .rev()
-                    .find(|m| match m {
-                        ChatMessage::BashExecution { tool_id: tid, .. } => tid == tool_id,
-                        _ => false,
-                    })
-                {
+                if let Some(msg) = self.messages.iter_mut().rev().find(|m| match m {
+                    ChatMessage::BashExecution { tool_id: tid, .. } => tid == tool_id,
+                    _ => false,
+                }) {
                     if let ChatMessage::BashExecution {
                         duration_ms: d,
                         stdout,
@@ -275,7 +268,9 @@ impl ChatState {
                     }
                 }
             }
-            AgentEvent::Error { category, message, .. } => {
+            AgentEvent::Error {
+                category, message, ..
+            } => {
                 self.messages.push(ChatMessage::Error {
                     message: message.clone(),
                     category: category.clone(),
@@ -305,14 +300,12 @@ impl ChatState {
                 });
             }
             AgentEvent::MessageQueued { text } => {
-                self.messages.push(ChatMessage::QueuedMessage {
-                    text: text.clone(),
-                });
+                self.messages
+                    .push(ChatMessage::QueuedMessage { text: text.clone() });
             }
             AgentEvent::MessageDelivered { text } => {
-                self.messages.retain(|m| {
-                    !matches!(m, ChatMessage::QueuedMessage { text: t } if t == text)
-                });
+                self.messages
+                    .retain(|m| !matches!(m, ChatMessage::QueuedMessage { text: t } if t == text));
             }
             _ => {}
         }
@@ -326,7 +319,11 @@ impl ChatState {
 
     /// 追加 Assistant 文本
     fn append_assistant_text(&mut self, content: &str) {
-        if let Some(ChatMessage::Assistant { text, rendered_cache }) = self.messages.last_mut() {
+        if let Some(ChatMessage::Assistant {
+            text,
+            rendered_cache,
+        }) = self.messages.last_mut()
+        {
             text.push_str(content);
             *rendered_cache = None; // invalidate cache
         } else {
@@ -363,19 +360,24 @@ impl ChatState {
     }
 
     /// 渲染对话区可见行
-    pub fn render_lines(&self, area: Rect) -> Vec<Line<'static>> {
+    pub fn render_lines(
+        &self,
+        area: Rect,
+        renderers: &ToolRendererRegistry,
+        theme: &Theme,
+    ) -> Vec<Line<'static>> {
         let mut all_lines: Vec<Line<'static>> = Vec::new();
 
         if self.messages.is_empty() {
             all_lines.push(Line::from(Span::styled(
                 "描述你的需求，Agent 会自动完成。",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.ui.footer_text),
             )));
             return all_lines;
         }
 
         for msg in &self.messages {
-            let msg_lines = render_message(msg, area.width);
+            let msg_lines = render_message(msg, area.width, renderers, theme);
             all_lines.extend(msg_lines);
         }
 
@@ -390,10 +392,15 @@ impl Default for ChatState {
 }
 
 /// 渲染单条消息
-fn render_message(msg: &ChatMessage, width: u16) -> Vec<Line<'static>> {
+fn render_message(
+    msg: &ChatMessage,
+    width: u16,
+    renderers: &ToolRendererRegistry,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
     let w = width.saturating_sub(2) as usize; // account for padding
     match msg {
-        ChatMessage::User { text, file_refs } => render_user_message(text, file_refs, w),
+        ChatMessage::User { text, file_refs } => render_user_message(text, file_refs, w, theme),
         ChatMessage::Assistant {
             text,
             rendered_cache,
@@ -411,14 +418,14 @@ fn render_message(msg: &ChatMessage, width: u16) -> Vec<Line<'static>> {
                 let mut lines = vec![Line::from(Span::styled(
                     "💭 思考过程",
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(theme.markdown.heading)
                         .add_modifier(Modifier::BOLD),
                 ))];
                 let content_lines = crate::markdown::render_markdown(text);
                 lines.extend(
                     content_lines
                         .into_iter()
-                        .map(|l| l.style(Style::default().fg(Color::DarkGray))),
+                        .map(|l| l.style(Style::default().fg(theme.ui.footer_text))),
                 );
                 lines
             } else if text.is_empty() {
@@ -426,10 +433,10 @@ fn render_message(msg: &ChatMessage, width: u16) -> Vec<Line<'static>> {
             } else {
                 let preview: String = text.chars().take(60).collect();
                 vec![Line::from(vec![
-                    Span::styled(" 💭 ", Style::default().fg(Color::Yellow)),
+                    Span::styled(" 💭 ", Style::default().fg(theme.markdown.heading)),
                     Span::styled(
                         format!("思考过程 — {preview}..."),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(theme.ui.footer_text),
                     ),
                 ])]
             }
@@ -442,7 +449,17 @@ fn render_message(msg: &ChatMessage, width: u16) -> Vec<Line<'static>> {
             expanded,
             result,
             ..
-        } => render_tool_call(tool_name, arguments_summary, status, duration_ms, result, *expanded),
+        } => render_tool_call(
+            tool_name,
+            arguments_summary,
+            status,
+            duration_ms,
+            result,
+            *expanded,
+            renderers,
+            theme,
+            width,
+        ),
         ChatMessage::BashExecution {
             command,
             exit_code,
@@ -450,10 +467,10 @@ fn render_message(msg: &ChatMessage, width: u16) -> Vec<Line<'static>> {
             duration_ms,
             with_agent,
             ..
-        } => render_bash(command, exit_code, stdout, duration_ms, *with_agent),
+        } => render_bash(command, exit_code, stdout, duration_ms, *with_agent, theme),
         ChatMessage::Error { message, .. } => vec![Line::from(vec![
-            Span::styled(" ✖ ", Style::default().fg(Color::Red)),
-            Span::styled(message.clone(), Style::default().fg(Color::Red)),
+            Span::styled(" ✖ ", Style::default().fg(theme.ui.error_message)),
+            Span::styled(message.clone(), Style::default().fg(theme.ui.error_message)),
         ])],
         ChatMessage::Summary {
             completed,
@@ -462,19 +479,19 @@ fn render_message(msg: &ChatMessage, width: u16) -> Vec<Line<'static>> {
             let mut lines = vec![Line::from(Span::styled(
                 " 📝 阶段总结",
                 Style::default()
-                    .fg(Color::Blue)
+                    .fg(theme.ui.summary_card)
                     .add_modifier(Modifier::BOLD),
             ))];
             if !completed.is_empty() {
                 lines.push(Line::from(Span::styled(
                     format!("   已完成：{}", completed.join("、")),
-                    Style::default().fg(Color::Green),
+                    Style::default().fg(theme.tool_status.success),
                 )));
             }
             if !next_steps.is_empty() {
                 lines.push(Line::from(Span::styled(
                     format!("   下一步：{}", next_steps.join("、")),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(theme.markdown.code_text),
                 )));
             }
             lines
@@ -488,37 +505,45 @@ fn render_message(msg: &ChatMessage, width: u16) -> Vec<Line<'static>> {
             let mut lines = vec![Line::from(Span::styled(
                 " 📝 上下文压缩",
                 Style::default()
-                    .fg(Color::Blue)
+                    .fg(theme.ui.summary_card)
                     .add_modifier(Modifier::BOLD),
             ))];
             lines.push(Line::from(Span::styled(
                 format!(
                     "   {messages_replaced} 条消息被压缩 | {tokens_before} → {tokens_after} tokens"
                 ),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.ui.footer_text),
             )));
             if !summary_text.is_empty() {
                 lines.push(Line::from(Span::styled(
                     format!("   {summary_text}"),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme.ui.footer_text),
                 )));
             }
             lines
         }
         ChatMessage::QueuedMessage { text } => vec![Line::from(vec![
-            Span::styled(" ⏳ ", Style::default().fg(Color::DarkGray)),
+            Span::styled(" ⏳ ", Style::default().fg(theme.ui.footer_text)),
             Span::styled(
                 format!("排队中: {text}"),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.ui.footer_text),
             ),
         ])],
     }
 }
 
-fn render_user_message(text: &str, file_refs: &[String], _width: usize) -> Vec<Line<'static>> {
-    let mut spans: Vec<Span<'static>> = vec![
-        Span::styled("> ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-    ];
+fn render_user_message(
+    text: &str,
+    file_refs: &[String],
+    _width: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut spans: Vec<Span<'static>> = vec![Span::styled(
+        "> ",
+        Style::default()
+            .fg(theme.tool_status.success)
+            .add_modifier(Modifier::BOLD),
+    )];
 
     if file_refs.is_empty() {
         spans.push(Span::raw(text.to_string()));
@@ -532,7 +557,7 @@ fn render_user_message(text: &str, file_refs: &[String], _width: usize) -> Vec<L
                 }
                 spans.push(Span::styled(
                     pattern.clone(),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(theme.markdown.code_text),
                 ));
                 remaining = &remaining[pos + pattern.len()..];
             }
@@ -552,13 +577,16 @@ fn render_tool_call(
     duration_ms: &Option<u64>,
     result: &Option<String>,
     expanded: bool,
+    renderers: &ToolRendererRegistry,
+    theme: &Theme,
+    width: u16,
 ) -> Vec<Line<'static>> {
     let (icon, color) = match status {
-        ToolCallRenderStatus::Running => ("🔄", Color::Cyan),
-        ToolCallRenderStatus::Success => ("✅", Color::Green),
-        ToolCallRenderStatus::Failed => ("❌", Color::Red),
-        ToolCallRenderStatus::AwaitConfirm => ("⚠️", Color::Yellow),
-        ToolCallRenderStatus::Pending => ("⏳", Color::DarkGray),
+        ToolCallRenderStatus::Running => ("🔄", theme.tool_status.running),
+        ToolCallRenderStatus::Success => ("✅", theme.tool_status.success),
+        ToolCallRenderStatus::Failed => ("❌", theme.tool_status.failed),
+        ToolCallRenderStatus::AwaitConfirm => ("⚠️", theme.tool_status.await_confirm),
+        ToolCallRenderStatus::Pending => ("⏳", theme.tool_status.pending),
     };
 
     let duration_str = duration_ms
@@ -571,34 +599,36 @@ fn render_tool_call(
         })
         .unwrap_or_default();
 
-    let header = format!("🛠 {tool_name} {args} {icon} {duration_str}");
+    // Use custom renderer for the call header
+    let renderer = renderers.get(tool_name);
+    let call_lines = renderer.render_call(args, width);
 
-    let mut lines = vec![Line::from(vec![
+    let mut lines = Vec::new();
+
+    // Header line with status icon and duration
+    let header = format!("🛠 {tool_name} {icon} {duration_str}");
+    lines.push(Line::from(vec![
         Span::styled(" ┌─ ", Style::default().fg(color)),
         Span::styled(header, Style::default().fg(color)),
-    ])];
+    ]));
+
+    // Renderer summary lines
+    for cl in call_lines {
+        lines.push(Line::from(Span::styled(" │ ", Style::default().fg(color))));
+        lines.push(cl);
+    }
 
     if expanded {
         if let Some(res) = result {
-            for line in res.lines().take(20) {
-                lines.push(Line::from(vec![
-                    Span::styled(" │ ", Style::default().fg(color)),
-                    Span::raw(line.to_string()),
-                ]));
-            }
-            if res.lines().count() > 20 {
-                lines.push(Line::from(vec![
-                    Span::styled(" │ ", Style::default().fg(color)),
-                    Span::styled("...", Style::default().fg(Color::DarkGray)),
-                ]));
+            let result_lines = renderer.render_result(res, width);
+            for rl in result_lines {
+                lines.push(Line::from(Span::styled(" │ ", Style::default().fg(color))));
+                lines.push(rl);
             }
         }
     }
 
-    lines.push(Line::from(Span::styled(
-        " └─",
-        Style::default().fg(color),
-    )));
+    lines.push(Line::from(Span::styled(" └─", Style::default().fg(color))));
     lines
 }
 
@@ -608,12 +638,13 @@ fn render_bash(
     stdout: &str,
     duration_ms: &Option<u64>,
     with_agent: bool,
+    theme: &Theme,
 ) -> Vec<Line<'static>> {
     let prefix = if with_agent { "!" } else { "!!" };
     let (icon, color) = match exit_code {
-        None => ("🔄", Color::Cyan),
-        Some(0) => ("✅", Color::Green),
-        Some(_) => ("❌", Color::Red),
+        None => ("🔄", theme.tool_status.running),
+        Some(0) => ("✅", theme.tool_status.success),
+        Some(_) => ("❌", theme.tool_status.failed),
     };
 
     let duration_str = duration_ms
@@ -643,15 +674,12 @@ fn render_bash(
         if stdout.lines().count() > 15 {
             lines.push(Line::from(vec![
                 Span::styled(" │ ", Style::default().fg(color)),
-                Span::styled("...", Style::default().fg(Color::DarkGray)),
+                Span::styled("...", Style::default().fg(theme.ui.footer_text)),
             ]));
         }
     }
 
-    lines.push(Line::from(Span::styled(
-        " └─",
-        Style::default().fg(color),
-    )));
+    lines.push(Line::from(Span::styled(" └─", Style::default().fg(color))));
     lines
 }
 
@@ -846,12 +874,18 @@ mod tests {
         state.handle_event(&make_text_delta("**bold** text"));
         assert!(matches!(
             &state.messages[0],
-            ChatMessage::Assistant { rendered_cache: None, .. }
+            ChatMessage::Assistant {
+                rendered_cache: None,
+                ..
+            }
         ));
         state.finalize_assistant();
         assert!(matches!(
             &state.messages[0],
-            ChatMessage::Assistant { rendered_cache: Some(_), .. }
+            ChatMessage::Assistant {
+                rendered_cache: Some(_),
+                ..
+            }
         ));
     }
 }

@@ -167,10 +167,16 @@ async fn main() -> anyhow::Result<()> {
         print!("> ");
         std::io::stdout().flush()?;
         line.clear();
-        if reader.read_line(&mut line)? == 0 { break; }
+        if reader.read_line(&mut line)? == 0 {
+            break;
+        }
         let input = line.trim().to_string();
-        if input.is_empty() { continue; }
-        if input == "/quit" { break; }
+        if input.is_empty() {
+            continue;
+        }
+        if input == "/quit" {
+            break;
+        }
         let messages = agent.run(Message::user(input)).await?;
         print_messages(&messages);
     }
