@@ -16,3 +16,6 @@ pub use github::GitHubClient;
 pub use loop_engine::AgentLoop;
 pub use system_prompt::SystemPromptBuilder;
 pub use token::{estimate_cost, estimate_message_tokens, estimate_tokens};
+
+#[cfg(test)]
+mod tests;

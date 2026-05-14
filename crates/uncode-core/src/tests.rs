@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::event::*;
     use crate::message::*;
     use crate::session::*;
