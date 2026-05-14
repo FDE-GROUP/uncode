@@ -8,9 +8,11 @@ pub mod context;
 pub mod github;
 pub mod loop_engine;
 pub mod system_prompt;
+pub mod token;
 
-pub use compaction::{compact_messages, estimate_tokens, should_compact};
+pub use compaction::{compact_messages, estimate_context_tokens, should_compact};
 pub use context::ContextLoader;
 pub use github::GitHubClient;
 pub use loop_engine::AgentLoop;
 pub use system_prompt::SystemPromptBuilder;
+pub use token::{estimate_cost, estimate_message_tokens, estimate_tokens};
