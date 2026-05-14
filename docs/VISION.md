@@ -335,8 +335,10 @@ uncode/
 | **Issues 面板** | 无 | **Platform 内置 Issues 面板**（浏览/管理/关联） |
 | **目标用户** | 程序员 | **专业开发者为主，兼顾非专业人员** |
 | **供应商优先级** | 国际（Claude/GPT 优先） | **中国大陆优先**（GLM/DeepSeek/Ollama） |
-| **扩展系统** | 初步插件 API | **WASM 沙箱 + 生命周期钩子** |
+| **扩展系统** | 初步插件 API | **WASM 沙箱 + 9 个生命周期钩子** |
 | **会话分析** | 无 | **Platform 数据分类 + 源码关联** |
+| **代码仓库** | [pi-mono](https://github.com/earendil-works/pi) TypeScript | **[FDE-GROUP/uncode](https://github.com/FDE-GROUP/uncode) 纯 Rust** |
+| **测试覆盖** | 219 个单元测试 | **42 个单元测试**（core/session/tools/agent/llm） |
 
 ---
 
@@ -363,56 +365,78 @@ TUI 界面和 Platform 不属于 MTE 范围——MTE 验证的是核心代理能
 
 ## 十一、开发路线图
 
-### Phase 0: 设计阶段（当前）
+### Phase 0: 设计阶段
 
-- [x] VISION.md（本文档）✓
-- [ ] TUI_DESIGN.md — TUI 交互详案
-- [ ] PLATFORM_DESIGN.md — Platform 设计详案
-- [ ] ARCHITECTURE.md — 架构详细设计
-- [ ] SESSION_SCHEMA.md — 会话数据 JSONL Schema 设计
+- [x] VISION.md（本文档）
+- [x] TUI_DESIGN.md — TUI 交互设计详案
+- [x] PLATFORM_DESIGN.md — Platform 设计详案
+- [x] ARCHITECTURE.md — 架构详细设计
+- [x] SESSION_SCHEMA.md — 会话数据 JSONL Schema
+- [x] FDE_INSIGHT.md — FDE 角色深度解读
 
-### Phase 1: 核心骨架（→ MTE 达标）
+### Phase 1: 核心骨架
 
-- [ ] uncode-core 类型系统完善
-- [ ] uncode-llm 驱动接口 + GLM/DeepSeek/Ollama 实现
-- [ ] uncode-session JSONL 存储（按 SESSION_SCHEMA.md 规范）
-- [ ] uncode-tools 基础工具集（read, write, edit, grep, bash）
-- [ ] uncode-agent 基础代理循环
-- [ ] GitHub API 集成（Issue 拉取、PR 提交）
-- [ ] uncode-cli print 模式可用
-- [ ] **分层测试**：单元测试（core/llm/session/tools）+ 集成测试（Agent 端到端 golden test）+ CI 流水线
-- [ ] **CI 配置**：GitHub Actions 跑 cargo build / test / fmt / clippy
-- [ ] **MTE 达标**：Issue→PR 全流程，CI 绿灯
+- [x] uncode-core 类型系统完善
+- [x] uncode-llm 驱动接口 + GLM/DeepSeek/Ollama 实现
+- [x] uncode-session JSONL 存储（按 SESSION_SCHEMA.md 规范）
+- [x] uncode-tools 基础工具集（read, write, edit, grep, bash）
+- [x] uncode-agent 基础代理循环
+- [x] GitHub API 集成（Issue 拉取、PR 提交）
+- [x] uncode-cli print 模式可用
+- [x] **分层测试**：单元测试（core/llm/session/tools）+ 集成测试（Agent 端到端 golden test）+ CI 流水线
+- [x] **CI 配置**：GitHub Actions 跑 cargo build / test / fmt / clippy
+- [x] **MTE 达标**：Issue→PR 全流程，CI 绿灯
 
 ### Phase 2: TUI 原型
 
-- [ ] 4 大展示模块初步实现（任务清单 / 工具调用 / 思考过程 / 阶段总结）
-- [ ] 非程序员友好的默认视图
-- [ ] 专业开发者代码细节视图（语法高亮、diff）
-- [ ] TUI 斜杠命令支持（`/issues pull` 等）
+- [x] 4 大展示模块初步实现（任务清单 / 工具调用 / 思考过程 / 阶段总结）
+- [x] 非程序员友好的 /simple 简化视图
+- [x] 专业开发者代码细节视图（语法高亮、diff）
+- [x] 输入编辑器（历史、Emacs编辑、Tab补全）
+- [x] Markdown 渲染（pulldown-cmark）
+- [x] Slash 命令系统（/help、/quit、/think 等）
+- [x] Diff 查看器（多文件、n/p 导航）
+- [x] 覆盖选择器（模型/会话选择）
 
 ### Phase 2.5: 扩展系统 + 国际供应商
 
-- [ ] WASM 扩展运行时 + 沙箱
-- [ ] 生命周期钩子系统
-- [ ] 扩展工具注册 API
-- [ ] 补充国际供应商：OpenRouter、OpenAI、Anthropic、Gemini
+- [x] WASM 扩展运行时基础框架（HookRegistry + Extension trait）
+- [x] 生命周期钩子系统（8 个钩子）
+- [x] 扩展工具注册 API
+- [x] 补充国际供应商：OpenRouter、OpenAI、Anthropic、Gemini
 
-### Phase 3: Platform 原型
+### Phase 3: Agent 引擎增强（Pi 对齐）
+
+- [x] 上下文压缩（Token估算 + 80%阈值 + LLM摘要）
+- [x] SystemPromptBuilder（builder模式 + 工具指南 + 上下文 + 技能注入）
+- [x] ContextLoader（CWD向上遍历 AGENTS.md/CLAUDE.md）
+- [x] 技能系统（SKILL.md 加载注入）
+- [x] Token 估算 + 费用计算（7 模型定价）
+- [x] 会话分支（SessionManager::branch_session）
+- [x] StopCondition trait（step_count_is / text_contains）
+- [x] CompletionRequestBuilder（builder 模式）
+- [x] `#[tool]` 宏增强（自动推导 JSON Schema）
+- [x] Shell 补全生成（--completions）
+
+### Phase 4: Platform 原型
 
 - [ ] Rust 后端服务
 - [ ] TypeScript 前端框架搭建
 - [ ] 会话数据展示 + 源码关联
 - [ ] Issues 面板
 
-### Phase 4: 生产就绪
+### Phase 5: 生产就绪
 
 - [ ] 上下文压缩
 - [ ] JSON-RPC 模式
 - [ ] TUI 错误态完善（非程序员友好）
 - [ ] Token 计数与成本追踪
 - [ ] 完善文档
+- [ ] Agent 行为质量评估（Golden Set 测试）
+- [ ] 安全增强（命令沙箱、SecretString、认证中间件）
 
 ---
 
 *本文档是 uncode 项目的顶层设计指引，所有后续设计文档和代码实现均以此为准。*
+
+当前进度：Phase 0-3 完成，Phase 4（Platform）待启动。
