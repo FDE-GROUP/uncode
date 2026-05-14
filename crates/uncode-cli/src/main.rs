@@ -26,7 +26,7 @@ struct Cli {
     issue: Option<u64>,
 
     #[arg(short, long)]
-    interactive: bool,
+    repl: bool,
 
     #[arg(long)]
     completions: bool,
@@ -89,38 +89,7 @@ async fn main() -> anyhow::Result<()> {
         agent.set_session_id(session_id.clone());
     }
 
-    if cli.interactive {
-        let event_rx = agent.subscribe();
-        let event_tx = agent.event_sender();
-        let driver_tui = driver.clone();
-        let tools_tui = tool_registry.clone();
-        let store_tui = session_store.clone();
-        let tui_system_prompt = system_prompt.clone();
-
-        tokio::spawn(async move {
-            let mut tui = uncode_tui::TuiEngine::new();
-            tui.run(event_rx, move |text| {
-                let d = driver_tui.clone();
-                let t = tools_tui.clone();
-                let s = store_tui.clone();
-                let tx = event_tx.clone();
-                let sp = tui_system_prompt.clone();
-                let sid = session_opt.clone();
-                let m = model.clone();
-                tokio::spawn(async move {
-                    let mut a = AgentLoop::with_event_sender(d, t, s, sp, m, tx);
-                    if let Some(ref sid) = sid {
-                        a.set_session_id(sid.clone());
-                    }
-                    let _ = a.run(Message::user(text)).await;
-                });
-            })
-            .await;
-        })
-        .await?;
-        return Ok(());
-    }
-
+    // --prompt 或 --issue：一次性执行后退出
     if let Some(issue_number) = cli.issue {
         let token = std::env::var("GITHUB_TOKEN").context("GITHUB_TOKEN not set")?;
 
@@ -158,28 +127,62 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // REPL mode: no --prompt, no --interactive → read stdin loop
-    use std::io::{BufRead, Write};
-    let stdin = std::io::stdin();
-    let mut reader = stdin.lock();
-    let mut line = String::new();
-    loop {
-        print!("> ");
-        std::io::stdout().flush()?;
-        line.clear();
-        if reader.read_line(&mut line)? == 0 {
-            break;
+    // --repl：纯文本 REPL 模式
+    if cli.repl {
+        use std::io::{BufRead, Write};
+        let stdin = std::io::stdin();
+        let mut reader = stdin.lock();
+        let mut line = String::new();
+        loop {
+            print!("> ");
+            std::io::stdout().flush()?;
+            line.clear();
+            if reader.read_line(&mut line)? == 0 {
+                break;
+            }
+            let input = line.trim().to_string();
+            if input.is_empty() {
+                continue;
+            }
+            if input == "/quit" {
+                break;
+            }
+            let messages = agent.run(Message::user(input)).await?;
+            print_messages(&messages);
         }
-        let input = line.trim().to_string();
-        if input.is_empty() {
-            continue;
-        }
-        if input == "/quit" {
-            break;
-        }
-        let messages = agent.run(Message::user(input)).await?;
-        print_messages(&messages);
+        return Ok(());
     }
+
+    // 默认：启动 TUI
+    let event_rx = agent.subscribe();
+    let event_tx = agent.event_sender();
+    let driver_tui = driver.clone();
+    let tools_tui = tool_registry.clone();
+    let store_tui = session_store.clone();
+    let tui_system_prompt = system_prompt.clone();
+
+    tokio::spawn(async move {
+        let mut tui = uncode_tui::TuiEngine::new();
+        tui.run(event_rx, move |text| {
+            let d = driver_tui.clone();
+            let t = tools_tui.clone();
+            let s = store_tui.clone();
+            let tx = event_tx.clone();
+            let sp = tui_system_prompt.clone();
+            let sid = session_opt.clone();
+            let m = model.clone();
+            tokio::spawn(async move {
+                let mut a = AgentLoop::with_event_sender(d, t, s, sp, m, tx);
+                if let Some(ref sid) = sid {
+                    a.set_session_id(sid.clone());
+                }
+                let _ = a.run(Message::user(text)).await;
+            });
+        })
+        .await;
+    })
+    .await?;
+
     Ok(())
 }
 
@@ -205,7 +208,8 @@ fn print_messages(messages: &[Message]) {
                     ContentBlock::Text { text } if !text.is_empty() => println!("{text}"),
                     ContentBlock::ToolResult(tr) => {
                         let prefix = if tr.is_error { "error" } else { "result" };
-                        println!("[{prefix}] {}", &tr.content[..tr.content.len().min(300)]);
+                        let preview = tr.content.get(..300).unwrap_or(&tr.content);
+                        println!("[{prefix}] {preview}");
                     }
                     _ => {}
                 }

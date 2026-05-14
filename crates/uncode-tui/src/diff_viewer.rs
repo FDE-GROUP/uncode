@@ -130,15 +130,15 @@ fn parse_diff(text: &str) -> Vec<DiffFile> {
                 kind: DiffKind::Header,
                 text: line.to_string(),
             });
-        } else if line.starts_with('+') {
+        } else if let Some(rest) = line.strip_prefix('+') {
             current_hunks.push(DiffLine {
                 kind: DiffKind::Added,
-                text: line[1..].to_string(),
+                text: rest.to_string(),
             });
-        } else if line.starts_with('-') {
+        } else if let Some(rest) = line.strip_prefix('-') {
             current_hunks.push(DiffLine {
                 kind: DiffKind::Removed,
-                text: line[1..].to_string(),
+                text: rest.to_string(),
             });
         } else if !line.is_empty() {
             current_hunks.push(DiffLine {

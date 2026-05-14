@@ -135,6 +135,7 @@ impl ThinkingLevel {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ThinkingLevel {
     fn default() -> Self {
         Self::Medium
@@ -164,14 +165,14 @@ impl ChatState {
     }
 
     /// 处理 AgentEvent，更新对话消息列表
-    pub fn handle_event(&mut self, event: &AgentEvent) {
+    pub fn handle_event(&mut self, event: AgentEvent) {
         match event {
             AgentEvent::ContentDelta {
                 delta_type,
                 content,
             } => match delta_type {
-                DeltaType::Text => self.append_assistant_text(content),
-                DeltaType::Thinking => self.append_thinking_text(content),
+                DeltaType::Text => self.append_assistant_text(&content),
+                DeltaType::Thinking => self.append_thinking_text(&content),
                 _ => {}
             },
             AgentEvent::ToolCallStart {
@@ -181,9 +182,9 @@ impl ChatState {
             } => {
                 self.finalize_assistant();
                 if tool_name == "bash" {
-                    let command = extract_bash_command(arguments_summary);
+                    let command = extract_bash_command(&arguments_summary);
                     self.messages.push(ChatMessage::BashExecution {
-                        tool_id: tool_id.clone(),
+                        tool_id,
                         command,
                         exit_code: None,
                         stdout: String::new(),
@@ -193,9 +194,9 @@ impl ChatState {
                     });
                 } else {
                     self.messages.push(ChatMessage::ToolCall {
-                        tool_id: tool_id.clone(),
-                        tool_name: tool_name.clone(),
-                        arguments_summary: arguments_summary.clone(),
+                        tool_id,
+                        tool_name,
+                        arguments_summary,
                         status: ToolCallRenderStatus::Running,
                         duration_ms: None,
                         result: None,
@@ -206,23 +207,23 @@ impl ChatState {
             AgentEvent::ToolCallProgress {
                 tool_id, detail, ..
             } => {
-                if let Some(ChatMessage::ToolCall { result, .. }) = self
-                    .messages
-                    .iter_mut()
-                    .rev()
-                    .find(|m| matches!(m, ChatMessage::ToolCall { tool_id: tid, .. } if tid == tool_id))
-                {
-                    result.get_or_insert_with(String::new).push_str(detail);
-                    result.get_or_insert_with(String::new).push('\n');
-                }
-                if let Some(ChatMessage::BashExecution { stdout, .. }) = self
-                    .messages
-                    .iter_mut()
-                    .rev()
-                    .find(|m| matches!(m, ChatMessage::BashExecution { tool_id: tid, .. } if tid == tool_id))
-                {
-                    stdout.push_str(detail);
-                    stdout.push('\n');
+                if let Some(msg) = self.messages.iter_mut().rev().find(|m| match m {
+                    ChatMessage::ToolCall { tool_id: tid, .. }
+                    | ChatMessage::BashExecution { tool_id: tid, .. } => tid == &tool_id,
+                    _ => false,
+                }) {
+                    match msg {
+                        ChatMessage::ToolCall { result, .. } => {
+                            let r = result.get_or_insert_with(String::new);
+                            r.push_str(&detail);
+                            r.push('\n');
+                        }
+                        ChatMessage::BashExecution { stdout, .. } => {
+                            stdout.push_str(&detail);
+                            stdout.push('\n');
+                        }
+                        _ => {}
+                    }
                 }
             }
             AgentEvent::ToolCallEnd {
@@ -231,50 +232,42 @@ impl ChatState {
                 duration_ms,
                 ..
             } => {
-                let render_status = ToolCallRenderStatus::from(status.clone());
+                let render_status = ToolCallRenderStatus::from(status);
                 if let Some(msg) = self.messages.iter_mut().rev().find(|m| match m {
-                    ChatMessage::ToolCall { tool_id: tid, .. } => tid == tool_id,
+                    ChatMessage::ToolCall { tool_id: tid, .. }
+                    | ChatMessage::BashExecution { tool_id: tid, .. } => tid == &tool_id,
                     _ => false,
                 }) {
-                    if let ChatMessage::ToolCall {
-                        status: s,
-                        duration_ms: d,
-                        ..
-                    } = msg
-                    {
-                        *s = render_status;
-                        *d = Some(*duration_ms);
-                    }
-                }
-                if let Some(msg) = self.messages.iter_mut().rev().find(|m| match m {
-                    ChatMessage::BashExecution { tool_id: tid, .. } => tid == tool_id,
-                    _ => false,
-                }) {
-                    if let ChatMessage::BashExecution {
-                        duration_ms: d,
-                        stdout,
-                        ..
-                    } = msg
-                    {
-                        *d = Some(*duration_ms);
-                        if let Some(exit_pos) = stdout.rfind("exit code:") {
-                            let after = &stdout[exit_pos + 10..];
-                            *d = Some(*duration_ms);
-                            if let Ok(code) = after.trim().parse::<i32>() {
-                                // Store exit code in duration_ms field for now, handled below
-                                let _ = code;
+                    match msg {
+                        ChatMessage::ToolCall {
+                            status: s,
+                            duration_ms: d,
+                            ..
+                        } => {
+                            *s = render_status;
+                            *d = Some(duration_ms);
+                        }
+                        ChatMessage::BashExecution {
+                            duration_ms: d,
+                            stdout,
+                            ..
+                        } => {
+                            *d = Some(duration_ms);
+                            if let Some(exit_pos) = stdout.rfind("exit code:") {
+                                let after = &stdout[exit_pos + 10..];
+                                if let Ok(_code) = after.trim().parse::<i32>() {
+                                    // TODO: store exit_code when field is available
+                                }
                             }
                         }
+                        _ => {}
                     }
                 }
             }
             AgentEvent::Error {
-                category, message, ..
+                message, category, ..
             } => {
-                self.messages.push(ChatMessage::Error {
-                    message: message.clone(),
-                    category: category.clone(),
-                });
+                self.messages.push(ChatMessage::Error { message, category });
             }
             AgentEvent::PhaseSummary {
                 completed,
@@ -282,8 +275,8 @@ impl ChatState {
                 ..
             } => {
                 self.messages.push(ChatMessage::Summary {
-                    completed: completed.clone(),
-                    next_steps: next_steps.clone(),
+                    completed,
+                    next_steps,
                 });
             }
             AgentEvent::CompactionComplete {
@@ -293,19 +286,18 @@ impl ChatState {
                 summary_text,
             } => {
                 self.messages.push(ChatMessage::CompactionSummary {
-                    messages_replaced: *messages_replaced,
-                    tokens_before: *tokens_before,
-                    tokens_after: *tokens_after,
-                    summary_text: summary_text.clone(),
+                    messages_replaced,
+                    tokens_before,
+                    tokens_after,
+                    summary_text,
                 });
             }
             AgentEvent::MessageQueued { text } => {
-                self.messages
-                    .push(ChatMessage::QueuedMessage { text: text.clone() });
+                self.messages.push(ChatMessage::QueuedMessage { text });
             }
             AgentEvent::MessageDelivered { text } => {
                 self.messages
-                    .retain(|m| !matches!(m, ChatMessage::QueuedMessage { text: t } if t == text));
+                    .retain(|m| !matches!(m, ChatMessage::QueuedMessage { text: t } if t == &text));
             }
             _ => {}
         }
@@ -366,7 +358,7 @@ impl ChatState {
         renderers: &ToolRendererRegistry,
         theme: &Theme,
     ) -> Vec<Line<'static>> {
-        let mut all_lines: Vec<Line<'static>> = Vec::new();
+        let mut all_lines: Vec<Line<'static>> = Vec::with_capacity(self.messages.len() * 3);
 
         if self.messages.is_empty() {
             all_lines.push(Line::from(Span::styled(
@@ -570,6 +562,7 @@ fn render_user_message(
     vec![Line::from(spans)]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_tool_call(
     tool_name: &str,
     args: &str,
@@ -750,8 +743,8 @@ mod tests {
     #[test]
     fn test_assistant_text_accumulation() {
         let mut state = ChatState::new();
-        state.handle_event(&make_text_delta("Hello "));
-        state.handle_event(&make_text_delta("World"));
+        state.handle_event(make_text_delta("Hello "));
+        state.handle_event(make_text_delta("World"));
         assert_eq!(state.messages.len(), 1);
         if let ChatMessage::Assistant { text, .. } = &state.messages[0] {
             assert_eq!(text, "Hello World");
@@ -763,8 +756,8 @@ mod tests {
     #[test]
     fn test_thinking_text_accumulation() {
         let mut state = ChatState::new();
-        state.handle_event(&make_thinking_delta("分析中..."));
-        state.handle_event(&make_thinking_delta("完成"));
+        state.handle_event(make_thinking_delta("分析中..."));
+        state.handle_event(make_thinking_delta("完成"));
         assert_eq!(state.messages.len(), 1);
         if let ChatMessage::Thinking { text, .. } = &state.messages[0] {
             assert_eq!(text, "分析中...完成");
@@ -776,16 +769,16 @@ mod tests {
     #[test]
     fn test_tool_call_lifecycle() {
         let mut state = ChatState::new();
-        state.handle_event(&make_text_delta("正在分析"));
+        state.handle_event(make_text_delta("正在分析"));
 
-        state.handle_event(&AgentEvent::ToolCallStart {
+        state.handle_event(AgentEvent::ToolCallStart {
             tool_id: "t1".into(),
             tool_name: "read".into(),
             arguments_summary: "src/main.rs".into(),
         });
         assert_eq!(state.messages.len(), 2);
 
-        state.handle_event(&AgentEvent::ToolCallEnd {
+        state.handle_event(AgentEvent::ToolCallEnd {
             tool_id: "t1".into(),
             status: ToolCallStatus::Success,
             duration_ms: 42,
@@ -808,7 +801,7 @@ mod tests {
     #[test]
     fn test_bash_execution() {
         let mut state = ChatState::new();
-        state.handle_event(&AgentEvent::ToolCallStart {
+        state.handle_event(AgentEvent::ToolCallStart {
             tool_id: "b1".into(),
             tool_name: "bash".into(),
             arguments_summary: r#"{"command":"cargo test"}"#.into(),
@@ -822,7 +815,7 @@ mod tests {
     #[test]
     fn test_error_message() {
         let mut state = ChatState::new();
-        state.handle_event(&AgentEvent::Error {
+        state.handle_event(AgentEvent::Error {
             category: ErrorCategory::Llm,
             message: "timeout".into(),
             recoverable: true,
@@ -836,7 +829,7 @@ mod tests {
     #[test]
     fn test_summary_message() {
         let mut state = ChatState::new();
-        state.handle_event(&AgentEvent::PhaseSummary {
+        state.handle_event(AgentEvent::PhaseSummary {
             phase: 1,
             completed: vec!["分析代码".into()],
             issues: vec![],
@@ -871,7 +864,7 @@ mod tests {
     #[test]
     fn test_finalize_assistant_caches_markdown() {
         let mut state = ChatState::new();
-        state.handle_event(&make_text_delta("**bold** text"));
+        state.handle_event(make_text_delta("**bold** text"));
         assert!(matches!(
             &state.messages[0],
             ChatMessage::Assistant {
@@ -887,5 +880,134 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_render_lines_default_theme() {
+        let state = ChatState::new();
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].to_string().contains("描述你的需求"));
+    }
+
+    #[test]
+    fn test_render_lines_light_theme() {
+        let state = ChatState::new();
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::light();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme);
+        assert_eq!(lines.len(), 1);
+    }
+
+    #[test]
+    fn test_render_tool_call_with_renderer() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::ToolCall {
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            arguments_summary: r#"{"path":"src/main.rs"}"#.into(),
+            status: ToolCallRenderStatus::Success,
+            duration_ms: Some(150),
+            result: Some("line1\nline2".into()),
+            expanded: true,
+        });
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        // 验证自定义渲染器输出包含路径信息
+        assert!(combined.contains("src/main.rs"));
+        // 验证状态图标
+        assert!(combined.contains("✅"));
+        // 验证耗时
+        assert!(combined.contains("150ms"));
+    }
+
+    #[test]
+    fn test_render_error_with_theme_color() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::Error {
+            message: "编译失败".into(),
+            category: ErrorCategory::Tool,
+        });
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains("编译失败"));
+        assert!(combined.contains("✖"));
+    }
+
+    #[test]
+    fn test_render_summary_with_theme() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::Summary {
+            completed: vec!["重构完成".into()],
+            next_steps: vec!["运行测试".into()],
+        });
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains("阶段总结"));
+        assert!(combined.contains("重构完成"));
+        assert!(combined.contains("运行测试"));
+    }
+
+    #[test]
+    fn test_render_bash_with_theme() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::BashExecution {
+            tool_id: "b1".into(),
+            command: "cargo test".into(),
+            exit_code: Some(0),
+            stdout: "running 5 tests\nall passed".into(),
+            stderr: String::new(),
+            duration_ms: Some(3200),
+            with_agent: true,
+        });
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains("cargo test"));
+        assert!(combined.contains("✅"));
+        assert!(combined.contains("3.2s"));
+        assert!(combined.contains("running 5 tests"));
+    }
+
+    #[test]
+    fn test_render_queued_message_with_theme() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::QueuedMessage {
+            text: "帮我修复那个 bug".into(),
+        });
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains("排队中"));
+        assert!(combined.contains("帮我修复那个 bug"));
+    }
+
+    #[test]
+    fn test_render_user_message_with_theme() {
+        let mut state = ChatState::new();
+        state.push_user_message("分析 @Cargo.toml".into());
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains("分析 @Cargo.toml"));
     }
 }

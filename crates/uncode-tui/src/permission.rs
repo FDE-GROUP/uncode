@@ -1,10 +1,10 @@
 /// 权限管理 — 危险操作确认
 ///
 /// 工具分类：
-/// - 自动允许：read, grep, find, ls
-/// - 需确认：edit, write
-/// - bash：命令白名单检查
-
+///  - 自动允许：read, grep, find, ls
+///  - 需确认：edit, write
+///  - bash：命令白名单检查
+///
 /// 只读 bash 命令白名单
 const SAFE_COMMANDS: &[&str] = &[
     "ls",
@@ -77,12 +77,8 @@ impl PermissionManager {
             "edit" | "write" => true,
             // Bash：检查命令白名单
             "bash" => {
-                if self.auto_allow_bash_safe {
-                    let command = extract_command(arguments);
-                    !is_safe_command(&command)
-                } else {
-                    true
-                }
+                let command = extract_command(arguments);
+                !self.auto_allow_bash_safe || !is_safe_command(&command)
             }
             // 其他工具：默认需确认
             _ => true,
@@ -111,10 +107,7 @@ impl PermissionManager {
 
     /// 确认当前待确认项
     pub fn confirm(&mut self, _choice: ConfirmOption) -> Option<PendingConfirmation> {
-        self.pending.take().map(|p| {
-            // In the future, this would send the response back to AgentLoop
-            p
-        })
+        self.pending.take()
     }
 
     /// 获取当前待确认项

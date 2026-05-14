@@ -17,9 +17,9 @@ cargo test -p uncode-core test_name  # Run single test
 cargo fmt --check                # Format check
 cargo clippy --all-targets       # Lint
 cargo run -p uncode-cli -- --model deepseek-v3 "prompt"  # Run CLI
-cd platform && bun install && bun dev   # Platform frontend dev server
-cd platform && bun run build           # Platform frontend build
-cd platform && bun run lint            # Platform frontend lint
+cd apps/platform && bun install && bun dev   # Platform frontend dev server
+cd apps/platform && bun run build           # Platform frontend build
+cd apps/platform && bun run lint            # Platform frontend lint
 ```
 
 CI runs: `cargo fmt --check`, `cargo clippy --all-targets --no-deps`, `cargo build --workspace`, `cargo test --workspace` with `RUSTFLAGS="-D warnings"`.

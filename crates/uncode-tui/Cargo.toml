@@ -6,6 +6,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish = false
+authors.workspace = true
 
 [dependencies]
 uncode-core.workspace = true
@@ -38,3 +40,6 @@ tree-sitter-java.workspace = true
 tree-sitter-c.workspace = true
 unicode-width.workspace = true
 unicode-segmentation.workspace = true
+
+[lints]
+workspace = true

@@ -28,7 +28,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
-repository = "https://github.com/ea-org/uncode"
+repository = "https://github.com/FDE-GROUP/uncode"
 authors = ["EA Team"]
 
 [workspace.dependencies]
@@ -56,6 +56,8 @@ reqwest = { version = "0.12", default-features = false, features = [
     "json", "stream", "rustls-tls", "gzip", "deflate", "brotli",
 ] }
 eventsource-stream = "0.2"
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors", "fs"] }
 
 # ── CLI ──
 clap = { version = "4", features = ["derive"] }

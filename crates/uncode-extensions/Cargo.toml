@@ -6,6 +6,8 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+publish = false
+authors.workspace = true
 
 [dependencies]
 uncode-core.workspace = true
@@ -19,3 +21,6 @@ tracing.workspace = true
 async-trait.workspace = true
 anyhow.workspace = true
 dashmap.workspace = true
+
+[lints]
+workspace = true
