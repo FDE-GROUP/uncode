@@ -13,7 +13,6 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     let mut current_line = Vec::new();
     let mut current_style = Style::default();
-    let mut in_code_block = false;
 
     for event in parser {
         match event {
@@ -28,7 +27,6 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                 Tag::Strong => current_style = current_style.add_modifier(Modifier::BOLD),
                 Tag::Emphasis => current_style = current_style.add_modifier(Modifier::ITALIC),
                 Tag::CodeBlock(_) => {
-                    in_code_block = true;
                     current_style = Style::default().fg(Color::Cyan);
                 }
                 Tag::Item => {
@@ -58,7 +56,6 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     current_style = Style::default();
                 }
                 TagEnd::CodeBlock => {
-                    in_code_block = false;
                     current_style = Style::default();
                 }
                 TagEnd::Item => {
