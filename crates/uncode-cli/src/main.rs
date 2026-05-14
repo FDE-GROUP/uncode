@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use clap::{CommandFactory, Parser};
-use clap_complete::{Shell, generate};
-use std::io;
+use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use uncode_agent::{AgentLoop, ContextLoader, GitHubClient, SystemPromptBuilder};
@@ -18,8 +16,8 @@ use uncode_tools::{BashTool, EditTool, GrepTool, ReadTool, WriteTool};
 #[derive(Parser)]
 #[command(name = "uncode", about = "AI Agent Coding System")]
 struct Cli {
-    #[arg(short, long, default_value = "deepseek-v3")]
-    model: String,
+    #[arg(short, long)]
+    model: Option<String>,
 
     #[arg(long)]
     session: Option<String>,
@@ -44,13 +42,8 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    if cli.completions {
-        let mut cmd = Cli::command();
-        let shell = Shell::from_env().unwrap_or(Shell::Bash);
-        generate(shell, &mut cmd, "uncode", &mut io::stdout());
-        return Ok(());
-    }
     let config = load_config()?;
+    let model = cli.model.clone().unwrap_or_else(|| config.model.clone());
 
     let tool_registry = Arc::new(ToolRegistry::new());
     tool_registry.register("read".to_string(), Arc::new(ReadTool::new()));
@@ -66,8 +59,8 @@ async fn main() -> anyhow::Result<()> {
     let session_store = Arc::new(SessionStore::new(session_dir));
 
     let driver = provider_registry
-        .get(&cli.model)
-        .or_else(|| provider_registry.get("deepseek-v3"))
+        .get(&model)
+        .or_else(|| provider_registry.get("deepseek-v4-pro"))
         .or_else(|| provider_registry.get("glm-4"))
         .or_else(|| provider_registry.get("ollama"))
         .context("no LLM driver available")?;
@@ -89,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
         tool_registry.clone(),
         session_store.clone(),
         system_prompt,
-        cli.model.clone(),
+        model.clone(),
     );
 
     if let Some(session_id) = &session_opt {
