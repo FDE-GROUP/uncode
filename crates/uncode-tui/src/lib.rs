@@ -19,7 +19,6 @@ use tokio::sync::broadcast;
 use uncode_core::event::{AgentEvent, TaskStatus};
 
 pub struct TuiEngine {
-    events: Vec<AgentEvent>,
     current_task: String,
     current_tools: Vec<String>,
     current_thinking: String,
@@ -36,7 +35,6 @@ pub struct TuiEngine {
 impl TuiEngine {
     pub fn new() -> Self {
         Self {
-            events: Vec::new(),
             current_task: String::new(),
             current_tools: Vec::new(),
             current_thinking: String::new(),
@@ -115,7 +113,6 @@ impl TuiEngine {
             }
             _ => {}
         }
-        self.events.push(event);
     }
 
     pub fn render(&self, f: &mut Frame) {

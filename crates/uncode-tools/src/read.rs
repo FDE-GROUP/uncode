@@ -1,5 +1,4 @@
 use std::fs;
-use std::path::PathBuf;
 
 use async_trait::async_trait;
 use uncode_core::error::UncodeResult;
@@ -75,8 +74,4 @@ impl ToolExecutor for ReadTool {
 
         Ok(result)
     }
-}
-
-pub fn read_tool_path(path: &str) -> PathBuf {
-    PathBuf::from(path)
 }

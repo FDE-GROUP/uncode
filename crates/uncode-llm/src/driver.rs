@@ -54,8 +54,3 @@ pub trait LlmDriver: Send + Sync {
         request: CompletionRequest,
     ) -> Result<BoxStream<'static, StreamEvent>, uncode_core::error::UncodeError>;
 }
-
-pub struct ChatMessage {
-    pub role: String,
-    pub content: String,
-}
