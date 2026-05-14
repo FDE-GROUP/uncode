@@ -2925,6 +2925,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "dirs",
  "futures",
  "reqwest",
  "serde",
