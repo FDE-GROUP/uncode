@@ -12,4 +12,7 @@ target/
 # OS
 .DS_Store
 Thumbs.db
-bun.lock\nnode_modules/\npackage.json\ntsconfig.json\nindex.ts
+
+# Frontend
+node_modules/
+dist/
