@@ -2,10 +2,35 @@
 ///
 /// 每个工具有独立的 render_call() 和 render_result() 函数，
 /// 用于内联折叠方框中的摘要和展开内容。
-
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use std::collections::HashMap;
+
+/// 已知工具类型 — 静态分发，避免 HashMap + vtable 开销
+#[derive(Clone, Copy)]
+enum ToolKind {
+    Read,
+    Write,
+    Edit,
+    Grep,
+    Bash,
+    Find,
+    Ls,
+}
+
+impl ToolKind {
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "read" => Some(Self::Read),
+            "write" => Some(Self::Write),
+            "edit" => Some(Self::Edit),
+            "grep" => Some(Self::Grep),
+            "bash" => Some(Self::Bash),
+            "find" => Some(Self::Find),
+            "ls" => Some(Self::Ls),
+            _ => None,
+        }
+    }
+}
 
 /// 工具渲染 trait
 pub trait ToolRenderer: Send + Sync {
@@ -15,29 +40,25 @@ pub trait ToolRenderer: Send + Sync {
     fn render_result(&self, result: &str, width: u16) -> Vec<Line<'static>>;
 }
 
-/// 工具渲染注册表
-pub struct ToolRendererRegistry {
-    renderers: HashMap<String, Box<dyn ToolRenderer>>,
-}
+/// 工具渲染注册表 — 零分配静态分发
+pub struct ToolRendererRegistry;
 
 impl ToolRendererRegistry {
     pub fn new() -> Self {
-        let mut renderers: HashMap<String, Box<dyn ToolRenderer>> = HashMap::new();
-        renderers.insert("read".into(), Box::new(ReadRenderer));
-        renderers.insert("write".into(), Box::new(WriteRenderer));
-        renderers.insert("edit".into(), Box::new(EditRenderer));
-        renderers.insert("grep".into(), Box::new(GrepRenderer));
-        renderers.insert("bash".into(), Box::new(BashRenderer));
-        renderers.insert("find".into(), Box::new(FindRenderer));
-        renderers.insert("ls".into(), Box::new(LsRenderer));
-        Self { renderers }
+        Self
     }
 
     pub fn get(&self, tool_name: &str) -> &dyn ToolRenderer {
-        self.renderers
-            .get(tool_name)
-            .map(|b| b.as_ref())
-            .unwrap_or(&FALLBACK_RENDERER as &dyn ToolRenderer)
+        match ToolKind::from_name(tool_name) {
+            Some(ToolKind::Read) => &STATIC_READ,
+            Some(ToolKind::Write) => &STATIC_WRITE,
+            Some(ToolKind::Edit) => &STATIC_EDIT,
+            Some(ToolKind::Grep) => &STATIC_GREP,
+            Some(ToolKind::Bash) => &STATIC_BASH,
+            Some(ToolKind::Find) => &STATIC_FIND,
+            Some(ToolKind::Ls) => &STATIC_LS,
+            None => &STATIC_FALLBACK,
+        }
     }
 }
 
@@ -48,6 +69,15 @@ impl Default for ToolRendererRegistry {
 }
 
 // --- Per-tool renderers ---
+
+static STATIC_READ: ReadRenderer = ReadRenderer;
+static STATIC_WRITE: WriteRenderer = WriteRenderer;
+static STATIC_EDIT: EditRenderer = EditRenderer;
+static STATIC_GREP: GrepRenderer = GrepRenderer;
+static STATIC_BASH: BashRenderer = BashRenderer;
+static STATIC_FIND: FindRenderer = FindRenderer;
+static STATIC_LS: LsRenderer = LsRenderer;
+static STATIC_FALLBACK: FallbackRenderer = FallbackRenderer;
 
 struct ReadRenderer;
 
@@ -253,8 +283,6 @@ impl ToolRenderer for LsRenderer {
 // --- Fallback ---
 
 struct FallbackRenderer;
-
-static FALLBACK_RENDERER: FallbackRenderer = FallbackRenderer;
 
 impl ToolRenderer for FallbackRenderer {
     fn render_call(&self, args: &str, _width: u16) -> Vec<Line<'static>> {

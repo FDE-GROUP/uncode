@@ -1,6 +1,7 @@
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::mem;
 
 /// 将 Markdown 文本渲染为 ratatui Line 列表
 pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
@@ -37,18 +38,9 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                 _ => {}
             },
             Event::End(tag) => match tag {
-                TagEnd::Paragraph => {
+                TagEnd::Paragraph | TagEnd::Heading(_) => {
                     if !current_line.is_empty() {
-                        lines.push(Line::from(current_line.clone()));
-                        current_line.clear();
-                    }
-                    lines.push(Line::from(""));
-                    current_style = Style::default();
-                }
-                TagEnd::Heading(_) => {
-                    if !current_line.is_empty() {
-                        lines.push(Line::from(current_line.clone()));
-                        current_line.clear();
+                        lines.push(Line::from(mem::take(&mut current_line)));
                     }
                     lines.push(Line::from(""));
                     current_style = Style::default();
@@ -59,10 +51,11 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                 TagEnd::CodeBlock => {
                     current_style = Style::default();
                 }
-                TagEnd::Item => {
+                TagEnd::Item =>
+                {
+                    #[allow(clippy::collapsible_match)]
                     if !current_line.is_empty() {
-                        lines.push(Line::from(current_line.clone()));
-                        current_line.clear();
+                        lines.push(Line::from(mem::take(&mut current_line)));
                     }
                 }
                 TagEnd::List(_) => {
@@ -74,11 +67,11 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                 if text.trim().is_empty() && current_line.is_empty() {
                     continue;
                 }
-                current_line.push(Span::styled(text.to_string(), current_style));
+                current_line.push(Span::styled(text.into_string(), current_style));
             }
             Event::Code(code) => {
                 current_line.push(Span::styled(
-                    code.to_string(),
+                    code.into_string(),
                     Style::default().fg(Color::Cyan).bg(Color::Rgb(30, 30, 30)),
                 ));
             }
@@ -86,8 +79,7 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                 current_line.push(Span::raw(" "));
             }
             Event::HardBreak => {
-                lines.push(Line::from(current_line.clone()));
-                current_line.clear();
+                lines.push(Line::from(mem::take(&mut current_line)));
             }
             Event::Rule => {
                 lines.push(Line::from("───"));

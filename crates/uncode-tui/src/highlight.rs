@@ -22,7 +22,7 @@ fn highlight_line(line: &str, keywords: &[String]) -> Line<'static> {
         .collect();
 
     for word in words {
-        let trimmed = word.trim_end_matches(&[
+        let trimmed = word.trim_end_matches([
             ' ', '(', ')', '{', '}', '[', ']', ':', ';', ',', '.', '<', '>', '!', '=', '+', '-',
             '*', '/',
         ]);

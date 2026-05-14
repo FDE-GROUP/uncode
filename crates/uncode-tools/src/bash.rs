@@ -60,24 +60,20 @@ impl ToolExecutor for BashTool {
         .map_err(|_| uncode_core::error::UncodeError::Tool("timeout".into()))?
         .map_err(|e| uncode_core::error::UncodeError::Tool(format!("bash: {e}")))?;
 
-        let mut result = String::new();
-        if !output.stdout.is_empty() {
-            result.push_str(&String::from_utf8_lossy(&output.stdout));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        let mut parts: Vec<String> = Vec::new();
+        if !stdout.is_empty() {
+            parts.push(stdout.into_owned());
         }
-        if !output.stderr.is_empty() {
-            if !result.is_empty() {
-                result.push('\n');
-            }
-            result.push_str("stderr:\n");
-            result.push_str(&String::from_utf8_lossy(&output.stderr));
+        if !stderr.is_empty() {
+            parts.push(format!("stderr:\n{stderr}"));
         }
         if !output.status.success() {
-            result.push_str(&format!(
-                "\nexit code: {}",
-                output.status.code().unwrap_or(-1)
-            ));
+            parts.push(format!("exit code: {}", output.status.code().unwrap_or(-1)));
         }
 
-        Ok(result)
+        Ok(parts.join("\n"))
     }
 }

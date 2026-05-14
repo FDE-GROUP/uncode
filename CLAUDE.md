@@ -17,9 +17,9 @@ cargo test -p uncode-core test_name  # Run single test
 cargo fmt --check                # Format check
 cargo clippy --all-targets       # Lint
 cargo run -p uncode-cli -- --model deepseek-v3 "prompt"  # Run CLI
-cd platform && bun install && bun dev   # Platform frontend dev server
-cd platform && bun run build           # Platform frontend build
-cd platform && bun run lint            # Platform frontend lint
+cd apps/platform && bun install && bun dev   # Platform frontend dev server
+cd apps/platform && bun run build           # Platform frontend build
+cd apps/platform && bun run lint            # Platform frontend lint
 ```
 
 CI runs: `cargo fmt --check`, `cargo clippy --all-targets --no-deps`, `cargo build --workspace`, `cargo test --workspace` with `RUSTFLAGS="-D warnings"`.
@@ -69,6 +69,17 @@ Cross-layer communication uses event streams. Upper layers subscribe to events, 
 - **Branch naming**: `feat/N-desc`, `fix/N-desc`, `refactor/N-desc`, `docs/N-desc`, `test/N-desc`, `perf/N-desc`
 - **Documentation language**: Chinese (中文)
 - **Keep main green**: main branch must always build and pass all tests
+
+### 提交前必须本地执行 CI 预检测
+
+推送代码或提交审核前，**必须**在本地运行以下四项检查，全部通过后才能 push：
+
+```bash
+RUSTFLAGS="-D warnings" cargo fmt --check --all
+RUSTFLAGS="-D warnings" cargo clippy --all-targets --no-deps
+RUSTFLAGS="-D warnings" cargo build --workspace
+RUSTFLAGS="-D warnings" cargo test --workspace
+```
 
 ## LLM Provider Implementations
 

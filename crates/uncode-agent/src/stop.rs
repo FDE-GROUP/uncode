@@ -1,4 +1,4 @@
-use uncode_core::message::Message;
+use uncode_core::message::{ContentBlock, Message};
 
 pub enum StopReason {
     MaxSteps,
@@ -35,16 +35,13 @@ pub struct TextContainsStop {
 
 impl StopCondition for TextContainsStop {
     fn should_stop(&self, _turn: u64, messages: &[Message]) -> Option<StopReason> {
-        for msg in messages.iter().rev().take(3) {
-            for block in &msg.content {
-                if let uncode_core::message::ContentBlock::Text { text } = block {
-                    if text.contains(&self.text) {
-                        return Some(StopReason::Completed);
-                    }
-                }
-            }
-        }
-        None
+        let found = messages
+            .iter()
+            .rev()
+            .take(3)
+            .flat_map(|msg| msg.content.iter())
+            .any(|block| matches!(block, ContentBlock::Text { text } if text.contains(&self.text)));
+        found.then_some(StopReason::Completed)
     }
 }
 

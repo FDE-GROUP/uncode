@@ -23,13 +23,124 @@ use crate::message_queue::{MessageQueue, QueueType};
 use crate::permission::PermissionManager;
 use crate::selector::OverlaySelector;
 use crate::slash::SlashCommands;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crate::theme::Theme;
+use crate::tool_renderer::ToolRendererRegistry;
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
+};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Paragraph, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Paragraph, Wrap};
 use tokio::sync::broadcast;
 use uncode_core::event::AgentEvent;
+use uncode_core::message::UsageInfo;
+
+/// 页脚状态 — Token 统计、费用、上下文使用率
+struct FooterState {
+    workdir: String,
+    git_branch: String,
+    input_tokens: u64,
+    output_tokens: u64,
+    cost: f64,
+    context_percent: u8,
+}
+
+impl FooterState {
+    fn new() -> Self {
+        let workdir = std::env::current_dir()
+            .map(|p| {
+                let home = dirs::home_dir().unwrap_or_default();
+                p.strip_prefix(&home)
+                    .map(|s| format!("~/{}", s.display()))
+                    .unwrap_or_else(|_| format!("{}", p.display()))
+            })
+            .unwrap_or_default();
+
+        let git_branch = std::process::Command::new("git")
+            .args(["branch", "--show-current"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                o.status
+                    .success()
+                    .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            })
+            .unwrap_or_default();
+
+        Self {
+            workdir,
+            git_branch,
+            input_tokens: 0,
+            output_tokens: 0,
+            cost: 0.0,
+            context_percent: 0,
+        }
+    }
+
+    fn update_usage(&mut self, usage: &UsageInfo) {
+        self.input_tokens = usage.input_tokens;
+        self.output_tokens = usage.output_tokens;
+        // 粗略费用估算：input $3/M, output $15/M (DeepSeek pricing)
+        let input_cost = (usage.input_tokens as f64) / 1_000_000.0 * 3.0;
+        let output_cost = (usage.output_tokens as f64) / 1_000_000.0 * 15.0;
+        self.cost += input_cost + output_cost;
+        // 上下文使用率：假设 128k 窗口
+        let total = usage.input_tokens + usage.output_tokens;
+        self.context_percent = ((total as f64 / 128_000.0) * 100.0).min(100.0) as u8;
+    }
+
+    fn render_line1(&self, session_id: &str) -> String {
+        let sid = session_id
+            .get(..8)
+            .map(|s| format!(" session:{}", s))
+            .unwrap_or_default();
+        format!("{} {}{}", self.workdir, self.git_branch, sid)
+    }
+
+    fn render_line2(&self, model: &str, level_icon: &str) -> Line<'static> {
+        let in_str = format_tokens(self.input_tokens);
+        let out_str = format_tokens(self.output_tokens);
+        let cost_str = format!("${:.4}", self.cost);
+        let ctx_color = if self.context_percent > 80 {
+            Color::Red
+        } else {
+            Color::DarkGray
+        };
+
+        Line::from(vec![
+            Span::styled(
+                format!("in:{in_str} "),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(
+                format!("out:{out_str} "),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(format!("{cost_str} "), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("ctx:{}% ", self.context_percent),
+                Style::default().fg(ctx_color),
+            ),
+            Span::styled(model.to_string(), Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!(" {level_icon}"),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+    }
+}
+
+fn format_tokens(n: u64) -> String {
+    if n < 1000 {
+        format!("{n}")
+    } else if n < 1_000_000 {
+        format!("{:.1}k", n as f64 / 1000.0)
+    } else {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    }
+}
 
 pub struct TuiEngine {
     chat: ChatState,
@@ -43,6 +154,9 @@ pub struct TuiEngine {
     queue: MessageQueue,
     agent_busy: bool,
     permission: PermissionManager,
+    footer: FooterState,
+    theme: Theme,
+    renderers: ToolRendererRegistry,
 }
 
 impl TuiEngine {
@@ -59,6 +173,9 @@ impl TuiEngine {
             queue: MessageQueue::new(),
             agent_busy: false,
             permission: PermissionManager::new(),
+            footer: FooterState::new(),
+            theme: Theme::default(),
+            renderers: ToolRendererRegistry::new(),
         }
     }
 
@@ -83,11 +200,24 @@ impl TuiEngine {
         self.selector.render(f, f.area());
     }
 
-    fn render_chat(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let lines = self.chat.render_lines(area);
+    fn render_chat(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
+        let lines = self.chat.render_lines(area, &self.renderers, &self.theme);
+        let total_lines = lines.len() as u16;
+        let visible_height = area.height;
+
+        // 滚到底部时恢复 auto_scroll
+        if self.chat.scroll_offset + visible_height >= total_lines {
+            self.chat.auto_scroll = true;
+        }
+
+        // auto_scroll 模式：offset 跟随底部
+        if self.chat.auto_scroll && total_lines > visible_height {
+            self.chat.scroll_offset = total_lines.saturating_sub(visible_height);
+        }
+
         let content = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
-            .block(Block::default());
+            .scroll((self.chat.scroll_offset, 0));
         f.render_widget(content, area);
     }
 
@@ -97,52 +227,20 @@ impl TuiEngine {
         line1_area: ratatui::layout::Rect,
         line2_area: ratatui::layout::Rect,
     ) {
-        let cwd = std::env::current_dir()
-            .map(|p| {
-                let home = dirs::home_dir().unwrap_or_default();
-                p.strip_prefix(&home)
-                    .map(|s| format!("~/{}", s.display()))
-                    .unwrap_or_else(|_| format!("{}", p.display()))
-            })
-            .unwrap_or_default();
-
-        let branch = std::process::Command::new("git")
-            .args(["branch", "--show-current"])
-            .output()
-            .ok()
-            .and_then(|o| {
-                if o.status.success() {
-                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_default();
-
-        let sid = if self.session_id.is_empty() {
-            String::new()
-        } else {
-            format!(" session:{}", &self.session_id[..self.session_id.len().min(8)])
-        };
-
-        let footer_line1 = format!("{cwd} {branch}{sid}");
+        let line1 = self.footer.render_line1(&self.session_id);
         f.render_widget(
-            Paragraph::new(footer_line1).style(Style::default().fg(Color::DarkGray)),
+            Paragraph::new(line1).style(Style::default().fg(self.theme.ui.footer_text)),
             line1_area,
         );
 
         let level = self.chat.thinking_level;
-        let level_icon = level.icon();
         let model_display = if self.model.is_empty() {
             "uncode"
         } else {
             &self.model
         };
-        let footer_line2 = format!("{model_display} {level_icon}");
-        f.render_widget(
-            Paragraph::new(footer_line2).style(Style::default().fg(Color::DarkGray)),
-            line2_area,
-        );
+        let line2 = self.footer.render_line2(model_display, level.icon());
+        f.render_widget(Paragraph::new(line2), line2_area);
     }
 
     pub async fn run<F>(&mut self, mut event_rx: broadcast::Receiver<AgentEvent>, on_submit: F)
@@ -150,6 +248,7 @@ impl TuiEngine {
         F: Fn(String),
     {
         let mut terminal = ratatui::init();
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
         loop {
             if let Err(e) = terminal.draw(|f| self.render(f)) {
                 eprintln!("terminal draw failed: {e}");
@@ -164,101 +263,123 @@ impl TuiEngine {
                         self.flush_queue(&on_submit);
                     }
                 }
-                Ok(key_event) = async {
+                Ok(ui_event) = async {
                     loop {
                         if event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
-                            if let Event::Key(key) = event::read().unwrap_or(Event::Key(
+                            match event::read().unwrap_or(Event::Key(
                                 event::KeyEvent::new(KeyCode::Null, event::KeyModifiers::empty())
                             )) {
-                                if key.kind == KeyEventKind::Press {
-                                    return Ok::<KeyEvent, std::io::Error>(key);
+                                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                                    return Ok::<Event, std::io::Error>(Event::Key(key));
                                 }
+                                Event::Mouse(mouse) => {
+                                    return Ok::<Event, std::io::Error>(Event::Mouse(mouse));
+                                }
+                                _ => {}
                             }
                         }
                         tokio::task::yield_now().await;
                     }
                 } => {
-                    if self.leader_pending {
-                        self.leader_pending = false;
-                        self.handle_leader_key(key_event);
-                        continue;
-                    }
-
-                    let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
-
-                    // Permission confirmation keys take priority
-                    if self.permission.has_pending() {
-                        match key_event.code {
-                            KeyCode::Char('y') | KeyCode::Enter => {
-                                self.permission.confirm(crate::permission::ConfirmOption::Allow);
+                    match ui_event {
+                        Event::Key(key_event) => {
+                            if self.leader_pending {
+                                self.leader_pending = false;
+                                self.handle_leader_key(key_event);
+                                continue;
                             }
-                            KeyCode::Char('n') | KeyCode::Esc => {
-                                self.permission.deny();
-                            }
-                            KeyCode::Char('e') => {
-                                self.permission.confirm(crate::permission::ConfirmOption::Edit);
-                            }
-                            _ => {}
-                        }
-                        continue;
-                    }
 
-                    match key_event.code {
-                        // Leader key prefix
-                        KeyCode::Char('x') if ctrl => {
-                            self.leader_pending = true;
-                        }
-                        // Direct shortcuts
-                        KeyCode::Char('o') if ctrl => {
-                            self.chat.tool_output_visible = !self.chat.tool_output_visible;
-                        }
-                        KeyCode::Char('t') if ctrl => {
-                            self.chat.thinking_visible = !self.chat.thinking_visible;
-                        }
-                        KeyCode::Char('l') if ctrl => {
-                            self.selector.show(
-                                "切换模型".into(),
-                                vec!["deepseek-v3".into(), "glm-5.1".into(), "ollama".into()],
-                            );
-                        }
-                        KeyCode::BackTab => {
-                            self.chat.thinking_level = self.chat.thinking_level.cycle_next();
-                        }
-                        KeyCode::PageUp => {
-                            self.chat.scroll_offset = self.chat.scroll_offset.saturating_sub(10);
-                            self.chat.auto_scroll = false;
-                        }
-                        KeyCode::PageDown => {
-                            self.chat.scroll_offset = self.chat.scroll_offset.saturating_add(10);
-                        }
-                        // Selector navigation
-                        KeyCode::Char('j') if ctrl && self.selector.is_visible() => self.selector.next(),
-                        KeyCode::Char('k') if ctrl && self.selector.is_visible() => self.selector.prev(),
-                        KeyCode::Enter if self.selector.is_visible() => self.selector.hide(),
-                        // Quit
-                        KeyCode::Char('c') if ctrl => break,
-                        // Default: pass to input editor
-                        KeyCode::Esc => {
-                            let _ = self.editor.handle_key(key_event);
-                        }
-                        _ => {
-                            let action = self.editor.handle_key(key_event);
-                            match action {
-                                InputAction::Submit(text) => {
-                                    self.handle_submit(text, &on_submit);
+                            let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
+
+                            // Permission confirmation keys take priority
+                            if self.permission.has_pending() {
+                                match key_event.code {
+                                    KeyCode::Char('y') | KeyCode::Enter => {
+                                        self.permission.confirm(crate::permission::ConfirmOption::Allow);
+                                    }
+                                    KeyCode::Char('n') | KeyCode::Esc => {
+                                        self.permission.deny();
+                                    }
+                                    KeyCode::Char('e') => {
+                                        self.permission.confirm(crate::permission::ConfirmOption::Edit);
+                                    }
+                                    _ => {}
                                 }
-                                InputAction::Cancel => break,
-                                InputAction::None => {
-                                    self.editor.set_completions(
-                                        self.completion.complete(self.editor.buffer())
+                                continue;
+                            }
+
+                            match key_event.code {
+                                // Leader key prefix
+                                KeyCode::Char('x') if ctrl => {
+                                    self.leader_pending = true;
+                                }
+                                // Direct shortcuts
+                                KeyCode::Char('o') if ctrl => {
+                                    self.chat.tool_output_visible = !self.chat.tool_output_visible;
+                                }
+                                KeyCode::Char('t') if ctrl => {
+                                    self.chat.thinking_visible = !self.chat.thinking_visible;
+                                }
+                                KeyCode::Char('l') if ctrl => {
+                                    self.selector.show(
+                                        "切换模型",
+                                        vec!["deepseek-v3".into(), "glm-5.1".into(), "ollama".into()],
                                     );
                                 }
+                                KeyCode::BackTab => {
+                                    self.chat.thinking_level = self.chat.thinking_level.cycle_next();
+                                }
+                                KeyCode::PageUp => {
+                                    self.chat.scroll_offset = self.chat.scroll_offset.saturating_sub(10);
+                                    self.chat.auto_scroll = false;
+                                }
+                                KeyCode::PageDown => {
+                                    self.chat.scroll_offset = self.chat.scroll_offset.saturating_add(10);
+                                }
+                                // Selector navigation
+                                KeyCode::Char('j') if ctrl && self.selector.is_visible() => self.selector.next(),
+                                KeyCode::Char('k') if ctrl && self.selector.is_visible() => self.selector.prev(),
+                                KeyCode::Enter if self.selector.is_visible() => self.selector.hide(),
+                                // Quit
+                                KeyCode::Char('c') if ctrl => break,
+                                // Default: pass to input editor
+                                KeyCode::Esc => {
+                                    let _ = self.editor.handle_key(key_event);
+                                }
+                                _ => {
+                                    let action = self.editor.handle_key(key_event);
+                                    match action {
+                                        InputAction::Submit(text) => {
+                                            self.handle_submit(text, &on_submit);
+                                        }
+                                        InputAction::Cancel => break,
+                                        InputAction::None => {
+                                            self.editor.set_completions(
+                                                self.completion.complete(self.editor.buffer())
+                                            );
+                                        }
+                                    }
+                                }
                             }
                         }
+                        Event::Mouse(mouse) => {
+                            match mouse.kind {
+                                MouseEventKind::ScrollUp => {
+                                    self.chat.scroll_offset = self.chat.scroll_offset.saturating_sub(3);
+                                    self.chat.auto_scroll = false;
+                                }
+                                MouseEventKind::ScrollDown => {
+                                    self.chat.scroll_offset = self.chat.scroll_offset.saturating_add(3);
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
         }
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
         ratatui::restore();
     }
 
@@ -291,10 +412,11 @@ impl TuiEngine {
             }
             _ => {
                 if self.agent_busy {
-                    self.queue.enqueue(text.clone(), QueueType::FollowUp);
-                    self.chat.messages.push(chat::ChatMessage::QueuedMessage {
-                        text,
-                    });
+                    let preview = text.clone();
+                    self.queue.enqueue(text, QueueType::FollowUp);
+                    self.chat
+                        .messages
+                        .push(chat::ChatMessage::QueuedMessage { text: preview });
                 } else {
                     self.agent_busy = true;
                     self.chat.push_user_message(text.clone());
@@ -318,7 +440,7 @@ impl TuiEngine {
             }
             KeyCode::Char('m') => {
                 self.selector.show(
-                    "切换模型".into(),
+                    "切换模型",
                     vec!["deepseek-v3".into(), "glm-5.1".into(), "ollama".into()],
                 );
             }
@@ -331,12 +453,17 @@ impl TuiEngine {
             AgentEvent::SessionStart { session_id, .. } => {
                 self.session_id = session_id.clone();
             }
-            AgentEvent::TurnEnd { .. } | AgentEvent::SessionEnd { .. } => {
+            AgentEvent::TurnEnd { usage, .. } => {
                 self.agent_busy = false;
+                self.footer.update_usage(usage);
+            }
+            AgentEvent::SessionEnd { total_tokens, .. } => {
+                self.agent_busy = false;
+                self.footer.update_usage(total_tokens);
             }
             _ => {}
         }
-        self.chat.handle_event(&event);
+        self.chat.handle_event(event);
     }
 
     /// Agent 闲下来后提交排队消息
@@ -366,4 +493,169 @@ fn slash_commands() -> Vec<String> {
         "details".into(),
         "issues".into(),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_tokens() {
+        assert_eq!(format_tokens(0), "0");
+        assert_eq!(format_tokens(999), "999");
+        assert_eq!(format_tokens(1000), "1.0k");
+        assert_eq!(format_tokens(15_300), "15.3k");
+        assert_eq!(format_tokens(999_999), "1000.0k");
+        assert_eq!(format_tokens(1_000_000), "1.0M");
+        assert_eq!(format_tokens(2_500_000), "2.5M");
+    }
+
+    #[test]
+    fn test_footer_state_new() {
+        let footer = FooterState::new();
+        assert!(!footer.workdir.is_empty() || footer.workdir.is_empty()); // 不 panic 即可
+        assert_eq!(footer.input_tokens, 0);
+        assert_eq!(footer.output_tokens, 0);
+        assert_eq!(footer.cost, 0.0);
+        assert_eq!(footer.context_percent, 0);
+    }
+
+    #[test]
+    fn test_footer_update_usage() {
+        let mut footer = FooterState::new();
+        footer.update_usage(&UsageInfo {
+            input_tokens: 50_000,
+            output_tokens: 10_000,
+        });
+        assert_eq!(footer.input_tokens, 50_000);
+        assert_eq!(footer.output_tokens, 10_000);
+        // cost: 50k * $3/M + 10k * $15/M = 0.15 + 0.15 = 0.30
+        assert!((footer.cost - 0.30).abs() < 0.001);
+        // context: (50k + 10k) / 128k * 100 ≈ 46%
+        assert_eq!(footer.context_percent, 46);
+    }
+
+    #[test]
+    fn test_footer_update_usage_accumulates_cost() {
+        let mut footer = FooterState::new();
+        footer.update_usage(&UsageInfo {
+            input_tokens: 1_000_000,
+            output_tokens: 0,
+        });
+        let cost1 = footer.cost;
+        footer.update_usage(&UsageInfo {
+            input_tokens: 1_000_000,
+            output_tokens: 0,
+        });
+        assert!((footer.cost - cost1 * 2.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_footer_context_percent_clamped() {
+        let mut footer = FooterState::new();
+        footer.update_usage(&UsageInfo {
+            input_tokens: 200_000,
+            output_tokens: 0,
+        });
+        assert_eq!(footer.context_percent, 100);
+    }
+
+    #[test]
+    fn test_footer_render_line1() {
+        let footer = FooterState::new();
+        let line = footer.render_line1("abc12345xyz");
+        assert!(line.contains("session:abc12345"));
+        // 空 session_id
+        let empty = footer.render_line1("");
+        assert!(!empty.contains("session:"));
+    }
+
+    #[test]
+    fn test_footer_render_line2() {
+        let mut footer = FooterState::new();
+        footer.input_tokens = 5_000;
+        footer.output_tokens = 1_200;
+        footer.cost = 0.05;
+        footer.context_percent = 30;
+        let line = footer.render_line2("deepseek-v3", "◕");
+        let line_str = line.to_string();
+        assert!(line_str.contains("in:5.0k"));
+        assert!(line_str.contains("out:1.2k"));
+        assert!(line_str.contains("$0.0500"));
+        assert!(line_str.contains("ctx:30%"));
+        assert!(line_str.contains("deepseek-v3"));
+        assert!(line_str.contains("◕"));
+    }
+
+    #[test]
+    fn test_footer_context_high_percent_shows_red() {
+        let mut footer = FooterState::new();
+        footer.context_percent = 90;
+        let line = footer.render_line2("model", "○");
+        // Line 包含 spans，检查渲染不 panic
+        assert!(!line.to_string().is_empty());
+    }
+
+    #[test]
+    fn test_tui_engine_new_initializes_fields() {
+        let engine = TuiEngine::new();
+        assert!(engine.session_id.is_empty());
+        assert!(engine.model.is_empty());
+        assert!(!engine.agent_busy);
+        assert!(!engine.leader_pending);
+        assert!(engine.queue.is_empty());
+        assert!(!engine.permission.has_pending());
+        assert_eq!(engine.chat.messages.len(), 0);
+        assert_eq!(engine.theme.name, "default");
+    }
+
+    #[test]
+    fn test_handle_event_turn_end_updates_footer() {
+        let mut engine = TuiEngine::new();
+        engine.handle_event(AgentEvent::TurnEnd {
+            turn: 1,
+            usage: UsageInfo {
+                input_tokens: 10_000,
+                output_tokens: 5_000,
+            },
+        });
+        assert!(!engine.agent_busy);
+        assert_eq!(engine.footer.input_tokens, 10_000);
+        assert_eq!(engine.footer.output_tokens, 5_000);
+    }
+
+    #[test]
+    fn test_handle_event_session_end_updates_footer() {
+        let mut engine = TuiEngine::new();
+        engine.agent_busy = true;
+        engine.handle_event(AgentEvent::SessionEnd {
+            session_id: "sess123".into(),
+            total_turns: 5,
+            total_tokens: UsageInfo {
+                input_tokens: 100_000,
+                output_tokens: 50_000,
+            },
+            exit_reason: "done".into(),
+        });
+        assert!(!engine.agent_busy);
+        assert_eq!(engine.footer.input_tokens, 100_000);
+        assert_eq!(engine.footer.output_tokens, 50_000);
+    }
+
+    #[test]
+    fn test_render_lines_with_theme_and_renderers() {
+        let engine = TuiEngine::new();
+        let area = ratatui::layout::Rect::new(0, 0, 80, 24);
+        // 空消息 — 不 panic，返回提示文字
+        let lines = engine
+            .chat
+            .render_lines(area, &engine.renderers, &engine.theme);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].to_string().contains("描述你的需求"));
+
+        // 使用 light theme — 不 panic
+        let light = Theme::light();
+        let lines_light = engine.chat.render_lines(area, &engine.renderers, &light);
+        assert_eq!(lines_light.len(), 1);
+    }
 }

@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub struct ContextLoader {
     cwd: PathBuf,
@@ -27,8 +27,8 @@ impl ContextLoader {
         }
     }
 
-    fn walk_up(start: &PathBuf, filename: &str) -> Option<String> {
-        let mut current = start.clone();
+    fn walk_up(start: &Path, filename: &str) -> Option<String> {
+        let mut current = start.to_path_buf();
         loop {
             let candidate = current.join(filename);
             if candidate.exists() {
@@ -54,8 +54,8 @@ impl ContextLoader {
                             let name = entry.file_name().to_string_lossy().to_string();
                             let desc = content
                                 .lines()
-                                .find(|l| l.starts_with("description:"))
-                                .map(|l| l.trim_start_matches("description:").trim().to_string())
+                                .find_map(|l| l.strip_prefix("description:"))
+                                .map(|s| s.trim().to_string())
                                 .unwrap_or_default();
                             skills.push((name, desc));
                         }

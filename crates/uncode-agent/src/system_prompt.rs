@@ -19,11 +19,11 @@ impl SystemPromptBuilder {
         if tools.is_empty() {
             return self;
         }
-        let mut guide = String::from("## 可用工具\n\n");
-        for tool in tools {
-            guide.push_str(&format!("### {}\n{}\n\n", tool.name, tool.description));
-        }
-        self.parts.push(guide);
+        let guide = tools
+            .iter()
+            .map(|t| format!("### {}\n{}\n\n", t.name, t.description))
+            .collect::<String>();
+        self.parts.push(format!("## 可用工具\n\n{guide}"));
         self
     }
 
@@ -38,11 +38,11 @@ impl SystemPromptBuilder {
         if skills.is_empty() {
             return self;
         }
-        let mut section = String::from("## 可用技能\n\n");
-        for (name, desc) in skills {
-            section.push_str(&format!("- **{name}**: {desc}\n"));
-        }
-        self.parts.push(section);
+        let section = skills
+            .iter()
+            .map(|(name, desc)| format!("- **{name}**: {desc}\n"))
+            .collect::<String>();
+        self.parts.push(format!("## 可用技能\n\n{section}"));
         self
     }
 
