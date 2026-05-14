@@ -1,9 +1,9 @@
-//! uncode-tui — 终端四面板交互界面
+//! uncode-tui — 对话驱动终端交互界面
 //!
 //! 基于 ratatui + crossterm 实现，订阅 AgentLoop 事件流，
-//! 实时渲染四个面板：任务清单、工具调用、思考过程、阶段总结。
+//! 实时渲染对话区：用户消息、Agent 回复、内联工具调用。
 
-pub mod code_detail;
+pub mod chat;
 pub mod complete;
 pub mod diff_viewer;
 pub mod highlight;
@@ -12,9 +12,8 @@ pub mod markdown;
 pub mod selector;
 pub mod slash;
 
-use crate::code_detail::CodeDetailView;
+use crate::chat::ChatState;
 use crate::complete::CompletionEngine;
-use crate::diff_viewer::DiffViewer;
 use crate::input::{InputAction, InputEditor};
 use crate::selector::OverlaySelector;
 use crate::slash::SlashCommands;
@@ -22,137 +21,32 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
-use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 use tokio::sync::broadcast;
-use uncode_core::event::{AgentEvent, TaskStatus};
+use uncode_core::event::AgentEvent;
 
 pub struct TuiEngine {
-    current_task: String,
-    current_tools: Vec<String>,
-    current_thinking: String,
-    current_summary: String,
-    status_text: String,
+    chat: ChatState,
     session_id: String,
+    model: String,
     editor: InputEditor,
-    code_detail: CodeDetailView,
-    layout_locked: bool,
+    selector: OverlaySelector,
     slash: SlashCommands,
     completion: CompletionEngine,
-    diff: DiffViewer,
-    selector: OverlaySelector,
+    leader_pending: bool,
 }
 
 impl TuiEngine {
     pub fn new() -> Self {
         Self {
-            current_task: String::new(),
-            current_tools: Vec::new(),
-            current_thinking: String::new(),
-            current_summary: String::new(),
-            status_text: "uncode v0.1 | 就绪".into(),
+            chat: ChatState::new(),
             session_id: String::new(),
+            model: String::new(),
             editor: InputEditor::new(),
-            code_detail: CodeDetailView::new(),
-            layout_locked: false,
+            selector: OverlaySelector::new(),
             slash: SlashCommands::new(),
             completion: CompletionEngine::new(slash_commands()),
-            diff: DiffViewer::new(),
-            selector: OverlaySelector::new(),
-        }
-    }
-
-    pub fn handle_event(&mut self, event: AgentEvent) {
-        match event {
-            AgentEvent::SessionStart { ref session_id, .. } => {
-                self.session_id = session_id.clone();
-                self.status_text = format!(
-                    "uncode v0.1 | 会话: {} | 运行中",
-                    &session_id[..session_id.len().min(8)]
-                );
-            }
-            AgentEvent::TaskUpdate {
-                ref title,
-                ref status,
-                ..
-            } => {
-                let icon = match status {
-                    TaskStatus::Pending => "⏳",
-                    TaskStatus::Running => "🔄",
-                    TaskStatus::Done => "✅",
-                    TaskStatus::Failed => "❌",
-                    TaskStatus::Blocked => "🚫",
-                    _ => "❓",
-                };
-                self.current_task = format!("{icon} {title}");
-            }
-            AgentEvent::ContentDelta { ref content, .. } => {
-                self.current_thinking.push_str(content);
-            }
-            AgentEvent::ToolCallStart {
-                ref tool_name,
-                ref tool_id,
-                ..
-            } => {
-                self.current_tools
-                    .push(format!("🔄 {tool_name} ({tool_id})"));
-            }
-            AgentEvent::ToolCallEnd {
-                ref tool_id,
-                ref status,
-                ..
-            } => {
-                let icon = match status {
-                    uncode_core::event::ToolCallStatus::Success => "✅",
-                    _ => "❌",
-                };
-                if let Some(t) = self
-                    .current_tools
-                    .iter_mut()
-                    .find(|t| t.contains(tool_id.as_str()))
-                {
-                    *t = t.replace("🔄", icon);
-                }
-            }
-            AgentEvent::PhaseSummary {
-                ref completed,
-                ref next_steps,
-                ..
-            } => {
-                self.current_summary = format!(
-                    "已完成：{}\n下一步：{}",
-                    completed.join("、"),
-                    next_steps.join("、")
-                );
-            }
-            AgentEvent::Error {
-                ref category,
-                ref message,
-                ..
-            } => {
-                let friendly = match category {
-                    uncode_core::event::ErrorCategory::Llm => {
-                        format!("⚠️ AI 服务暂时不可用，正在重试...")
-                    }
-                    uncode_core::event::ErrorCategory::Tool => {
-                        format!("⚠️ 工具执行出错: {message}")
-                    }
-                    uncode_core::event::ErrorCategory::Network => {
-                        "⚠️ 网络连接中断，等待恢复...".into()
-                    }
-                    uncode_core::event::ErrorCategory::Config => {
-                        format!("⚠️ 配置错误: {message}")
-                    }
-                    _ => format!("⚠️ 未知错误: {message}"),
-                };
-                self.status_text = friendly;
-            }
-            AgentEvent::SessionEnd {
-                ref exit_reason, ..
-            } => {
-                self.status_text = format!("uncode v0.1 | 结束: {exit_reason}");
-            }
-            _ => {}
+            leader_pending: false,
         }
     }
 
@@ -160,104 +54,83 @@ impl TuiEngine {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),
-                Constraint::Min(0),
-                Constraint::Length(3),
+                Constraint::Min(0),    // 对话区
+                Constraint::Length(3), // 输入栏
+                Constraint::Length(1), // 页脚第 1 行
+                Constraint::Length(1), // 页脚第 2 行
             ])
             .split(f.area());
 
-        let status = Paragraph::new(self.status_text.as_str())
-            .style(Style::default().fg(Color::Gray))
-            .block(Block::default());
-        f.render_widget(status, chunks[0]);
+        self.render_chat(f, chunks[0]);
 
-        self.render_full_layout(f, chunks[1]);
-        self.editor.render(f, chunks[2]);
+        let border_color = self.chat.thinking_level.border_color();
+        self.editor.render(f, chunks[1], border_color);
 
-        if self.code_detail.is_visible() {
-            self.code_detail.render(f, chunks[1]);
-        }
-        if self.diff.is_visible() {
-            self.diff.render(f, chunks[1]);
-        }
+        self.render_footer(f, chunks[2], chunks[3]);
+
         self.selector.render(f, f.area());
     }
 
-    fn render_full_layout(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let main = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
-            .split(area);
-
-        let top = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
-            .split(main[0]);
-
-        let bottom = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
-            .split(main[1]);
-
-        self.render_task_list(f, top[0]);
-        self.render_tool_calls(f, top[1]);
-        self.render_thinking(f, bottom[0]);
-        self.render_summary(f, bottom[1]);
-    }
-
-    fn render_task_list(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let task_text = if self.current_task.is_empty() {
-            "描述你的需求，Agent 会自动拆解为任务清单"
-        } else {
-            &self.current_task
-        };
-
-        let content = Paragraph::new(task_text.to_string())
-            .block(Block::default().borders(Borders::ALL).title("📋 任务清单"))
-            .style(Style::default().fg(Color::White));
+    fn render_chat(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        let lines = self.chat.render_lines(area);
+        let content = Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .block(Block::default());
         f.render_widget(content, area);
     }
 
-    fn render_tool_calls(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let text = if self.current_tools.is_empty() {
-            "等待 Agent 开始工作...".to_string()
+    fn render_footer(
+        &self,
+        f: &mut Frame,
+        line1_area: ratatui::layout::Rect,
+        line2_area: ratatui::layout::Rect,
+    ) {
+        let cwd = std::env::current_dir()
+            .map(|p| {
+                let home = dirs::home_dir().unwrap_or_default();
+                p.strip_prefix(&home)
+                    .map(|s| format!("~/{}", s.display()))
+                    .unwrap_or_else(|_| format!("{}", p.display()))
+            })
+            .unwrap_or_default();
+
+        let branch = std::process::Command::new("git")
+            .args(["branch", "--show-current"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
+
+        let sid = if self.session_id.is_empty() {
+            String::new()
         } else {
-            self.current_tools.join("\n")
+            format!(" session:{}", &self.session_id[..self.session_id.len().min(8)])
         };
 
-        let content = Paragraph::new(text)
-            .block(Block::default().borders(Borders::ALL).title("🛠️ 工具调用"))
-            .style(Style::default().fg(Color::Cyan));
-        f.render_widget(content, area);
-    }
+        let footer_line1 = format!("{cwd} {branch}{sid}");
+        f.render_widget(
+            Paragraph::new(footer_line1).style(Style::default().fg(Color::DarkGray)),
+            line1_area,
+        );
 
-    fn render_thinking(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let block = Block::default().borders(Borders::ALL).title("💭 思考过程");
-
-        if self.current_thinking.is_empty() {
-            let content = Paragraph::new("等待 Agent 开始思考...")
-                .block(block)
-                .style(Style::default().fg(Color::Yellow));
-            f.render_widget(content, area);
+        let level = self.chat.thinking_level;
+        let level_icon = level.icon();
+        let model_display = if self.model.is_empty() {
+            "uncode"
         } else {
-            let lines = crate::markdown::render_markdown(&self.current_thinking);
-            let display: Vec<Line> = lines.into_iter().rev().take(20).rev().collect();
-            let content = Paragraph::new(Text::from(display)).block(block);
-            f.render_widget(content, area);
-        }
-    }
-
-    fn render_summary(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let text = if self.current_summary.is_empty() {
-            "完成第一个任务后会自动生成阶段总结..."
-        } else {
-            &self.current_summary
+            &self.model
         };
-
-        let content = Paragraph::new(text.to_string())
-            .block(Block::default().borders(Borders::ALL).title("📝 阶段总结"))
-            .style(Style::default().fg(Color::Green));
-        f.render_widget(content, area);
+        let footer_line2 = format!("{model_display} {level_icon}");
+        f.render_widget(
+            Paragraph::new(footer_line2).style(Style::default().fg(Color::DarkGray)),
+            line2_area,
+        );
     }
 
     pub async fn run<F>(&mut self, mut event_rx: broadcast::Receiver<AgentEvent>, on_submit: F)
@@ -289,20 +162,48 @@ impl TuiEngine {
                         tokio::task::yield_now().await;
                     }
                 } => {
+                    if self.leader_pending {
+                        self.leader_pending = false;
+                        self.handle_leader_key(key_event);
+                        continue;
+                    }
+
                     let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
                     match key_event.code {
-                        KeyCode::Char('d') if ctrl => self.code_detail.toggle(),
-                        KeyCode::Char('e') if ctrl => self.code_detail.toggle_fullscreen(),
-                        KeyCode::Char('n') if ctrl => self.diff.next_file(),
-                        KeyCode::Char('p') if ctrl => self.diff.prev_file(),
+                        // Leader key prefix
+                        KeyCode::Char('x') if ctrl => {
+                            self.leader_pending = true;
+                        }
+                        // Direct shortcuts
+                        KeyCode::Char('o') if ctrl => {
+                            self.chat.tool_output_visible = !self.chat.tool_output_visible;
+                        }
+                        KeyCode::Char('t') if ctrl => {
+                            self.chat.thinking_visible = !self.chat.thinking_visible;
+                        }
+                        KeyCode::Char('l') if ctrl => {
+                            self.selector.show(
+                                "切换模型".into(),
+                                vec!["deepseek-v3".into(), "glm-5.1".into(), "ollama".into()],
+                            );
+                        }
+                        KeyCode::BackTab => {
+                            self.chat.thinking_level = self.chat.thinking_level.cycle_next();
+                        }
+                        KeyCode::PageUp => {
+                            self.chat.scroll_offset = self.chat.scroll_offset.saturating_sub(10);
+                            self.chat.auto_scroll = false;
+                        }
+                        KeyCode::PageDown => {
+                            self.chat.scroll_offset = self.chat.scroll_offset.saturating_add(10);
+                        }
+                        // Selector navigation
                         KeyCode::Char('j') if ctrl && self.selector.is_visible() => self.selector.next(),
                         KeyCode::Char('k') if ctrl && self.selector.is_visible() => self.selector.prev(),
                         KeyCode::Enter if self.selector.is_visible() => self.selector.hide(),
-                        KeyCode::Char('l') if ctrl && !self.layout_locked => {
-                            self.layout_locked = true;
-                            self.status_text = "uncode v0.1 | 布局已锁定".into();
-                        }
+                        // Quit
                         KeyCode::Char('c') if ctrl => break,
+                        // Default: pass to input editor
                         KeyCode::Esc => {
                             let _ = self.editor.handle_key(key_event);
                         }
@@ -310,14 +211,7 @@ impl TuiEngine {
                             let action = self.editor.handle_key(key_event);
                             match action {
                                 InputAction::Submit(text) => {
-                                    if text == "/unlock" {
-                                        self.layout_locked = false;
-                                        self.status_text = "uncode v0.1 | 布局已解锁".into();
-                                    } else if let Some(response) = self.slash.execute(&text) {
-                                        self.current_summary = response;
-                                    } else {
-                                        on_submit(text);
-                                    }
+                                    self.handle_submit(text, &on_submit);
                                 }
                                 InputAction::Cancel => break,
                                 InputAction::None => {
@@ -333,6 +227,73 @@ impl TuiEngine {
         }
         ratatui::restore();
     }
+
+    fn handle_submit<F>(&mut self, text: String, on_submit: &F)
+    where
+        F: Fn(String),
+    {
+        if let Some(response) = self.slash.execute(&text) {
+            // Slash command response displayed in chat
+            self.chat.messages.push(chat::ChatMessage::Summary {
+                completed: vec![response],
+                next_steps: vec![],
+            });
+            return;
+        }
+
+        match text.as_str() {
+            "/thinking" => {
+                self.chat.thinking_visible = !self.chat.thinking_visible;
+            }
+            "/details" => {
+                self.chat.tool_output_visible = !self.chat.tool_output_visible;
+            }
+            "/help" => {
+                let help = "快捷键: Ctrl+O 工具输出 | Ctrl+T 思考 | Ctrl+L 模型 | Shift+Tab 思考级别 | Ctrl+X 前缀命令 | Ctrl+C 退出";
+                self.chat.messages.push(chat::ChatMessage::Summary {
+                    completed: vec![help.into()],
+                    next_steps: vec![],
+                });
+            }
+            _ => {
+                self.chat.push_user_message(text.clone());
+                on_submit(text);
+            }
+        }
+    }
+
+    fn handle_leader_key(&mut self, key_event: KeyEvent) {
+        match key_event.code {
+            KeyCode::Char('g') => {
+                self.chat.scroll_offset = 0;
+                self.chat.auto_scroll = false;
+            }
+            KeyCode::Char('G') => {
+                self.chat.auto_scroll = true;
+            }
+            KeyCode::Char('n') => {
+                // New session - placeholder
+            }
+            KeyCode::Char('m') => {
+                self.selector.show(
+                    "切换模型".into(),
+                    vec!["deepseek-v3".into(), "glm-5.1".into(), "ollama".into()],
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_event(&mut self, event: AgentEvent) {
+        match &event {
+            AgentEvent::SessionStart { session_id, .. } => {
+                self.session_id = session_id.clone();
+            }
+            AgentEvent::SessionEnd { .. } => {}
+            _ => {}
+        }
+        self.chat.handle_event(&event);
+    }
 }
 
 impl Default for TuiEngine {
@@ -343,10 +304,10 @@ impl Default for TuiEngine {
 
 fn slash_commands() -> Vec<String> {
     vec![
-        "unlock".into(),
         "help".into(),
         "quit".into(),
-        "think".into(),
+        "thinking".into(),
+        "details".into(),
         "issues".into(),
     ]
 }

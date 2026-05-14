@@ -217,7 +217,7 @@ impl InputEditor {
         self.completion_index = 0;
     }
 
-    pub fn render(&self, f: &mut Frame, area: Rect) {
+    pub fn render(&self, f: &mut Frame, area: Rect, border_color: Color) {
         let display_text = if self.buffer.is_empty() {
             "> _".to_string()
         } else {
@@ -225,7 +225,12 @@ impl InputEditor {
         };
 
         let content = Paragraph::new(display_text)
-            .block(Block::default().borders(Borders::TOP).title("输入"))
+            .block(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .title("输入")
+                    .border_style(Style::default().fg(border_color)),
+            )
             .style(Style::default().fg(Color::White));
 
         f.render_widget(content, area);
