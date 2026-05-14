@@ -30,7 +30,7 @@ Strict layered dependency graph — upper layers depend on lower, never the reve
 
 ```
 uncode-cli (entry point, clap arg parsing)
-├── uncode-tui (ratatui + crossterm, 4-panel terminal UI)
+├── uncode-tui (ratatui + crossterm, conversation-driven terminal UI)
 ├── uncode-platform (axum REST backend)
 └── uncode-rpc (JSON-RPC, planned)
         │

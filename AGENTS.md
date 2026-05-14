@@ -1,11 +1,12 @@
 # uncode — Rust-native Agent Coding System
 
 **重要约定**
-文档及Issues优先原则：没有文档和Issues不能开发，设计决策先写入 @docs/ 目录下的对应文档，确认后需要检查github issues 是否有对应的issues，如果没有应当及时创建，然后再开始编码
+- 文档及Issues优先原则：没有文档和Issues不能开发，设计决策先写入 @docs/ 目录下的对应文档，确认后需要检查github issues 是否有对应的issues，如果没有应当及时创建，然后再开始编码
 
 **（文档及Issues优先原则不适用于测试、错误修复）**
+- 提交审查合并前应请用户确认
 
-当前阶段：进入 Phase 2 TUI 原型开发。
+ 
 
 ## 开发工作流
 
@@ -23,6 +24,7 @@ main ← PR(审查) ← feature-branch ← 编码
 6. **保持 main 干净** — main 分支始终可构建、测试全部通过
 
 **分支命名规范：**
+
 - `feat/N-description` — 新功能
 - `fix/N-description` — 错误修复
 - `refactor/N-description` — 重构
@@ -94,5 +96,4 @@ cargo clippy             # lint 检查
 
 ## 外部规则引用
 
-当需要了解项目定位、目标用户、TUI 设计理念、Platform 功能、Issues 同步策略等详细设计时，请读取 @docs/VISION.md。
-后续设计文档编写时，请读取 @docs/VISION.md 确保一致性，参考 opencode 的 AGENTS.md 规范格式。
+当需要了解项目定位、目标用户、TUI 设计理念、Platform 功能、Issues 同步策略等详细设计时，请读取 @docs/VISION.md。 后续设计文档编写时，请读取 @docs/VISION.md 确保一致性，参考 opencode 的 AGENTS.md 规范格式。
