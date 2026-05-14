@@ -74,18 +74,11 @@ impl SessionStore {
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
         let md = std::fs::metadata(path)?;
-        let modified =
+        let mut meta = SessionMetadata::from(header);
+        meta.updated_at =
             chrono::DateTime::<chrono::Utc>::from(md.modified().unwrap_or(std::time::UNIX_EPOCH));
 
-        Ok(SessionMetadata {
-            id: header.id,
-            created_at: header.created_at,
-            updated_at: modified,
-            message_count: 0,
-            title: header.title,
-            working_dir: header.working_dir,
-            model: header.model,
-        })
+        Ok(meta)
     }
 
     pub fn init_session(

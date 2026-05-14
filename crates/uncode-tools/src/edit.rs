@@ -3,13 +3,8 @@ use std::fs;
 use uncode_core::error::UncodeResult;
 use uncode_core::tool::{ToolDefinition, ToolExecutor};
 
+#[derive(Default)]
 pub struct EditTool;
-
-impl Default for EditTool {
-    fn default() -> Self {
-        Self
-    }
-}
 
 #[async_trait]
 impl ToolExecutor for EditTool {

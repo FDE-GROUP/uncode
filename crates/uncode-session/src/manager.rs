@@ -24,18 +24,9 @@ impl SessionManager {
     ) -> SessionResult<SessionMetadata> {
         let session_id = Uuid::new_v4().to_string();
         self.store.init_session(&session_id, model, working_dir)?;
-
         let mut header = self.store.read_header(&session_id)?;
         header.title = title;
-        Ok(SessionMetadata {
-            id: header.id,
-            created_at: header.created_at,
-            updated_at: header.updated_at,
-            message_count: 0,
-            title: header.title,
-            working_dir: header.working_dir,
-            model: header.model,
-        })
+        Ok(SessionMetadata::from(header))
     }
 
     pub fn append_entry(&self, session_id: &str, entry: SessionEntry) -> SessionResult<()> {
@@ -48,14 +39,6 @@ impl SessionManager {
 
     pub fn get_metadata(&self, session_id: &str) -> SessionResult<SessionMetadata> {
         let header = self.store.read_header(session_id)?;
-        Ok(SessionMetadata {
-            id: header.id,
-            created_at: header.created_at,
-            updated_at: header.updated_at,
-            message_count: 0,
-            title: header.title,
-            working_dir: header.working_dir,
-            model: header.model,
-        })
+        Ok(SessionMetadata::from(header))
     }
 }

@@ -20,41 +20,7 @@ impl GlmDriver {
     }
 
     fn build_body(&self, request: &CompletionRequest) -> Value {
-        let mut messages = Vec::new();
-
-        if let Some(ref system) = request.system {
-            messages.push(serde_json::json!({
-                "role": "system",
-                "content": system
-            }));
-        }
-
-        for msg in &request.messages {
-            let role = match msg.role {
-                uncode_core::message::Role::User => "user",
-                uncode_core::message::Role::Assistant => "assistant",
-                uncode_core::message::Role::System => "system",
-                uncode_core::message::Role::Tool => "tool",
-            };
-            let content = msg
-                .content
-                .iter()
-                .filter_map(|block| match block {
-                    uncode_core::message::ContentBlock::Text { text } => Some(text.clone()),
-                    uncode_core::message::ContentBlock::Thinking { .. } => None,
-                    uncode_core::message::ContentBlock::ToolCall(tc) => {
-                        Some(format!("[tool_call: {}]", tc.name))
-                    }
-                    uncode_core::message::ContentBlock::ToolResult(tr) => Some(tr.content.clone()),
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            messages.push(serde_json::json!({
-                "role": role,
-                "content": content
-            }));
-        }
-
+        let messages = crate::providers::common::build_chat_messages(request);
         let mut body = serde_json::json!({
             "model": request.model,
             "messages": messages,
@@ -95,15 +61,10 @@ impl LlmDriver for GlmDriver {
             .map_err(|e| UncodeError::Network(e.to_string()))?;
 
         if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            if status.as_u16() == 401 || status.as_u16() == 403 {
-                return Err(UncodeError::LlmAuth(text));
-            }
-            if status.as_u16() == 429 {
-                return Err(UncodeError::LlmRateLimit(text));
-            }
-            return Err(UncodeError::Llm(format!("HTTP {status}: {text}")));
+            return Err(crate::providers::common::map_http_error(
+                response.status(),
+                response.text().await.unwrap_or_default(),
+            ));
         }
 
         let stream = response
