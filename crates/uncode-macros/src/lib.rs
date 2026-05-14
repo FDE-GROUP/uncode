@@ -72,6 +72,7 @@ fn extract_doc(attrs: &[syn::Attribute]) -> String {
     }
 }
 
+#[derive(Debug)]
 struct ParamInfo {
     name: String,
     ty: String,

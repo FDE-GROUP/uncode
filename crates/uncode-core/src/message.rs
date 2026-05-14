@@ -14,6 +14,7 @@ pub struct Message {
 /// 消息发送者角色
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[non_exhaustive]
 pub enum Role {
     System,
     User,
@@ -35,6 +36,7 @@ impl std::fmt::Display for Role {
 /// 消息内容块，一条消息可以包含多种类型的块
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ContentBlock {
     /// 纯文本内容
     Text { text: String },

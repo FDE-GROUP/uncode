@@ -32,6 +32,7 @@ impl SessionHeader {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum SessionEntry {
     #[serde(rename = "message")]
     Message(MessageEntry),

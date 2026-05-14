@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -190,48 +191,13 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    if cli.interactive {
-        let event_rx = agent.subscribe();
-        let driver_clone = driver.clone();
-        let tools_clone = tool_registry.clone();
-        let store_clone = session_store.clone();
-        let session_clone = session_opt.clone();
-
-        tokio::spawn(async move {
-            let mut tui = uncode_tui::TuiEngine::new();
-            tui.run(event_rx, move |text| {
-                let driver = driver_clone.clone();
-                let tools = tools_clone.clone();
-                let store = store_clone.clone();
-                let session_id = session_clone.clone();
-                tokio::spawn(async move {
-                    let mut agent = AgentLoop::new(
-                        driver,
-                        tools,
-                        store,
-                        "你是一个 AI 编程助手。".into(),
-                        "deepseek-v3".into(),
-                    );
-                    if let Some(sid) = &session_id {
-                        agent.set_session_id(sid.clone());
-                    }
-                    let msg = Message::user(text);
-                    let _ = agent.run(msg).await;
-                });
-            })
-            .await;
-        })
-        .await?;
-        return Ok(());
-    }
-
     Cli::parse_from(["uncode", "--help"]);
     Ok(())
 }
 
 fn load_config() -> anyhow::Result<AppConfig> {
     let config_path = dirs::config_dir()
-        .unwrap_or_default()
+        .unwrap_or_else(|| PathBuf::from("."))
         .join("uncode")
         .join("config.json");
 

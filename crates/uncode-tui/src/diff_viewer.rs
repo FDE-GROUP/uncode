@@ -10,17 +10,19 @@ pub struct DiffViewer {
     active_index: usize,
 }
 
+#[derive(Debug)]
 struct DiffFile {
     path: String,
     hunks: Vec<DiffLine>,
 }
 
+#[derive(Debug)]
 struct DiffLine {
     kind: DiffKind,
     text: String,
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum DiffKind {
     Added,
     Removed,

@@ -2,13 +2,8 @@ use async_trait::async_trait;
 use uncode_core::error::UncodeResult;
 use uncode_core::tool::{ToolDefinition, ToolExecutor};
 
+#[derive(Default)]
 pub struct FindTool;
-
-impl Default for FindTool {
-    fn default() -> Self {
-        Self
-    }
-}
 
 #[async_trait]
 impl ToolExecutor for FindTool {

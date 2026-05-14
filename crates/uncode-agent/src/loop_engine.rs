@@ -11,6 +11,7 @@ use uncode_session::store::SessionStore;
 use uncode_tools::registry::ToolRegistry;
 
 const MAX_TURNS: u64 = 50;
+const DEFAULT_MAX_TOKENS: u64 = 128_000;
 
 pub struct AgentLoop {
     driver: Arc<dyn LlmDriver>,
@@ -19,6 +20,7 @@ pub struct AgentLoop {
     session_store: Arc<SessionStore>,
     system_prompt: String,
     model: String,
+    model_max_tokens: u64,
     session_id: Option<String>,
     event_tx: broadcast::Sender<AgentEvent>,
 }
@@ -31,6 +33,24 @@ impl AgentLoop {
         system_prompt: String,
         model: String,
     ) -> Self {
+        Self::with_max_tokens(
+            driver,
+            tool_registry,
+            session_store,
+            system_prompt,
+            model,
+            DEFAULT_MAX_TOKENS,
+        )
+    }
+
+    pub fn with_max_tokens(
+        driver: Arc<dyn LlmDriver>,
+        tool_registry: Arc<ToolRegistry>,
+        session_store: Arc<SessionStore>,
+        system_prompt: String,
+        model: String,
+        model_max_tokens: u64,
+    ) -> Self {
         let (event_tx, _) = broadcast::channel(256);
         Self {
             driver,
@@ -38,6 +58,7 @@ impl AgentLoop {
             session_store,
             system_prompt,
             model,
+            model_max_tokens,
             session_id: None,
             event_tx,
         }
@@ -81,13 +102,12 @@ impl AgentLoop {
             debug!("turn {turn}/{}", MAX_TURNS);
 
             // Compaction check before building request
-            let model_max: u64 = 128_000;
-            if crate::compaction::should_compact(&messages, model_max) {
+            if crate::compaction::should_compact(&messages, self.model_max_tokens) {
                 if let Err(e) = crate::compaction::compact_messages(
                     &mut messages,
                     &self.driver,
                     &self.model,
-                    model_max,
+                    self.model_max_tokens,
                 )
                 .await
                 {
