@@ -22,6 +22,9 @@ struct Cli {
     #[arg(long)]
     session: Option<String>,
 
+    #[arg(short = 'c', long = "continue")]
+    continue_last: bool,
+
     #[arg(long)]
     issue: Option<u64>,
 
@@ -75,7 +78,29 @@ async fn main() -> anyhow::Result<()> {
         .add_skills(&ctx.skills)
         .build();
 
-    let session_opt = cli.session.clone();
+    let session_opt = if cli.session.is_some() {
+        if cli.continue_last {
+            eprintln!("warning: --session 和 --continue 同时指定，使用 --session");
+        }
+        cli.session.clone()
+    } else if cli.continue_last {
+        match session_store.find_most_recent().context("查找会话")? {
+            Some(session) => {
+                eprintln!(
+                    "继续会话: {} ({})",
+                    session.id,
+                    session.title.as_deref().unwrap_or("无标题")
+                );
+                Some(session.id)
+            }
+            None => {
+                eprintln!("没有找到历史会话，将创建新会话。");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     let mut agent = AgentLoop::new(
         driver.clone(),
