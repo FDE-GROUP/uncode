@@ -1,93 +1,147 @@
-use chrono::Utc;
-use uncode_core::session::{SessionEntry, SessionMetadata};
+use std::io::{BufRead, Write};
+use std::path::PathBuf;
+
+use uncode_core::session::{SessionEntry, SessionHeader, SessionMetadata};
+
+#[derive(Debug, thiserror::Error)]
+pub enum SessionError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+    #[error("Session not found: {0}")]
+    NotFound(String),
+    #[error("Invalid session data: {0}")]
+    InvalidData(String),
+}
+
+pub type SessionResult<T> = Result<T, SessionError>;
 
 pub struct SessionStore {
-    base_dir: std::path::PathBuf,
+    base_dir: PathBuf,
 }
 
 impl SessionStore {
-    pub fn new(base_dir: std::path::PathBuf) -> Self {
+    pub fn new(base_dir: PathBuf) -> Self {
         Self { base_dir }
     }
 
-    pub fn default_dir() -> anyhow::Result<std::path::PathBuf> {
+    pub fn default_dir() -> std::io::Result<PathBuf> {
         let dir = dirs::data_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .unwrap_or_else(|| PathBuf::from("."))
             .join("uncode")
             .join("sessions");
         std::fs::create_dir_all(&dir)?;
         Ok(dir)
     }
 
-    pub async fn list(&self) -> anyhow::Result<Vec<SessionMetadata>> {
+    pub fn session_path(&self, session_id: &str) -> PathBuf {
+        self.base_dir.join(format!("{session_id}.jsonl"))
+    }
+
+    pub fn list_sessions(&self) -> std::io::Result<Vec<SessionMetadata>> {
         let mut sessions = Vec::new();
-        if self.base_dir.exists() {
-            for entry in std::fs::read_dir(&self.base_dir)? {
-                let entry = entry?;
-                if entry.path().extension().map_or(false, |e| e == "jsonl") {
-                    let metadata = entry.metadata()?;
-                    sessions.push(SessionMetadata {
-                        id: entry
-                            .path()
-                            .file_stem()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string(),
-                        created_at: metadata.created()?.into(),
-                        updated_at: metadata.modified()?.into(),
-                        message_count: 0,
-                        title: None,
-                    });
+        if !self.base_dir.exists() {
+            return Ok(sessions);
+        }
+        for entry in std::fs::read_dir(&self.base_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "jsonl") {
+                if let Ok(meta) = self.read_metadata(&path) {
+                    sessions.push(meta);
                 }
             }
         }
         Ok(sessions)
     }
 
-    pub async fn create(&self, _title: Option<String>) -> anyhow::Result<SessionMetadata> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let file_path = self.base_dir.join(format!("{}.jsonl", id));
-        std::fs::File::create(&file_path)?;
+    fn read_metadata(&self, path: &std::path::Path) -> std::io::Result<SessionMetadata> {
+        let file = std::fs::File::open(path)?;
+        let reader = std::io::BufReader::new(file);
+        let first_line = reader.lines().next().transpose()?.unwrap_or_default();
+
+        let header: SessionHeader = serde_json::from_str(&first_line)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+
+        let _metadata = std::fs::metadata(path)?;
 
         Ok(SessionMetadata {
-            id,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            id: header.id,
+            created_at: header.created_at,
+            updated_at: header.updated_at,
             message_count: 0,
-            title: None,
+            title: header.title,
+            working_dir: header.working_dir,
+            model: header.model,
         })
     }
 
-    pub async fn append(&self, session_id: &str, entry: SessionEntry) -> anyhow::Result<()> {
-        use std::io::Write;
+    pub fn init_session(
+        &self,
+        session_id: &str,
+        model: &str,
+        working_dir: &str,
+    ) -> SessionResult<()> {
+        let path = self.session_path(session_id);
+        if path.exists() {
+            return Ok(());
+        }
 
-        let file_path = self.base_dir.join(format!("{}.jsonl", session_id));
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&file_path)?;
-
-        let line = serde_json::to_string(&entry)?;
-        writeln!(file, "{}", line)?;
+        let header = SessionHeader::new(
+            session_id.to_string(),
+            model.to_string(),
+            working_dir.to_string(),
+        );
+        let line = serde_json::to_string(&header)?;
+        let mut file = std::fs::File::create(&path)?;
+        writeln!(file, "{line}")?;
         Ok(())
     }
 
-    pub async fn load(&self, session_id: &str) -> anyhow::Result<Vec<SessionEntry>> {
-        use std::io::BufRead;
+    pub fn append_entry(&self, session_id: &str, entry: &SessionEntry) -> SessionResult<()> {
+        let path = self.session_path(session_id);
+        if !path.exists() {
+            return Err(SessionError::NotFound(session_id.to_string()));
+        }
+        let line = serde_json::to_string(entry)?;
+        let mut file = std::fs::OpenOptions::new().append(true).open(&path)?;
+        writeln!(file, "{line}")?;
+        Ok(())
+    }
 
-        let file_path = self.base_dir.join(format!("{}.jsonl", session_id));
-        let file = std::fs::File::open(&file_path)?;
+    pub fn load_entries(&self, session_id: &str) -> SessionResult<Vec<SessionEntry>> {
+        let path = self.session_path(session_id);
+        if !path.exists() {
+            return Err(SessionError::NotFound(session_id.to_string()));
+        }
+        let file = std::fs::File::open(&path)?;
         let reader = std::io::BufReader::new(file);
 
         let mut entries = Vec::new();
-        for line in reader.lines() {
+        for (i, line) in reader.lines().enumerate() {
             let line = line?;
-            if line.trim().is_empty() {
-                continue;
+            if i == 0 || line.trim().is_empty() {
+                continue; // skip header line
             }
             let entry: SessionEntry = serde_json::from_str(&line)?;
             entries.push(entry);
         }
         Ok(entries)
+    }
+
+    pub fn read_header(&self, session_id: &str) -> SessionResult<SessionHeader> {
+        let path = self.session_path(session_id);
+        if !path.exists() {
+            return Err(SessionError::NotFound(session_id.to_string()));
+        }
+        let file = std::fs::File::open(&path)?;
+        let reader = std::io::BufReader::new(file);
+        let first_line = reader
+            .lines()
+            .next()
+            .ok_or_else(|| SessionError::InvalidData("empty file".into()))??;
+        let header: SessionHeader = serde_json::from_str(&first_line)?;
+        Ok(header)
     }
 }
