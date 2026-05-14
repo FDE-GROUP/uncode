@@ -2988,6 +2988,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uncode-core",
+ "uuid",
 ]
 
 [[package]]

@@ -17,4 +17,5 @@ tracing.workspace = true
 chrono.workspace = true
 parking_lot.workspace = true
 anyhow.workspace = true
+uuid.workspace = true
 dirs.workspace = true
