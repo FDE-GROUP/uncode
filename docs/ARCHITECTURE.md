@@ -10,7 +10,7 @@
 ├──────────────────────┬──────────────────────────────────┤
 │     uncode-tui       │     uncode-platform               │
 │   ratatui + crossterm│   axum/actix-web REST + WS        │
-│   终端四面板交互界面   │   分析监控平台服务端               │
+│   对话驱动终端界面   │   分析监控平台服务端               │
 ├──────────────────────┴──────────────────────────────────┤
 │                  uncode-agent                            │
 │   代理循环引擎 / 系统提示构建 / Token估算 / 上下文压缩       │
@@ -79,7 +79,7 @@
 | `uncode-tools` | 内置工具实现 + 工具注册表 | core |
 | `uncode-extensions` | WASM 扩展运行时、生命周期钩子 | core |
 | `uncode-agent` | 代理循环引擎、系统提示、Token估算 | core + llm + session + tools + extensions |
-| `uncode-tui` | 终端 UI 四面板 | core + agent + session |
+| `uncode-tui` | 对话驱动终端 UI | core + agent + session |
 | `uncode-platform` | 分析监控平台服务端 | core + session |
 | `uncode-rpc` | JSON-RPC 外部接口（规划中） | core + agent |
 | `uncode-cli` | 命令行入口 + 模式分发 | 所有 |
@@ -117,13 +117,13 @@
 ```
 AgentLoop
     │
-    ├──TaskUpdate──────────→ tokio::sync::broadcast ──→ TUI(任务清单面板)
-    ├──ContentDelta────────→ tokio::sync::broadcast ──→ TUI(思考过程面板)
-    ├──ToolCallStart───────→ tokio::sync::broadcast ──→ TUI(工具调用面板)
-    ├──ToolCallProgress────→ tokio::sync::broadcast ──→ TUI(工具调用面板)
-    ├──ToolCallEnd─────────→ tokio::sync::broadcast ──→ TUI(工具调用面板)
-    ├──PhaseSummary────────→ tokio::sync::broadcast ──→ TUI(阶段总结面板)
-    ├──Error───────────────→ tokio::sync::broadcast ──→ TUI(全局通知)
+    ├──TaskUpdate──────────→ tokio::sync::broadcast ──→ TUI(状态栏任务显示)
+    ├──ContentDelta────────→ tokio::sync::broadcast ──→ TUI(对话区Agent回复)
+    ├──ToolCallStart───────→ tokio::sync::broadcast ──→ TUI(对话区工具调用)
+    ├──ToolCallProgress────→ tokio::sync::broadcast ──→ TUI(工具调用进度)
+    ├──ToolCallEnd─────────→ tokio::sync::broadcast ──→ TUI(工具调用结果)
+    ├──PhaseSummary────────→ tokio::sync::broadcast ──→ TUI(对话区总结卡片)
+    ├──Error───────────────→ tokio::sync::broadcast ──→ TUI(对话区错误消息)
     ├──SessionStart────────→ tokio::sync::broadcast ──→ 日志
     ├──TurnEnd─────────────→ tokio::sync::broadcast ──→ 会话存储
     └──SessionEnd──────────→ tokio::sync::broadcast ──→ 会话存储
@@ -335,27 +335,31 @@ SessionManager
 
 ```
 App
-├── StatusBar（顶部状态栏：版本/会话/模型/Token/时间）
-├── MainLayout
-│   ├── TaskListPanel（左上：任务清单）
-│   ├── ToolCallsPanel（右上：工具调用）
-│   ├── ThinkingPanel（左下：思考过程）
-│   └── SummaryPanel（右下：阶段总结）
-├── InputEditor（底部命令行输入）
-└── PopupOverlay
-    ├── ErrorDialog
-    ├── ConfirmDialog
-    └── CodeDetailView（全屏/半屏代码细节）
+├── StatusBar（顶部状态栏：版本/模型/会话/Token）
+├── ChatView（主区域：可滚动对话历史）
+│   ├── UserMessage（用户消息）
+│   ├── AssistantMessage（Agent 回复，Markdown 渲染）
+│   ├── ThinkingBlock（思考过程，默认折叠）
+│   ├── ToolCallBlock（工具调用，可折叠展开）
+│   │   ├── DiffView（编辑操作的内联 diff）
+│   │   └── PermissionPrompt（权限确认请求）
+│   ├── ErrorMessage（错误提示）
+│   └── SummaryCard（阶段总结）
+├── InputEditor（底部输入栏，多行编辑）
+├── KeyHintBar（快捷键提示栏）
+└── OverlaySelector（模型/会话选择弹出层）
 ```
 
 ### 7.2 渲染循环
 
 ```rust
 struct TuiEngine {
-    app_state: AppState,
+    messages: Vec<ChatMessage>,
     terminal: Terminal<CrosstermBackend<Stdout>>,
     event_rx: broadcast::Receiver<AgentEvent>,
-    key_rx: mpsc::UnboundedReceiver<KeyEvent>,
+    editor: InputEditor,
+    scroll_offset: usize,
+    auto_scroll: bool,
 }
 
 impl TuiEngine {
@@ -363,7 +367,7 @@ impl TuiEngine {
         loop {
             tokio::select! {
                 event = self.event_rx.recv() => self.handle_agent_event(event),
-                key = self.key_rx.recv() => self.handle_key_event(key),
+                key = read_key_event() => self.handle_key_event(key),
             }
             self.render()?;
         }
@@ -371,13 +375,14 @@ impl TuiEngine {
 }
 ```
 
-### 7.3 面板更新策略
+### 7.3 对话消息更新策略
 
-| 面板 | 更新频率 | 触发条件 |
-|------|---------|---------|
-| 任务清单 | 低频 | TaskUpdate 事件 |
+| 消息类型 | 更新频率 | 触发条件 |
+|---------|---------|---------|
+| Agent 文本 | 高频（流式） | ContentDelta(Text) 事件 |
+| 思考过程 | 高频（流式） | ContentDelta(Thinking) 事件 |
 | 工具调用 | 中频 | ToolCallStart/Progress/End 事件 |
-| 思考过程 | 高频（流式） | ContentDelta 事件 |
+| 权限请求 | 极低频 | 工具调用需确认时 |
 | 阶段总结 | 极低频 | PhaseSummary 事件 |
 
 ---

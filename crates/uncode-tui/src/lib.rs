@@ -36,7 +36,6 @@ pub struct TuiEngine {
     session_id: String,
     editor: InputEditor,
     code_detail: CodeDetailView,
-    simple_mode: bool,
     layout_locked: bool,
     slash: SlashCommands,
     completion: CompletionEngine,
@@ -55,7 +54,6 @@ impl TuiEngine {
             session_id: String::new(),
             editor: InputEditor::new(),
             code_detail: CodeDetailView::new(),
-            simple_mode: false,
             layout_locked: false,
             slash: SlashCommands::new(),
             completion: CompletionEngine::new(slash_commands()),
@@ -173,12 +171,7 @@ impl TuiEngine {
             .block(Block::default());
         f.render_widget(status, chunks[0]);
 
-        if self.simple_mode {
-            self.render_simple_layout(f, chunks[1]);
-        } else {
-            self.render_full_layout(f, chunks[1]);
-        }
-
+        self.render_full_layout(f, chunks[1]);
         self.editor.render(f, chunks[2]);
 
         if self.code_detail.is_visible() {
@@ -210,16 +203,6 @@ impl TuiEngine {
         self.render_tool_calls(f, top[1]);
         self.render_thinking(f, bottom[0]);
         self.render_summary(f, bottom[1]);
-    }
-
-    fn render_simple_layout(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let panels = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
-            .split(area);
-
-        self.render_task_list(f, panels[0]);
-        self.render_summary(f, panels[1]);
     }
 
     fn render_task_list(&self, f: &mut Frame, area: ratatui::layout::Rect) {
@@ -327,13 +310,7 @@ impl TuiEngine {
                             let action = self.editor.handle_key(key_event);
                             match action {
                                 InputAction::Submit(text) => {
-                                    if text == "/simple" {
-                                        self.simple_mode = true;
-                                        self.status_text = "uncode v0.1 | 简化模式".into();
-                                    } else if text == "/full" {
-                                        self.simple_mode = false;
-                                        self.status_text = "uncode v0.1 | 完整模式".into();
-                                    } else if text == "/unlock" {
+                                    if text == "/unlock" {
                                         self.layout_locked = false;
                                         self.status_text = "uncode v0.1 | 布局已解锁".into();
                                     } else if let Some(response) = self.slash.execute(&text) {
@@ -366,8 +343,6 @@ impl Default for TuiEngine {
 
 fn slash_commands() -> Vec<String> {
     vec![
-        "simple".into(),
-        "full".into(),
         "unlock".into(),
         "help".into(),
         "quit".into(),
