@@ -510,3 +510,144 @@ main()
 | Platform 后端框架 | axum vs actix-web |
 | 多 session 并行 | AgentLoop 多实例管理策略 |
 | 分布式会话 | 多机器共享会话的方案 |
+
+---
+
+## 十二、核心设计决策（参考 Pi 工程分析）
+
+以下章节记录了 uncode 的核心工程决策及其设计原因，参照 Pi 的 17 维度工程分析撰写。
+
+### 12.1 Agent 循环：单层 ReAct + Compaction
+
+```
+turn 0: 加载上下文 → 构建系统提示
+    ↓
+loop: 检查压缩 → 构建请求 → 调用LLM（流式）→ 解析响应
+    ├── 文本 delta → 广播 ContentDelta 事件
+    ├── 工具调用 → 执行工具 → 追加结果 → continue loop
+    └── Done → break
+```
+
+**设计决策：** 选择单层循环而非 Pi 的双层 while 结构。理由是当前阶段不需要 steering/followUp 消息队列；单 Agent 循环更简单，后续可通过 `stop.rs` 的 `StopCondition` trait 扩展。
+
+### 12.2 工具系统：Trait + 注册表 + 过程宏
+
+```rust
+// 工具注册（内置）
+tool_registry.register("read".into(), Arc::new(ReadTool::new()));
+
+// 工具注册（扩展）
+extension_api.register_extension(ext, hooks);
+```
+
+**设计决策：** 选择 Rust trait 而非声明式 Schema（Pi 用 TypeBox）。理由是 Rust 的编译时类型安全比运行时 Schema 校验更可靠；`#[tool]` 宏从函数签名自动推导 JSON Schema，弥补声明式的便利性缺失。
+
+### 12.3 错误处理：{content, isError} 统一返回
+
+```rust
+pub struct ToolResult {
+    pub tool_call_id: String,
+    pub content: String,
+    pub is_error: bool,      // ← LLM 看到此标记自动反思
+}
+```
+
+**设计决策：** 参照 Pi，工具成功和失败使用同一数据结构。LLM 在 ReAct 循环中看到 `is_error: true` 自动触发纠错推理，无需额外 Critic Agent。`AgentLoop` 将工具异常捕获后统一包装为 `is_error: true` 的 `ToolResult`。
+
+### 12.4 上下文压缩：结构化摘要格式
+
+```
+[上下文摘要]
+## 目标              — 当前任务目标
+## 已完成             — Done 列表
+## 进行中             — In Progress 列表
+## 受阻               — Blocked 列表
+## 关键决策           — 已做出的重要决策
+## 后续步骤           — Next Steps
+```
+
+**设计决策：** 参照 Pi 的 `Goal/Progress/NextSteps` 格式。结构化的 Done/InProgress/Blocked 三种状态使 LLM 在后续轮次中能快速定位任务进展。
+
+### 12.5 提示词结构：时间锚点 + 动态工具指南
+
+```rust
+SystemPromptBuilder::new()
+    .base("你是 AI 编程助手。")
+    .add_tool_guide(&tools)       // 动态注入活跃工具
+    .add_context(&agents_content) // 项目上下文
+    .add_skills(&skills)          // 用户定义的技能
+    .add_rules("无 unsafe 代码")  // 项目规则
+    .build()
+```
+
+**设计决策：** 参照 Pi 的动态 Guidelines + Skill 命令机制。`add_tool_guide()` 根据当前注册的工具集动态生成工具说明，禁用某工具后对应指南自动消失。`ContextLoader` 从工作目录向上遍历加载 AGENTS.md/CLAUDE.md。
+
+### 12.6 会话持久化：JSONL + 分支
+
+```
+~/.uncode/sessions/{id}.jsonl
+第1行: {"type":"header","id":"uuid","model":"deepseek-v3",...}
+第2行: {"type":"message","role":"user",...}
+第3行: {"type":"message","role":"assistant",...}
+第N行: {"type":"branch","parent_id":"...","reason":"探索替代方案"}
+```
+
+**设计决策：** 参照 Pi 的 JSONL 追加写入策略。三个工程优势：
+1. **崩溃不丢数据** — append-only，每行独立
+2. **天然回放** — 从头读到尾 = 完整会话
+3. **分支支持** — `SessionEntry::Branch` 记录分叉点，可从任意历史节点分叉
+
+### 12.7 安全与权限：当前策略
+
+| 有 | 无 |
+|----|----|
+| 进程超时保护（BashTool timeout） | 文件路径 Jail |
+| tokio::time::timeout 中断 | 命令白名单/黑名单 |
+| JSONL 本地文件存储 | 敏感信息脱敏 |
+
+**设计决策：** 当前阶段把安全责任交给操作系统层（文件权限、进程隔离）。生产就绪前需要：
+- Bash 工具增加 `allowed_paths` 校验
+- Provider 配置中的 API key 使用 `secrecy::SecretString`
+- Platform 团队模式增加认证中间件
+
+### 12.8 可观测性：当前状态
+
+| 有 | 无 |
+|----|----|
+| tracing 结构化日志 | 无 OpenTelemetry 集成 |
+| Token 消耗记录（UsageInfo） | 无费用格式化展示 |
+| AgentEvent 广播流 | 无指标仪表板 |
+
+**设计决策：** 当前阶段以 tracing + AgentEvent 事件流为基础。Platform（Phase 3）将提供：
+- 会话 Token 消耗趋势图
+- 工具调用成功率统计
+- 费用估算（按模型定价表计算）
+
+### 12.9 评估体系：当前缺口
+
+**当前状态：** 42 个单元测试覆盖类型/macro/工具/会话。无自动化 Agent 行为质量评估。
+
+**需要补充：**
+- Golden Set 测试：一组标准 Issue → 期望的代码变更，用于回归验证 Agent 行为
+- 工具调用成功率基准：bash/read/write/edit 各工具的失败率趋势
+- 提示词质量评估：`SystemPromptBuilder` 不同组合对 Agent 效果的 A/B 测试
+
+---
+
+## 十三、与 Pi 工程分析的对齐表
+
+| Pi 决策 | uncode 实现 | 对齐度 |
+|---------|------------|--------|
+| 单体 ReAct + 扩展口 | AgentLoop + ToolRegistry + ExtensionApi | 90% |
+| 双层 while + terminate | 单层 loop + StopCondition trait | 70% |
+| {content, isError} | ToolResult.is_error | 100% |
+| 声明式 Schema | `#[tool]` 宏 + JSON Schema 推导 | 80% |
+| JSONL + 结构化压缩 | SESSION_SCHEMA + compaction 模块 | 90% |
+| 会话分支 | SessionManager::branch_session | 80% |
+| 异步 steering | ❌ 未实现 | 0% |
+| 时间锚点 + 动态指南 | SystemPromptBuilder | 80% |
+| Skill 命令 | SKILL.md 加载 | 70% |
+| 扩展钩子（9个） | 8 个钩子定义 | 80% |
+| 模型热切换 | ❌ 未实现 | 0% |
+| 多模态 | ❌ 未实现 | 0% |
+| 安全/可观测/评估 | ⚠️ 基础阶段 | 40% |
