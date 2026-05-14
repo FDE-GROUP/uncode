@@ -5,9 +5,11 @@
 
 pub mod code_detail;
 pub mod input;
+pub mod slash;
 
 use crate::code_detail::CodeDetailView;
 use crate::input::{InputAction, InputEditor};
+use crate::slash::SlashCommands;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
@@ -28,6 +30,7 @@ pub struct TuiEngine {
     code_detail: CodeDetailView,
     simple_mode: bool,
     layout_locked: bool,
+    slash: SlashCommands,
 }
 
 impl TuiEngine {
@@ -44,6 +47,7 @@ impl TuiEngine {
             code_detail: CodeDetailView::new(),
             simple_mode: false,
             layout_locked: false,
+            slash: SlashCommands::new(),
         }
     }
 
@@ -277,6 +281,8 @@ impl TuiEngine {
                                     } else if text == "/unlock" {
                                         self.layout_locked = false;
                                         self.status_text = "uncode v0.1 | 布局已解锁".into();
+                                    } else if let Some(response) = self.slash.execute(&text) {
+                                        self.current_summary = response;
                                     } else {
                                         on_submit(text);
                                     }
