@@ -18,3 +18,6 @@ pub use providers::ollama::OllamaDriver;
 pub use providers::openai::OpenAiDriver;
 pub use providers::openrouter::OpenRouterDriver;
 pub use registry::ProviderRegistry;
+
+#[cfg(test)]
+mod tests;

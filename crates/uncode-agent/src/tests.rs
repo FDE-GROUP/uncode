@@ -109,3 +109,23 @@ mod tests {
         assert!((cost - 3.0).abs() < 0.01); // default: (1*1) + (1*2) = 3.0
     }
 }
+
+#[test]
+fn test_step_count_is() {
+    let condition = crate::stop::step_count_is(3);
+    assert!(condition.should_stop(3, &[]).is_some());
+    assert!(condition.should_stop(2, &[]).is_none());
+    assert!(condition.should_stop(0, &[]).is_none());
+}
+
+#[test]
+fn test_text_contains_stop() {
+    use uncode_core::message::Message;
+
+    let condition = crate::stop::text_contains("DONE");
+    let empty: Vec<Message> = vec![];
+    assert!(condition.should_stop(0, &empty).is_none());
+
+    let msg = Message::assistant("task DONE");
+    assert!(condition.should_stop(0, &[msg]).is_some());
+}
