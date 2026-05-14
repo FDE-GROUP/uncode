@@ -3007,6 +3007,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uncode-core",
+ "uuid",
  "walkdir",
 ]
 
