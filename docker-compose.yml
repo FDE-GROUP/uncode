@@ -1,0 +1,14 @@
+version: "3.8"
+services:
+  platform:
+    build: .
+    command: ["uncode-platform"]
+    ports:
+      - "3000:3000"
+    volumes:
+      - sessions:/root/.uncode/sessions
+    environment:
+      - RUST_LOG=info
+
+volumes:
+  sessions:
