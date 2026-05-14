@@ -63,15 +63,24 @@ impl SessionStore {
         let reader = std::io::BufReader::new(file);
         let first_line = reader.lines().next().transpose()?.unwrap_or_default();
 
+        if first_line.is_empty() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "empty session file",
+            ));
+        }
+
         let header: SessionHeader = serde_json::from_str(&first_line)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
 
-        let _metadata = std::fs::metadata(path)?;
+        let md = std::fs::metadata(path)?;
+        let modified =
+            chrono::DateTime::<chrono::Utc>::from(md.modified().unwrap_or(std::time::UNIX_EPOCH));
 
         Ok(SessionMetadata {
             id: header.id,
             created_at: header.created_at,
-            updated_at: header.updated_at,
+            updated_at: modified,
             message_count: 0,
             title: header.title,
             working_dir: header.working_dir,

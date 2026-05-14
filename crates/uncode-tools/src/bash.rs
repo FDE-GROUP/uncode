@@ -48,23 +48,17 @@ impl ToolExecutor for BashTool {
             .as_u64()
             .unwrap_or(self.default_timeout_secs);
 
-        let output = tokio::process::Command::new("sh")
-            .arg("-c")
-            .arg(command)
-            .current_dir(workdir)
-            .output()
-            .await
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("bash: {e}")))?;
-
-        if tokio::time::timeout(
+        let output = tokio::time::timeout(
             std::time::Duration::from_secs(timeout),
-            tokio::time::sleep(std::time::Duration::from_secs(0)),
+            tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg(command)
+                .current_dir(workdir)
+                .output(),
         )
         .await
-        .is_err()
-        {
-            return Err(uncode_core::error::UncodeError::Tool("timeout".into()));
-        }
+        .map_err(|_| uncode_core::error::UncodeError::Tool("timeout".into()))?
+        .map_err(|e| uncode_core::error::UncodeError::Tool(format!("bash: {e}")))?;
 
         let mut result = String::new();
         if !output.stdout.is_empty() {
