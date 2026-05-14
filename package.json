@@ -1,0 +1,14 @@
+{
+  "name": "uncode",
+  "private": true,
+  "scripts": {
+    "dev": "cargo run -p uncode-cli -- -i",
+    "run": "cargo run -p uncode-cli --",
+    "build": "cargo build --release -p uncode-cli",
+    "test": "cargo test --workspace",
+    "lint": "cargo clippy --workspace",
+    "fmt": "cargo fmt && cd apps/platform && bun biome check --write src/",
+    "platform:dev": "cd apps/platform && bun dev",
+    "platform:build": "cd apps/platform && bun run build"
+  }
+}
