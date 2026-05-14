@@ -16,6 +16,7 @@ pub struct CompletionRequest {
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
     TextDelta(String),
+    ThinkingDelta(String),
     ToolCallStart {
         id: String,
         name: String,

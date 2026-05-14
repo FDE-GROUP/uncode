@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use futures::stream::{self, BoxStream, StreamExt};
 use reqwest::Client;
 use serde_json::Value;
+use std::collections::HashMap;
 
 use crate::driver::{CompletionRequest, LlmDriver, StreamEvent, UsageInfo};
 use uncode_core::error::UncodeError;
@@ -30,7 +31,15 @@ impl DeepSeekDriver {
     }
 
     fn build_body(&self, request: &CompletionRequest) -> Value {
+        tracing::debug!("input messages: {}", request.messages.len());
+        for (i, msg) in request.messages.iter().enumerate() {
+            tracing::debug!("msg[{i}]: role={:?} blocks={}", msg.role, msg.content.len());
+        }
         let messages = crate::providers::common::build_chat_messages(request);
+        tracing::debug!(
+            "API messages: {}",
+            serde_json::to_string_pretty(&messages).unwrap_or_default()
+        );
         let mut body = serde_json::json!({
             "model": request.model,
             "messages": messages,
@@ -95,25 +104,51 @@ impl LlmDriver for DeepSeekDriver {
             ));
         }
 
+        // Use scan to carry accumulated tool-call state across chunks.
+        // flat_map would lose state between chunks, causing ToolCallEnd to never fire.
+        let state = DeepSeekStreamState {
+            pending_args: HashMap::new(),
+            tool_names: HashMap::new(),
+            index_to_id: HashMap::new(),
+        };
         let stream = response
             .bytes_stream()
-            .flat_map(|chunk| {
+            .scan(state, |state, chunk| {
                 let events: Vec<StreamEvent> = match chunk {
-                    Ok(c) => parse_deepseek_sse(&String::from_utf8_lossy(&c)),
+                    Ok(c) => parse_deepseek_sse_chunk(
+                        &String::from_utf8_lossy(&c),
+                        state,
+                    ),
                     Err(e) => vec![StreamEvent::Error(e.to_string())],
                 };
-                stream::iter(events)
+                std::future::ready(Some(stream::iter(events)))
             })
+            .flatten()
             .chain(stream::once(async { StreamEvent::Done }));
 
         Ok(Box::pin(stream))
     }
 }
 
-fn parse_deepseek_sse(text: &str) -> Vec<StreamEvent> {
+/// Mutable state carried across SSE chunks for proper tool-call assembly.
+struct DeepSeekStreamState {
+    /// Accumulated arguments per tool call ID.
+    pending_args: HashMap<String, String>,
+    /// Tool name recorded at ToolCallStart, keyed by tool call ID.
+    tool_names: HashMap<String, String>,
+    /// Maps SSE tool_call index → tool call ID (OpenAI-compat APIs only
+    /// include `id` in the first chunk; subsequent arg-only chunks omit it).
+    index_to_id: HashMap<usize, String>,
+}
+
+/// Parse a single SSE chunk. `pending_args` and `tool_names` accumulate
+/// across chunks so that `ToolCallEnd` can be emitted when `finish_reason`
+/// arrives — even if it's in a different chunk than the tool-call start/args.
+fn parse_deepseek_sse_chunk(
+    text: &str,
+    state: &mut DeepSeekStreamState,
+) -> Vec<StreamEvent> {
     let mut events = Vec::new();
-    let mut pending_args: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
 
     for line in text.lines() {
         let line = line.trim();
@@ -126,18 +161,46 @@ fn parse_deepseek_sse(text: &str) -> Vec<StreamEvent> {
                     // Tool calls (streaming fragments)
                     if let Some(tool_calls) = choice["delta"]["tool_calls"].as_array() {
                         for tc in tool_calls {
-                            let id = tc["id"].as_str().unwrap_or("").to_string();
+                            let index = tc["index"].as_u64().unwrap_or(0) as usize;
+                            let raw_id = tc["id"].as_str().unwrap_or("");
+                            // Resolve the actual tool call ID: prefer the id
+                            // field, fall back to index-based lookup for
+                            // arg-only chunks that omit the id.
+                            let id = if !raw_id.is_empty() {
+                                state.index_to_id.insert(index, raw_id.to_string());
+                                raw_id.to_string()
+                            } else {
+                                state.index_to_id.get(&index)
+                                    .cloned()
+                                    .unwrap_or_default()
+                            };
+
                             if let Some(func) = tc.get("function") {
                                 if let Some(name) = func["name"].as_str() {
+                                    state.tool_names.insert(id.clone(), name.to_string());
                                     events.push(StreamEvent::ToolCallStart {
                                         id: id.clone(),
                                         name: name.to_string(),
                                     });
                                 }
                                 if let Some(args) = func["arguments"].as_str() {
-                                    pending_args.entry(id.clone()).or_default().push_str(args);
+                                    events.push(StreamEvent::ToolCallDelta {
+                                        id: id.clone(),
+                                        arguments: args.to_string(),
+                                    });
+                                    state
+                                        .pending_args
+                                        .entry(id)
+                                        .or_default()
+                                        .push_str(args);
                                 }
                             }
+                        }
+                    }
+                    // Reasoning/thinking content (DeepSeek reasoning models)
+                    if let Some(reasoning) = choice["delta"]["reasoning_content"].as_str() {
+                        if !reasoning.is_empty() {
+                            events.push(StreamEvent::ThinkingDelta(reasoning.to_string()));
                         }
                     }
                     // Text delta
@@ -146,30 +209,19 @@ fn parse_deepseek_sse(text: &str) -> Vec<StreamEvent> {
                             events.push(StreamEvent::TextDelta(content.to_string()));
                         }
                     }
-                    // Finish reason
+                    // Finish reason — flush accumulated args as ToolCallEnd
                     if let Some(reason) = choice.get("finish_reason") {
-                        if reason.as_str() == Some("stop") || reason.as_str() == Some("tool_calls")
-                        {
-                            // Flush pending tool call args
-                            for (id, args) in pending_args.drain() {
-                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&args)
-                                {
-                                    let name = events
-                                        .iter()
-                                        .rev()
-                                        .find_map(|e| match e {
-                                            StreamEvent::ToolCallStart {
-                                                id: tid, name, ..
-                                            } if tid == &id => Some(name.clone()),
-                                            _ => None,
-                                        })
-                                        .unwrap_or_default();
-                                    events.push(StreamEvent::ToolCallEnd {
-                                        id,
-                                        name,
-                                        arguments: parsed,
-                                    });
-                                }
+                        if !reason.is_null() {
+                            for (id, args) in state.pending_args.drain() {
+                                let parsed =
+                                    serde_json::from_str::<serde_json::Value>(&args)
+                                        .unwrap_or(serde_json::Value::Object(Default::default()));
+                                let name = state.tool_names.remove(&id).unwrap_or_default();
+                                events.push(StreamEvent::ToolCallEnd {
+                                    id,
+                                    name,
+                                    arguments: parsed,
+                                });
                             }
                             if let Some(usage) = event.get("usage") {
                                 events.push(StreamEvent::Usage(UsageInfo {
