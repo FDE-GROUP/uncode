@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use crate::driver::LlmDriver;
 
+#[derive(Default)]
 pub struct ProviderRegistry {
     drivers: RwLock<HashMap<String, Arc<dyn LlmDriver>>>,
 }
@@ -15,21 +16,19 @@ impl ProviderRegistry {
         }
     }
 
-    pub fn register(&self, name: impl Into<String>, driver: Arc<dyn LlmDriver>) {
-        self.drivers.write().insert(name.into(), driver);
+    pub fn register(&self, name: String, driver: Arc<dyn LlmDriver>) {
+        self.drivers.write().insert(name, driver);
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn LlmDriver>> {
         self.drivers.read().get(name).cloned()
     }
 
-    pub fn list(&self) -> Vec<String> {
+    pub fn names(&self) -> Vec<String> {
         self.drivers.read().keys().cloned().collect()
     }
-}
 
-impl Default for ProviderRegistry {
-    fn default() -> Self {
-        Self::new()
+    pub fn has(&self, name: &str) -> bool {
+        self.drivers.read().contains_key(name)
     }
 }

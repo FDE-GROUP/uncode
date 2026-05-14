@@ -1,2 +1,3 @@
-pub mod anthropic;
-pub mod openai;
+pub mod deepseek;
+pub mod glm;
+pub mod ollama;
