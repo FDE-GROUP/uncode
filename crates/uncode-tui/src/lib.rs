@@ -118,8 +118,26 @@ impl TuiEngine {
                     next_steps.join("、")
                 );
             }
-            AgentEvent::Error { ref message, .. } => {
-                self.status_text = format!("⚠️ {message}");
+            AgentEvent::Error {
+                ref category,
+                ref message,
+                ..
+            } => {
+                let friendly = match category {
+                    uncode_core::event::ErrorCategory::Llm => {
+                        format!("⚠️ AI 服务暂时不可用，正在重试...")
+                    }
+                    uncode_core::event::ErrorCategory::Tool => {
+                        format!("⚠️ 工具执行出错: {message}")
+                    }
+                    uncode_core::event::ErrorCategory::Network => {
+                        "⚠️ 网络连接中断，等待恢复...".into()
+                    }
+                    uncode_core::event::ErrorCategory::Config => {
+                        format!("⚠️ 配置错误: {message}")
+                    }
+                };
+                self.status_text = friendly;
             }
             AgentEvent::SessionEnd {
                 ref exit_reason, ..
