@@ -7,7 +7,7 @@ const COMPACTION_THRESHOLD: f32 = 0.8;
 const KEEP_RECENT: usize = 5;
 const EST_CHARS_PER_TOKEN: f32 = 4.0;
 
-pub fn estimate_tokens(messages: &[Message]) -> u64 {
+pub fn estimate_context_tokens(messages: &[Message]) -> u64 {
     let mut total: u64 = 0;
     for msg in messages {
         for block in &msg.content {
@@ -24,7 +24,7 @@ pub fn estimate_tokens(messages: &[Message]) -> u64 {
 }
 
 pub fn should_compact(messages: &[Message], model_max_tokens: u64) -> bool {
-    let estimated = estimate_tokens(messages);
+    let estimated = estimate_context_tokens(messages);
     let threshold = (model_max_tokens as f32 * COMPACTION_THRESHOLD) as u64;
     estimated > threshold
 }
