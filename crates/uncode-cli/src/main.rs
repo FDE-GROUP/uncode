@@ -7,6 +7,7 @@ use tracing_subscriber::EnvFilter;
 use uncode_agent::{AgentLoop, ContextLoader, GitHubClient, SystemPromptBuilder};
 use uncode_core::config::AppConfig;
 use uncode_core::context::expand_file_refs;
+use uncode_core::event::AgentEvent;
 use uncode_core::message::{ContentBlock, Message, Role};
 use uncode_llm::registry::ProviderRegistry;
 use uncode_llm::{DeepSeekDriver, OllamaDriver};
@@ -34,6 +35,10 @@ struct Cli {
 
     #[arg(short, long)]
     repl: bool,
+
+    /// 输出模式：默认交互式，json 输出 JSON Lines
+    #[arg(long, default_value = "interactive")]
+    mode: String,
 
     prompt: Option<String>,
 }
@@ -182,6 +187,9 @@ async fn main() -> anyhow::Result<()> {
 
     if let Some(prompt) = cli.prompt {
         let expanded = expand_file_refs(&prompt, &cwd);
+        if cli.mode == "json" {
+            return run_json_mode(agent, expanded).await;
+        }
         let messages = agent.run(Message::user(expanded)).await?;
         print_messages(&messages);
         return Ok(());
@@ -244,6 +252,28 @@ async fn main() -> anyhow::Result<()> {
     })
     .await?;
 
+    Ok(())
+}
+
+async fn run_json_mode(agent: AgentLoop, prompt: String) -> anyhow::Result<()> {
+    let mut event_rx = agent.subscribe();
+
+    let agent_handle = tokio::spawn(async move { agent.run(Message::user(prompt)).await });
+
+    use tokio::io::AsyncWriteExt;
+    let mut stdout = tokio::io::stdout();
+    while let Ok(event) = event_rx.recv().await {
+        let json = serde_json::to_string(&event)?;
+        stdout.write_all(json.as_bytes()).await?;
+        stdout.write_all(b"\n").await?;
+        stdout.flush().await?;
+
+        if matches!(event, AgentEvent::SessionEnd { .. }) {
+            break;
+        }
+    }
+
+    let _ = agent_handle.await?;
     Ok(())
 }
 
