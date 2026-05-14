@@ -11,3 +11,6 @@ pub use grep::GrepTool;
 pub use read::ReadTool;
 pub use registry::ToolRegistry;
 pub use write::WriteTool;
+
+#[cfg(test)]
+mod tests;

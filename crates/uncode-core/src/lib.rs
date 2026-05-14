@@ -5,3 +5,6 @@ pub mod message;
 pub mod model;
 pub mod session;
 pub mod tool;
+
+#[cfg(test)]
+mod tests;
