@@ -87,6 +87,16 @@ impl SessionStore {
         model: &str,
         working_dir: &str,
     ) -> SessionResult<()> {
+        self.init_session_with_title(session_id, model, working_dir, None)
+    }
+
+    pub fn init_session_with_title(
+        &self,
+        session_id: &str,
+        model: &str,
+        working_dir: &str,
+        title: Option<String>,
+    ) -> SessionResult<()> {
         let path = self.session_path(session_id);
         if path.exists() {
             return Ok(());
@@ -97,6 +107,10 @@ impl SessionStore {
             model.to_string(),
             working_dir.to_string(),
         );
+        let header = match title {
+            Some(t) => header.with_title(t),
+            None => header,
+        };
         let line = serde_json::to_string(&header)?;
         let mut file = std::fs::File::create(&path)?;
         writeln!(file, "{line}")?;

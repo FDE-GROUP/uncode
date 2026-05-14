@@ -18,7 +18,7 @@ use crate::diff_viewer::DiffViewer;
 use crate::input::{InputAction, InputEditor};
 use crate::selector::OverlaySelector;
 use crate::slash::SlashCommands;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
@@ -291,22 +291,23 @@ impl TuiEngine {
                                 event::KeyEvent::new(KeyCode::Null, event::KeyModifiers::empty())
                             )) {
                                 if key.kind == KeyEventKind::Press {
-                                    return Ok::<KeyCode, std::io::Error>(key.code);
+                                    return Ok::<KeyEvent, std::io::Error>(key);
                                 }
                             }
                         }
                         tokio::task::yield_now().await;
                     }
                 } => {
-                    match key_event {
-                        KeyCode::Char('d') => self.code_detail.toggle(),
-                        KeyCode::Char('e') => self.code_detail.toggle_fullscreen(),
-                        KeyCode::Char('n') => self.diff.next_file(),
-                        KeyCode::Char('p') => self.diff.prev_file(),
-                        KeyCode::Char('j') if self.selector.is_visible() => self.selector.next(),
-                        KeyCode::Char('k') if self.selector.is_visible() => self.selector.prev(),
+                    let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
+                    match key_event.code {
+                        KeyCode::Char('d') if ctrl => self.code_detail.toggle(),
+                        KeyCode::Char('e') if ctrl => self.code_detail.toggle_fullscreen(),
+                        KeyCode::Char('n') if ctrl => self.diff.next_file(),
+                        KeyCode::Char('p') if ctrl => self.diff.prev_file(),
+                        KeyCode::Char('j') if ctrl && self.selector.is_visible() => self.selector.next(),
+                        KeyCode::Char('k') if ctrl && self.selector.is_visible() => self.selector.prev(),
                         KeyCode::Enter if self.selector.is_visible() => self.selector.hide(),
-                        KeyCode::Char('l') if !self.layout_locked => {
+                        KeyCode::Char('l') if ctrl && !self.layout_locked => {
                             self.layout_locked = true;
                             self.status_text = "uncode v0.1 | 布局已锁定".into();
                         }

@@ -163,3 +163,108 @@ impl Default for DiffViewer {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_diff_single_file() {
+        let diff = "\
+diff --git a/src/main.rs b/src/main.rs
+@@ -1,3 +1,4 @@
+ fn main() {
+-    println!(\"hello\");
++    println!(\"hello world\");
+ }
++";
+        let files = parse_diff(diff);
+        assert_eq!(files.len(), 1);
+        assert!(files[0].path.contains("main.rs"));
+        assert!(files[0].hunks.iter().any(|h| h.kind == DiffKind::Removed));
+        assert!(files[0].hunks.iter().any(|h| h.kind == DiffKind::Added));
+    }
+
+    #[test]
+    fn test_parse_diff_multiple_files() {
+        let diff = "\
+diff --git a/a.rs b/a.rs
+@@ -1 +1 @@
+-old
++new
+diff --git a/b.rs b/b.rs
+@@ -1 +1 @@
+-foo
++bar
+";
+        let files = parse_diff(diff);
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_diff_empty_input() {
+        let files = parse_diff("");
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_parse_diff_only_context() {
+        let diff = "unchanged line\nanother line\n";
+        let files = parse_diff(diff);
+        assert!(files.is_empty()); // no diff header, no file created
+    }
+
+    #[test]
+    fn test_parse_diff_no_hunks() {
+        let diff = "diff --git a/newfile.rs b/newfile.rs\n--- /dev/null\n+++ b/newfile.rs\n";
+        let files = parse_diff(diff);
+        // Has header path but no hunks — should be empty
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn test_diff_viewer_show_hide() {
+        let mut viewer = DiffViewer::new();
+        assert!(!viewer.is_visible());
+
+        viewer.show("diff --git a/a.rs b/a.rs\n+added\n");
+        assert!(viewer.is_visible());
+
+        viewer.hide();
+        assert!(!viewer.is_visible());
+    }
+
+    #[test]
+    fn test_diff_viewer_navigation() {
+        let mut viewer = DiffViewer::new();
+        let multi_diff = "\
+diff --git a/a.rs b/a.rs
++first
+diff --git a/b.rs b/b.rs
++second
+diff --git a/c.rs b/c.rs
++third
+";
+        viewer.show(multi_diff);
+        assert_eq!(viewer.files.len(), 3);
+        assert_eq!(viewer.active_index, 0);
+
+        viewer.next_file();
+        assert_eq!(viewer.active_index, 1);
+
+        viewer.next_file();
+        assert_eq!(viewer.active_index, 2);
+
+        viewer.next_file(); // at end, should not overflow
+        assert_eq!(viewer.active_index, 2);
+
+        viewer.prev_file();
+        assert_eq!(viewer.active_index, 1);
+
+        viewer.prev_file();
+        assert_eq!(viewer.active_index, 0);
+
+        viewer.prev_file(); // at start
+        assert_eq!(viewer.active_index, 0);
+    }
+}

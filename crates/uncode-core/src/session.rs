@@ -28,6 +28,11 @@ impl SessionHeader {
             working_dir,
         }
     }
+
+    pub fn with_title(mut self, title: String) -> Self {
+        self.title = Some(title);
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

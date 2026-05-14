@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -82,7 +81,7 @@ async fn main() -> anyhow::Result<()> {
         driver.clone(),
         tool_registry.clone(),
         session_store.clone(),
-        system_prompt,
+        system_prompt.clone(),
         model.clone(),
     );
 
@@ -92,9 +91,11 @@ async fn main() -> anyhow::Result<()> {
 
     if cli.interactive {
         let event_rx = agent.subscribe();
+        let event_tx = agent.event_sender();
         let driver_tui = driver.clone();
         let tools_tui = tool_registry.clone();
         let store_tui = session_store.clone();
+        let tui_system_prompt = system_prompt.clone();
 
         tokio::spawn(async move {
             let mut tui = uncode_tui::TuiEngine::new();
@@ -102,10 +103,12 @@ async fn main() -> anyhow::Result<()> {
                 let d = driver_tui.clone();
                 let t = tools_tui.clone();
                 let s = store_tui.clone();
+                let tx = event_tx.clone();
+                let sp = tui_system_prompt.clone();
                 let sid = session_opt.clone();
+                let m = model.clone();
                 tokio::spawn(async move {
-                    let mut a =
-                        AgentLoop::new(d, t, s, "你是AI助手。".into(), "deepseek-v3".into());
+                    let mut a = AgentLoop::with_event_sender(d, t, s, sp, m, tx);
                     if let Some(ref sid) = sid {
                         a.set_session_id(sid.clone());
                     }
@@ -144,69 +147,64 @@ async fn main() -> anyhow::Result<()> {
         println!("---");
 
         let messages = agent.run(Message::user(prompt)).await?;
-
-        for msg in &messages {
-            if msg.role == Role::Assistant || msg.role == Role::Tool {
-                for block in &msg.content {
-                    match block {
-                        ContentBlock::Text { text } if !text.is_empty() => {
-                            println!("{text}");
-                        }
-                        ContentBlock::ToolResult(tr) => {
-                            let prefix = if tr.is_error { "error" } else { "result" };
-                            println!("[{prefix}] {}", &tr.content[..tr.content.len().min(500)]);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-
+        print_messages(&messages);
         println!("\n--- done ---");
         return Ok(());
     }
 
     if let Some(prompt) = cli.prompt {
         let messages = agent.run(Message::user(prompt)).await?;
-
-        for msg in &messages {
-            if msg.role == Role::Assistant || msg.role == Role::Tool {
-                for block in &msg.content {
-                    match block {
-                        ContentBlock::Text { text } if !text.is_empty() => {
-                            println!("{text}");
-                        }
-                        ContentBlock::ToolResult(tr) => {
-                            println!(
-                                "[{}] {}",
-                                if tr.is_error { "error" } else { "result" },
-                                &tr.content[..tr.content.len().min(300)]
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
+        print_messages(&messages);
         return Ok(());
     }
 
-    Cli::parse_from(["uncode", "--help"]);
+    // REPL mode: no --prompt, no --interactive → read stdin loop
+    use std::io::{BufRead, Write};
+    let stdin = std::io::stdin();
+    let mut reader = stdin.lock();
+    let mut line = String::new();
+    loop {
+        print!("> ");
+        std::io::stdout().flush()?;
+        line.clear();
+        if reader.read_line(&mut line)? == 0 { break; }
+        let input = line.trim().to_string();
+        if input.is_empty() { continue; }
+        if input == "/quit" { break; }
+        let messages = agent.run(Message::user(input)).await?;
+        print_messages(&messages);
+    }
     Ok(())
 }
 
 fn load_config() -> anyhow::Result<AppConfig> {
     let config_path = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_default()
         .join("uncode")
         .join("config.json");
-
     if config_path.exists() {
         let content = std::fs::read_to_string(&config_path)?;
         let config: AppConfig = serde_json::from_str(&content)?;
         Ok(config)
     } else {
         Ok(AppConfig::default())
+    }
+}
+
+fn print_messages(messages: &[Message]) {
+    for msg in messages {
+        if msg.role == Role::Assistant || msg.role == Role::Tool {
+            for block in &msg.content {
+                match block {
+                    ContentBlock::Text { text } if !text.is_empty() => println!("{text}"),
+                    ContentBlock::ToolResult(tr) => {
+                        let prefix = if tr.is_error { "error" } else { "result" };
+                        println!("[{prefix}] {}", &tr.content[..tr.content.len().min(300)]);
+                    }
+                    _ => {}
+                }
+            }
+        }
     }
 }
 

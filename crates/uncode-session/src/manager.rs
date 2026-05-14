@@ -23,9 +23,9 @@ impl SessionManager {
         title: Option<String>,
     ) -> SessionResult<SessionMetadata> {
         let session_id = Uuid::new_v4().to_string();
-        self.store.init_session(&session_id, model, working_dir)?;
-        let mut header = self.store.read_header(&session_id)?;
-        header.title = title;
+        self.store
+            .init_session_with_title(&session_id, model, working_dir, title)?;
+        let header = self.store.read_header(&session_id)?;
         Ok(SessionMetadata::from(header))
     }
 

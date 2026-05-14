@@ -59,3 +59,59 @@ impl Default for SlashCommands {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_execute_help() {
+        let cmds = SlashCommands::new();
+        let result = cmds.execute("/help");
+        assert!(result.is_some());
+        let help = result.unwrap();
+        assert!(help.contains("/help"));
+        assert!(help.contains("/quit"));
+    }
+
+    #[test]
+    fn test_execute_quit() {
+        let cmds = SlashCommands::new();
+        let result = cmds.execute("/quit");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_execute_unknown() {
+        let cmds = SlashCommands::new();
+        let result = cmds.execute("/nonexistent");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_execute_with_args() {
+        let mut cmds = SlashCommands::new();
+        cmds.register(
+            "echo",
+            "echo args",
+            Box::new(|args| format!("echo: {args}")),
+        );
+        let result = cmds.execute("/echo hello world");
+        assert_eq!(result.unwrap(), "echo: hello world");
+    }
+
+    #[test]
+    fn test_names() {
+        let cmds = SlashCommands::new();
+        let names = cmds.names();
+        assert!(names.contains(&"help".to_string()));
+        assert!(names.contains(&"quit".to_string()));
+    }
+
+    #[test]
+    fn test_execute_without_slash() {
+        let cmds = SlashCommands::new();
+        let result = cmds.execute("help");
+        assert!(result.is_some());
+    }
+}

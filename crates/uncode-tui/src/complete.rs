@@ -69,3 +69,38 @@ impl CompletionEngine {
         matches
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_complete_slash_all() {
+        let engine = CompletionEngine::new(vec!["help".into(), "quit".into()]);
+        let completions = engine.complete("/");
+        assert_eq!(completions.len(), 2);
+        assert!(completions.contains(&"/help".to_string()));
+    }
+
+    #[test]
+    fn test_complete_slash_prefix() {
+        let engine = CompletionEngine::new(vec!["help".into(), "quit".into()]);
+        let completions = engine.complete("/h");
+        assert_eq!(completions.len(), 1);
+        assert_eq!(completions[0], "/help");
+    }
+
+    #[test]
+    fn test_complete_slash_no_match() {
+        let engine = CompletionEngine::new(vec!["help".into()]);
+        let completions = engine.complete("/xyz");
+        assert!(completions.is_empty());
+    }
+
+    #[test]
+    fn test_complete_non_path() {
+        let engine = CompletionEngine::new(vec!["help".into()]);
+        let completions = engine.complete("hello world");
+        assert!(completions.is_empty());
+    }
+}
