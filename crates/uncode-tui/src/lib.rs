@@ -25,7 +25,9 @@ use crate::selector::OverlaySelector;
 use crate::slash::SlashCommands;
 use crate::theme::Theme;
 use crate::tool_renderer::ToolRendererRegistry;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
+};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
@@ -61,7 +63,9 @@ impl FooterState {
             .output()
             .ok()
             .and_then(|o| {
-                o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                o.status
+                    .success()
+                    .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
             })
             .unwrap_or_default();
 
@@ -244,10 +248,7 @@ impl TuiEngine {
         F: Fn(String),
     {
         let mut terminal = ratatui::init();
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::event::EnableMouseCapture
-        );
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
         loop {
             if let Err(e) = terminal.draw(|f| self.render(f)) {
                 eprintln!("terminal draw failed: {e}");
@@ -378,10 +379,7 @@ impl TuiEngine {
                 }
             }
         }
-        let _ = crossterm::execute!(
-            std::io::stdout(),
-            crossterm::event::DisableMouseCapture
-        );
+        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
         ratatui::restore();
     }
 

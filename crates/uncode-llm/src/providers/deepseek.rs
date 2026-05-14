@@ -115,10 +115,7 @@ impl LlmDriver for DeepSeekDriver {
             .bytes_stream()
             .scan(state, |state, chunk| {
                 let events: Vec<StreamEvent> = match chunk {
-                    Ok(c) => parse_deepseek_sse_chunk(
-                        &String::from_utf8_lossy(&c),
-                        state,
-                    ),
+                    Ok(c) => parse_deepseek_sse_chunk(&String::from_utf8_lossy(&c), state),
                     Err(e) => vec![StreamEvent::Error(e.to_string())],
                 };
                 std::future::ready(Some(stream::iter(events)))
@@ -144,10 +141,7 @@ struct DeepSeekStreamState {
 /// Parse a single SSE chunk. `pending_args` and `tool_names` accumulate
 /// across chunks so that `ToolCallEnd` can be emitted when `finish_reason`
 /// arrives — even if it's in a different chunk than the tool-call start/args.
-fn parse_deepseek_sse_chunk(
-    text: &str,
-    state: &mut DeepSeekStreamState,
-) -> Vec<StreamEvent> {
+fn parse_deepseek_sse_chunk(text: &str, state: &mut DeepSeekStreamState) -> Vec<StreamEvent> {
     let mut events = Vec::new();
 
     for line in text.lines() {
@@ -170,9 +164,7 @@ fn parse_deepseek_sse_chunk(
                                 state.index_to_id.insert(index, raw_id.to_string());
                                 raw_id.to_string()
                             } else {
-                                state.index_to_id.get(&index)
-                                    .cloned()
-                                    .unwrap_or_default()
+                                state.index_to_id.get(&index).cloned().unwrap_or_default()
                             };
 
                             if let Some(func) = tc.get("function") {
@@ -188,11 +180,7 @@ fn parse_deepseek_sse_chunk(
                                         id: id.clone(),
                                         arguments: args.to_string(),
                                     });
-                                    state
-                                        .pending_args
-                                        .entry(id)
-                                        .or_default()
-                                        .push_str(args);
+                                    state.pending_args.entry(id).or_default().push_str(args);
                                 }
                             }
                         }
@@ -213,9 +201,8 @@ fn parse_deepseek_sse_chunk(
                     if let Some(reason) = choice.get("finish_reason") {
                         if !reason.is_null() {
                             for (id, args) in state.pending_args.drain() {
-                                let parsed =
-                                    serde_json::from_str::<serde_json::Value>(&args)
-                                        .unwrap_or(serde_json::Value::Object(Default::default()));
+                                let parsed = serde_json::from_str::<serde_json::Value>(&args)
+                                    .unwrap_or(serde_json::Value::Object(Default::default()));
                                 let name = state.tool_names.remove(&id).unwrap_or_default();
                                 events.push(StreamEvent::ToolCallEnd {
                                     id,
