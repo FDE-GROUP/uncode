@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use clap::Parser;
+use clap::{CommandFactory, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 use uncode_agent::{AgentLoop, ContextLoader, GitHubClient, SystemPromptBuilder};
@@ -17,6 +17,9 @@ use uncode_tools::{BashTool, EditTool, GrepTool, ReadTool, WriteTool};
 #[derive(Parser)]
 #[command(name = "uncode", about = "AI Agent Coding System")]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     #[arg(short, long)]
     model: Option<String>,
 
@@ -32,10 +35,22 @@ struct Cli {
     #[arg(short, long)]
     repl: bool,
 
-    #[arg(long)]
-    completions: bool,
-
     prompt: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// 列出历史会话
+    Sessions {
+        /// 显示全部会话（默认最近 20 条）
+        #[arg(long)]
+        all: bool,
+        /// JSON 格式输出
+        #[arg(long)]
+        json: bool,
+    },
+    /// 生成 shell 补全脚本
+    Completions { shell: clap_complete::Shell },
 }
 
 #[tokio::main]
@@ -45,6 +60,24 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    // 子命令处理
+    if let Some(cmd) = &cli.command {
+        match cmd {
+            Commands::Sessions { all, json } => {
+                return run_sessions(*all, *json);
+            }
+            Commands::Completions { shell } => {
+                clap_complete::generate(
+                    *shell,
+                    &mut Cli::command(),
+                    "uncode",
+                    &mut std::io::stdout(),
+                );
+                return Ok(());
+            }
+        }
+    }
 
     let config = load_config()?;
     let model = cli.model.clone().unwrap_or_else(|| config.model.clone());
@@ -115,7 +148,7 @@ async fn main() -> anyhow::Result<()> {
         agent.set_session_id(session_id.clone());
     }
 
-    // --prompt 或 --issue：一次性执行后退出
+    // --issue：一次性执行后退出
     if let Some(issue_number) = cli.issue {
         let token = std::env::var("GITHUB_TOKEN").context("GITHUB_TOKEN not set")?;
 
@@ -212,6 +245,67 @@ async fn main() -> anyhow::Result<()> {
     .await?;
 
     Ok(())
+}
+
+fn run_sessions(show_all: bool, json_output: bool) -> anyhow::Result<()> {
+    let session_dir = SessionStore::default_dir().context("session dir")?;
+    let store = SessionStore::new(session_dir);
+
+    let mut sessions = store.list_sessions()?;
+    sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
+
+    if !show_all {
+        sessions.truncate(20);
+    }
+
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&sessions)?);
+        return Ok(());
+    }
+
+    if sessions.is_empty() {
+        println!("没有历史会话。");
+        return Ok(());
+    }
+
+    // 表格头
+    println!(
+        "{:<12} {:<30} {:<15} {:>8}",
+        "ID", "TITLE", "MODEL", "UPDATED"
+    );
+    println!("{}", "-".repeat(70));
+
+    for s in &sessions {
+        let id = if s.id.len() > 10 { &s.id[..10] } else { &s.id };
+        let title = s
+            .title
+            .as_deref()
+            .unwrap_or("无标题")
+            .chars()
+            .take(28)
+            .collect::<String>();
+        let model = s.model.chars().take(13).collect::<String>();
+        let age = format_relative_time(s.updated_at);
+        println!("{id:<12} {title:<30} {model:<15} {age:>8}");
+    }
+
+    Ok(())
+}
+
+fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> String {
+    let now: chrono::DateTime<chrono::Utc> = chrono::Utc::now();
+    let diff = now.signed_duration_since(dt);
+    if diff.num_minutes() < 1 {
+        "刚刚".into()
+    } else if diff.num_hours() < 1 {
+        format!("{}分钟前", diff.num_minutes())
+    } else if diff.num_days() < 1 {
+        format!("{}小时前", diff.num_hours())
+    } else if diff.num_weeks() < 1 {
+        format!("{}天前", diff.num_days())
+    } else {
+        format!("{}周前", diff.num_weeks())
+    }
 }
 
 fn load_config() -> anyhow::Result<AppConfig> {
