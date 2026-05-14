@@ -16,6 +16,7 @@ pub fn estimate_context_tokens(messages: &[Message]) -> u64 {
                 ContentBlock::Thinking { text } => text,
                 ContentBlock::ToolCall(tc) => &tc.name,
                 ContentBlock::ToolResult(tr) => &tr.content,
+                ContentBlock::Image { .. } => "[image]",
             };
             total += (text.len() as f32 / EST_CHARS_PER_TOKEN).ceil() as u64;
         }
@@ -113,6 +114,7 @@ fn extract_text(content: &[ContentBlock]) -> String {
                     Some(&tr.content)
                 }
             }
+            ContentBlock::Image { .. } => Some("[image]"),
         })
         .collect::<Vec<_>>()
         .join(" ")

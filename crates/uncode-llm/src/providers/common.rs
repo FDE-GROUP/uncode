@@ -34,6 +34,7 @@ pub fn build_chat_messages(request: &CompletionRequest) -> Vec<Value> {
                 ContentBlock::Thinking { .. } => None,
                 ContentBlock::ToolCall(tc) => Some(format!("[tool_call: {}]", tc.name)),
                 ContentBlock::ToolResult(tr) => Some(tr.content.clone()),
+                ContentBlock::Image { .. } => Some("[image]".into()),
             })
             .collect::<Vec<_>>()
             .join("\n");
