@@ -98,6 +98,9 @@ impl AgentLoop {
             while let Some(event) = stream.next().await {
                 match event {
                     StreamEvent::TextDelta(text) => {
+                        if text.is_empty() {
+                            continue;
+                        }
                         current_text.push_str(&text);
                         self.emit(AgentEvent::ContentDelta {
                             delta_type: uncode_core::event::DeltaType::Text,
@@ -195,9 +198,8 @@ impl AgentLoop {
                         });
                     }
                     StreamEvent::Done => {
-                        debug!("stream done");
                         if !current_text.is_empty() {
-                            let mut msg = Message::assistant(current_text.clone());
+                            let mut msg = Message::assistant(std::mem::take(&mut current_text));
                             msg.usage = Some(UsageInfo {
                                 input_tokens: turn_input_tokens,
                                 output_tokens: turn_output_tokens,

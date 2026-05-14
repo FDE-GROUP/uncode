@@ -37,15 +37,14 @@ impl ToolExecutor for GrepTool {
         let re = Regex::new(pattern)
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("invalid regex: {e}")))?;
 
-        let search_path = arguments["path"].as_str().unwrap_or(".").to_string();
-
-        let include = arguments["include"].as_str().map(|s| s.to_string());
+        let search_path = arguments["path"].as_str().unwrap_or(".");
+        let include = arguments["include"].as_str();
 
         let mut results = Vec::new();
         let mut count = 0;
         let max_results = 50;
 
-        for entry in walkdir::WalkDir::new(&search_path)
+        for entry in walkdir::WalkDir::new(search_path)
             .max_depth(20)
             .into_iter()
             .filter_map(|e| e.ok())
@@ -56,7 +55,7 @@ impl ToolExecutor for GrepTool {
                 break;
             }
 
-            if let Some(ref inc) = include {
+            if let Some(inc) = include {
                 if let Some(ext) = entry.path().extension() {
                     let pattern = inc.trim_start_matches("*.");
                     if ext != pattern {

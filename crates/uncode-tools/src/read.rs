@@ -57,24 +57,21 @@ impl ToolExecutor for ReadTool {
         }
 
         let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
-        let lines: Vec<&str> = content.lines().collect();
+        let limit = arguments["limit"].as_u64().map(|l| l as usize);
 
-        if offset >= lines.len() {
-            return Ok(String::new());
-        }
-
-        let limit = arguments["limit"]
-            .as_u64()
-            .map(|l| l as usize)
-            .unwrap_or(lines.len() - offset);
-
-        let end = (offset + limit).min(lines.len());
-        let selected = &lines[offset..end];
-
-        let mut result = String::new();
-        for (i, line) in selected.iter().enumerate() {
-            result.push_str(&format!("{:>6}: {line}\n", offset + i + 1));
-        }
+        let result = content
+            .lines()
+            .skip(offset)
+            .take(limit.unwrap_or(usize::MAX))
+            .enumerate()
+            .fold(
+                String::with_capacity(limit.unwrap_or(0).min(content.len()).saturating_mul(80)),
+                |mut acc, (i, line)| {
+                    use std::fmt::Write;
+                    let _ = writeln!(acc, "{:>6}: {line}", offset + i + 1);
+                    acc
+                },
+            );
 
         Ok(result)
     }
