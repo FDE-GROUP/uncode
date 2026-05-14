@@ -10,10 +10,10 @@ mod tests {
     // ── Mock LLM Driver ──────────────────────────────────────────────
 
     use async_trait::async_trait;
-    use futures::stream;
     use futures::StreamExt;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use futures::stream;
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use uncode_core::error::UncodeError;
     use uncode_llm::driver::{
         CompletionRequest, LlmDriver, StreamEvent, UsageInfo as LlmUsageInfo,
@@ -77,10 +77,7 @@ mod tests {
             }
         }
 
-        async fn execute(
-            &self,
-            arguments: serde_json::Value,
-        ) -> Result<String, UncodeError> {
+        async fn execute(&self, arguments: serde_json::Value) -> Result<String, UncodeError> {
             let text = arguments["text"].as_str().unwrap_or("");
             Ok(format!("echo: {text}"))
         }
@@ -521,8 +518,14 @@ mod tests {
         let assistant_msg = &messages[2];
         assert_eq!(assistant_msg.role, Role::Assistant);
         assert_eq!(assistant_msg.content.len(), 2);
-        assert!(matches!(&assistant_msg.content[0], ContentBlock::ToolCall(_)));
-        assert!(matches!(&assistant_msg.content[1], ContentBlock::ToolCall(_)));
+        assert!(matches!(
+            &assistant_msg.content[0],
+            ContentBlock::ToolCall(_)
+        ));
+        assert!(matches!(
+            &assistant_msg.content[1],
+            ContentBlock::ToolCall(_)
+        ));
 
         assert_eq!(messages[3].role, Role::Tool);
         assert_eq!(messages[4].role, Role::Tool);
@@ -544,10 +547,7 @@ mod tests {
                 },
                 StreamEvent::Done,
             ],
-            vec![
-                StreamEvent::TextDelta("OK".into()),
-                StreamEvent::Done,
-            ],
+            vec![StreamEvent::TextDelta("OK".into()), StreamEvent::Done],
         ]));
 
         let agent = AgentLoop::new(
@@ -584,10 +584,7 @@ mod tests {
                 },
                 StreamEvent::Done,
             ],
-            vec![
-                StreamEvent::TextDelta("result".into()),
-                StreamEvent::Done,
-            ],
+            vec![StreamEvent::TextDelta("result".into()), StreamEvent::Done],
         ]));
 
         let agent = AgentLoop::new(

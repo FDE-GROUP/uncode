@@ -263,11 +263,13 @@ impl AgentLoop {
                         });
                     }
                     StreamEvent::Done => {
-                        tracing::debug!("Done event: thinking={} text={} tool_calls={} tool_results={}",
+                        tracing::debug!(
+                            "Done event: thinking={} text={} tool_calls={} tool_results={}",
                             !current_thinking.is_empty(),
                             !current_text.is_empty(),
                             pending_tool_calls.len(),
-                            tool_results.len());
+                            tool_results.len()
+                        );
                         let mut assistant_content: Vec<ContentBlock> = Vec::new();
 
                         if !current_thinking.is_empty() {
@@ -295,8 +297,7 @@ impl AgentLoop {
                         }
 
                         if !assistant_content.is_empty() {
-                            let mut msg =
-                                Message::new(Role::Assistant, assistant_content);
+                            let mut msg = Message::new(Role::Assistant, assistant_content);
                             msg.usage = Some(UsageInfo {
                                 input_tokens: turn_input_tokens,
                                 output_tokens: turn_output_tokens,

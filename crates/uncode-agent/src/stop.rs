@@ -40,9 +40,7 @@ impl StopCondition for TextContainsStop {
             .rev()
             .take(3)
             .flat_map(|msg| msg.content.iter())
-            .any(|block| {
-                matches!(block, ContentBlock::Text { text } if text.contains(&self.text))
-            });
+            .any(|block| matches!(block, ContentBlock::Text { text } if text.contains(&self.text)));
         found.then_some(StopReason::Completed)
     }
 }

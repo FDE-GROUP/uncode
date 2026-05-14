@@ -70,6 +70,17 @@ Cross-layer communication uses event streams. Upper layers subscribe to events, 
 - **Documentation language**: Chinese (中文)
 - **Keep main green**: main branch must always build and pass all tests
 
+### 提交前必须本地执行 CI 预检测
+
+推送代码或提交审核前，**必须**在本地运行以下四项检查，全部通过后才能 push：
+
+```bash
+RUSTFLAGS="-D warnings" cargo fmt --check --all
+RUSTFLAGS="-D warnings" cargo clippy --all-targets --no-deps
+RUSTFLAGS="-D warnings" cargo build --workspace
+RUSTFLAGS="-D warnings" cargo test --workspace
+```
+
 ## LLM Provider Implementations
 
 All providers implement a common trait in `uncode-llm`. Provider implementations live in `uncode-llm/src/providers/`. The registry pattern allows runtime model switching.
