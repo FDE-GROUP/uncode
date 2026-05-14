@@ -91,8 +91,13 @@ impl TuiEngine {
             AgentEvent::ContentDelta { ref content, .. } => {
                 self.current_thinking.push_str(content);
             }
-            AgentEvent::ToolCallStart { ref tool_name, .. } => {
-                self.current_tools.push(format!("🔄 {tool_name}"));
+            AgentEvent::ToolCallStart {
+                ref tool_name,
+                ref tool_id,
+                ..
+            } => {
+                self.current_tools
+                    .push(format!("🔄 {tool_name} ({tool_id})"));
             }
             AgentEvent::ToolCallEnd {
                 ref tool_id,
