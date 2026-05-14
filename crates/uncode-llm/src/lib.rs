@@ -8,7 +8,11 @@ pub mod providers;
 pub mod registry;
 
 pub use driver::{CompletionRequest, LlmDriver, StreamEvent, UsageInfo};
+pub use providers::anthropic::AnthropicDriver;
 pub use providers::deepseek::DeepSeekDriver;
+pub use providers::gemini::GeminiDriver;
 pub use providers::glm::GlmDriver;
 pub use providers::ollama::OllamaDriver;
+pub use providers::openai::OpenAiDriver;
+pub use providers::openrouter::OpenRouterDriver;
 pub use registry::ProviderRegistry;
