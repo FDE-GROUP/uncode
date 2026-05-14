@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
+    #[allow(dead_code)]
     jsonrpc: String,
     #[serde(default)]
     id: Option<Value>,
