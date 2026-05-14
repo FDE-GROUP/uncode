@@ -4,12 +4,14 @@
 //! 实时渲染四个面板：任务清单、工具调用、思考过程、阶段总结。
 
 pub mod code_detail;
+pub mod complete;
 pub mod highlight;
 pub mod input;
 pub mod markdown;
 pub mod slash;
 
 use crate::code_detail::CodeDetailView;
+use crate::complete::CompletionEngine;
 use crate::input::{InputAction, InputEditor};
 use crate::slash::SlashCommands;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -33,6 +35,7 @@ pub struct TuiEngine {
     simple_mode: bool,
     layout_locked: bool,
     slash: SlashCommands,
+    completion: CompletionEngine,
 }
 
 impl TuiEngine {
@@ -49,6 +52,7 @@ impl TuiEngine {
             simple_mode: false,
             layout_locked: false,
             slash: SlashCommands::new(),
+            completion: CompletionEngine::new(slash_commands()),
         }
     }
 
@@ -289,7 +293,11 @@ impl TuiEngine {
                                     }
                                 }
                                 InputAction::Cancel => break,
-                                InputAction::None => {}
+                                InputAction::None => {
+                                    self.editor.set_completions(
+                                        self.completion.complete(self.editor.buffer())
+                                    );
+                                }
                             }
                         }
                     }
@@ -304,4 +312,13 @@ impl Default for TuiEngine {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn slash_commands() -> Vec<String> {
+    [
+        "simple", "full", "unlock", "help", "quit", "think", "issues",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
