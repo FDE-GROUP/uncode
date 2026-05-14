@@ -68,7 +68,10 @@ impl TuiEngine {
         match event {
             AgentEvent::SessionStart { ref session_id, .. } => {
                 self.session_id = session_id.clone();
-                self.status_text = format!("uncode v0.1 | 会话: {} | 运行中", &session_id[..8]);
+                self.status_text = format!(
+                    "uncode v0.1 | 会话: {} | 运行中",
+                    &session_id[..session_id.len().min(8)]
+                );
             }
             AgentEvent::TaskUpdate {
                 ref title,
