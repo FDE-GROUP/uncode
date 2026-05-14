@@ -82,16 +82,46 @@ async fn main() -> anyhow::Result<()> {
         .add_skills(&ctx.skills)
         .build();
 
+    let session_opt = cli.session.clone();
+
     let mut agent = AgentLoop::new(
-        driver,
-        tool_registry,
-        session_store,
+        driver.clone(),
+        tool_registry.clone(),
+        session_store.clone(),
         system_prompt,
         cli.model.clone(),
     );
 
-    if let Some(session_id) = &cli.session {
+    if let Some(session_id) = &session_opt {
         agent.set_session_id(session_id.clone());
+    }
+
+    if cli.interactive {
+        let event_rx = agent.subscribe();
+        let driver_tui = driver.clone();
+        let tools_tui = tool_registry.clone();
+        let store_tui = session_store.clone();
+
+        tokio::spawn(async move {
+            let mut tui = uncode_tui::TuiEngine::new();
+            tui.run(event_rx, move |text| {
+                let d = driver_tui.clone();
+                let t = tools_tui.clone();
+                let s = store_tui.clone();
+                let sid = session_opt.clone();
+                tokio::spawn(async move {
+                    let mut a =
+                        AgentLoop::new(d, t, s, "你是AI助手。".into(), "deepseek-v3".into());
+                    if let Some(ref sid) = sid {
+                        a.set_session_id(sid.clone());
+                    }
+                    let _ = a.run(Message::user(text)).await;
+                });
+            })
+            .await;
+        })
+        .await?;
+        return Ok(());
     }
 
     if let Some(issue_number) = cli.issue {
@@ -168,7 +198,37 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if cli.interactive {
-        eprintln!("interactive mode not yet implemented");
+        let event_rx = agent.subscribe();
+        let driver_clone = driver.clone();
+        let tools_clone = tool_registry.clone();
+        let store_clone = session_store.clone();
+        let session_clone = session_opt.clone();
+
+        tokio::spawn(async move {
+            let mut tui = uncode_tui::TuiEngine::new();
+            tui.run(event_rx, move |text| {
+                let driver = driver_clone.clone();
+                let tools = tools_clone.clone();
+                let store = store_clone.clone();
+                let session_id = session_clone.clone();
+                tokio::spawn(async move {
+                    let mut agent = AgentLoop::new(
+                        driver,
+                        tools,
+                        store,
+                        "你是一个 AI 编程助手。".into(),
+                        "deepseek-v3".into(),
+                    );
+                    if let Some(sid) = &session_id {
+                        agent.set_session_id(sid.clone());
+                    }
+                    let msg = Message::user(text);
+                    let _ = agent.run(msg).await;
+                });
+            })
+            .await;
+        })
+        .await?;
         return Ok(());
     }
 
