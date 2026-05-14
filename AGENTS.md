@@ -1,6 +1,9 @@
 # uncode — Rust-native Agent Coding System
 
-当前阶段：开发文档编写完成，即将进入 Phase 1 核心骨架开发。
+**重要约定**
+文档及Issues优先原则：没有文档和Issues不能开发，设计决策先写入 @docs/ 目录下的对应文档，确认后需要检查github issues 是否有对应的issues，如果没有应当及时创建，然后再开始编码
+
+当前阶段：进入 Phase 1 核心骨架开发。
 
 ## 项目概述
 
@@ -58,8 +61,7 @@ cargo clippy             # lint 检查
 
 ## 开发约定
 
-- 当前为文档编写阶段，所有代码文件（.rs）不应创建或编辑
-- 设计决策先写入 @docs/ 目录下的对应文档，确认后再编码
+- 设计决策先写入 @docs/ 目录下的对应文档，确认后需要检查github issues 是否有对应的issues，如果没有应当及时创建，然后再开始编码
 - 文档使用中文书写
 - 架构分层严格遵守：core → llm/session/tools/extensions → agent → tui/platform → cli
 - 跨层通信通过事件流，上层不直接依赖下层实现

@@ -1,0 +1,134 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/uncode-core",
+    "crates/uncode-macros",
+    "crates/uncode-llm",
+    "crates/uncode-session",
+    "crates/uncode-tools",
+    "crates/uncode-agent",
+    "crates/uncode-tui",
+    "crates/uncode-cli",
+]
+default-members = ["crates/uncode-cli"]
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_must_use = "warn"
+
+[workspace.lints.clippy]
+enum_variant_names = "allow"
+new_without_default = "warn"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+repository = "https://github.com/ea-org/uncode"
+authors = ["EA Team"]
+
+[workspace.dependencies]
+# ── Async ──
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+futures = "0.3"
+async-trait = "0.1"
+
+# ── Serialization ──
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# ── Error handling ──
+anyhow = "1"
+thiserror = "2"
+
+# ── Logging ──
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── HTTP / SSE ──
+reqwest = { version = "0.12", default-features = false, features = [
+    "json", "stream", "rustls-tls", "gzip", "deflate", "brotli",
+] }
+eventsource-stream = "0.2"
+
+# ── CLI ──
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+
+# ── TUI ──
+ratatui = "0.30"
+crossterm = "0.28"
+
+# ── Database ──
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# ── Time ──
+chrono = { version = "0.4", features = ["serde"] }
+
+# ── IDs ──
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# ── Crypto ──
+sha2 = "0.10"
+
+# ── Concurrency ──
+dashmap = "6"
+parking_lot = "0.12"
+
+# ── Misc ──
+dirs = "6"
+once_cell = "1"
+schemars = "1"
+regex = "1"
+glob = "0.3"
+walkdir = "2"
+unicode-width = "0.2"
+unicode-segmentation = "1"
+
+# ── Code parsing ──
+tree-sitter = "0.26"
+tree-sitter-rust = "0.24"
+tree-sitter-typescript = "0.23"
+tree-sitter-python = "0.23"
+tree-sitter-bash = "0.23"
+tree-sitter-html = "0.23"
+tree-sitter-css = "0.23"
+tree-sitter-json = "0.24"
+tree-sitter-go = "0.25"
+tree-sitter-java = "0.23"
+tree-sitter-c = "0.24"
+
+# ── Markdown ──
+pulldown-cmark = "0.12"
+
+# ── Proc macros ──
+syn = "2"
+quote = "1"
+proc-macro2 = "1"
+
+# ── Internal crates ──
+uncode-core = { path = "crates/uncode-core" }
+uncode-macros = { path = "crates/uncode-macros" }
+uncode-llm = { path = "crates/uncode-llm" }
+uncode-session = { path = "crates/uncode-session" }
+uncode-tools = { path = "crates/uncode-tools" }
+uncode-agent = { path = "crates/uncode-agent" }
+uncode-tui = { path = "crates/uncode-tui" }
+uncode-cli = { path = "crates/uncode-cli" }
+
+[profile.dev]
+debug = "line-tables-only"
+opt-level = 1
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 0
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+strip = true
