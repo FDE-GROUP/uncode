@@ -5,6 +5,7 @@
 
 pub mod code_detail;
 pub mod input;
+pub mod markdown;
 pub mod slash;
 
 use crate::code_detail::CodeDetailView;
@@ -14,6 +15,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Text};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use tokio::sync::broadcast;
 use uncode_core::event::{AgentEvent, TaskStatus};
@@ -202,18 +204,19 @@ impl TuiEngine {
     }
 
     fn render_thinking(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let text = if self.current_thinking.is_empty() {
-            "等待 Agent 开始思考...".to_string()
-        } else {
-            let lines: Vec<&str> = self.current_thinking.lines().collect();
-            let start = lines.len().saturating_sub(5);
-            lines[start..].join("\n")
-        };
+        let block = Block::default().borders(Borders::ALL).title("💭 思考过程");
 
-        let content = Paragraph::new(text)
-            .block(Block::default().borders(Borders::ALL).title("💭 思考过程"))
-            .style(Style::default().fg(Color::Yellow));
-        f.render_widget(content, area);
+        if self.current_thinking.is_empty() {
+            let content = Paragraph::new("等待 Agent 开始思考...")
+                .block(block)
+                .style(Style::default().fg(Color::Yellow));
+            f.render_widget(content, area);
+        } else {
+            let lines = crate::markdown::render_markdown(&self.current_thinking);
+            let display: Vec<Line> = lines.into_iter().rev().take(20).rev().collect();
+            let content = Paragraph::new(Text::from(display)).block(block);
+            f.render_widget(content, area);
+        }
     }
 
     fn render_summary(&self, f: &mut Frame, area: ratatui::layout::Rect) {
