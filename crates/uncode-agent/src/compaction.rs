@@ -7,6 +7,7 @@ const COMPACTION_THRESHOLD: f32 = 0.8;
 const KEEP_RECENT: usize = 5;
 const EST_CHARS_PER_TOKEN: f32 = 4.0;
 
+/// 估算消息列表的总 token 数
 pub fn estimate_context_tokens(messages: &[Message]) -> u64 {
     let mut total: u64 = 0;
     for msg in messages {
@@ -24,12 +25,14 @@ pub fn estimate_context_tokens(messages: &[Message]) -> u64 {
     total
 }
 
+/// 判断是否超过模型上下文窗口 80% 阈值
 pub fn should_compact(messages: &[Message], model_max_tokens: u64) -> bool {
     let estimated = estimate_context_tokens(messages);
     let threshold = (model_max_tokens as f32 * COMPACTION_THRESHOLD) as u64;
     estimated > threshold
 }
 
+/// 对消息列表执行上下文压缩（保留最近5轮，旧消息LLM摘要）
 pub async fn compact_messages(
     messages: &mut Vec<Message>,
     driver: &Arc<dyn LlmDriver>,

@@ -2,6 +2,7 @@ use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
+/// 将 Markdown 文本渲染为 ratatui Line 列表
 pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     if text.is_empty() {
         return vec![Line::from("")];

@@ -24,6 +24,7 @@ impl StopCondition for StepCountStop {
     }
 }
 
+/// 创建步数限制的 StopCondition
 pub fn step_count_is(max: u64) -> Box<dyn StopCondition> {
     Box::new(StepCountStop { max })
 }
@@ -47,6 +48,7 @@ impl StopCondition for TextContainsStop {
     }
 }
 
+/// 创建文本匹配的 StopCondition（检测到指定文本时停止）
 pub fn text_contains(pattern: impl Into<String>) -> Box<dyn StopCondition> {
     Box::new(TextContainsStop {
         text: pattern.into(),
