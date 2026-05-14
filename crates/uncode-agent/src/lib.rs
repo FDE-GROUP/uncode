@@ -7,6 +7,7 @@ pub mod compaction;
 pub mod context;
 pub mod github;
 pub mod loop_engine;
+pub mod model_switch;
 pub mod steering;
 pub mod stop;
 pub mod system_prompt;
