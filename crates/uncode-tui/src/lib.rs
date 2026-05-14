@@ -420,7 +420,11 @@ impl TuiEngine {
                 } else {
                     self.agent_busy = true;
                     self.chat.push_user_message(text.clone());
-                    on_submit(text);
+                    let expanded = uncode_core::context::expand_file_refs(
+                        &text,
+                        &std::env::current_dir().unwrap_or_default(),
+                    );
+                    on_submit(expanded);
                 }
             }
         }

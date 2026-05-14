@@ -4,6 +4,7 @@
 //! 位于依赖树的最底层，不依赖任何内部 crate。
 
 pub mod config;
+pub mod context;
 pub mod error;
 pub mod event;
 pub mod message;
