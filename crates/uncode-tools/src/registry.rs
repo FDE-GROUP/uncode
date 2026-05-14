@@ -24,11 +24,7 @@ impl ToolRegistry {
     }
 
     pub fn definitions(&self) -> Vec<ToolDefinition> {
-        self.tools
-            .read()
-            .values()
-            .map(|t| t.definition())
-            .collect()
+        self.tools.read().values().map(|t| t.definition()).collect()
     }
 
     pub fn list(&self) -> Vec<String> {
