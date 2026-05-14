@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::message::UsageInfo;
 
-/// Agent 向 TUI/Platform 广播的事件，驱动四个面板的更新
+/// Agent 向 TUI/Platform 广播的事件，驱动对话区更新
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -60,6 +60,18 @@ pub enum AgentEvent {
         total_turns: u64,
         total_tokens: UsageInfo,
         exit_reason: String,
+    },
+    CompactionComplete {
+        messages_replaced: usize,
+        tokens_before: u64,
+        tokens_after: u64,
+        summary_text: String,
+    },
+    MessageQueued {
+        text: String,
+    },
+    MessageDelivered {
+        text: String,
     },
 }
 
