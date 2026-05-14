@@ -27,41 +27,7 @@ impl OllamaDriver {
     }
 
     fn build_body(&self, request: &CompletionRequest) -> Value {
-        let mut messages = Vec::new();
-
-        if let Some(ref system) = request.system {
-            messages.push(serde_json::json!({
-                "role": "system",
-                "content": system
-            }));
-        }
-
-        for msg in &request.messages {
-            let role = match msg.role {
-                uncode_core::message::Role::User => "user",
-                uncode_core::message::Role::Assistant => "assistant",
-                uncode_core::message::Role::System => "system",
-                uncode_core::message::Role::Tool => "tool",
-            };
-            let content = msg
-                .content
-                .iter()
-                .filter_map(|block| match block {
-                    uncode_core::message::ContentBlock::Text { text } => Some(text.clone()),
-                    uncode_core::message::ContentBlock::Thinking { .. } => None,
-                    uncode_core::message::ContentBlock::ToolCall(tc) => {
-                        Some(format!("[tool_call: {}]", tc.name))
-                    }
-                    uncode_core::message::ContentBlock::ToolResult(tr) => Some(tr.content.clone()),
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            messages.push(serde_json::json!({
-                "role": role,
-                "content": content
-            }));
-        }
-
+        let messages = crate::providers::common::build_chat_messages(request);
         let mut body = serde_json::json!({
             "model": request.model,
             "messages": messages,

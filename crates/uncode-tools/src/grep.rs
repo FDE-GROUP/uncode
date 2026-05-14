@@ -3,13 +3,8 @@ use regex::Regex;
 use uncode_core::error::UncodeResult;
 use uncode_core::tool::{ToolDefinition, ToolExecutor};
 
+#[derive(Default)]
 pub struct GrepTool;
-
-impl Default for GrepTool {
-    fn default() -> Self {
-        Self
-    }
-}
 
 #[async_trait]
 impl ToolExecutor for GrepTool {

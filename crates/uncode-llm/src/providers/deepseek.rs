@@ -30,43 +30,7 @@ impl DeepSeekDriver {
     }
 
     fn build_body(&self, request: &CompletionRequest) -> Value {
-        let mut messages = Vec::new();
-
-        if let Some(ref system) = request.system {
-            messages.push(serde_json::json!({
-                "role": "system",
-                "content": system
-            }));
-        }
-
-        for msg in &request.messages {
-            let role = match msg.role {
-                uncode_core::message::Role::User => "user",
-                uncode_core::message::Role::Assistant => "assistant",
-                uncode_core::message::Role::System => "system",
-                uncode_core::message::Role::Tool => "tool",
-            };
-
-            let content = msg
-                .content
-                .iter()
-                .filter_map(|block| match block {
-                    uncode_core::message::ContentBlock::Text { text } => Some(text.clone()),
-                    uncode_core::message::ContentBlock::Thinking { .. } => None,
-                    uncode_core::message::ContentBlock::ToolCall(tc) => {
-                        Some(format!("[tool_call: {}]", tc.name))
-                    }
-                    uncode_core::message::ContentBlock::ToolResult(tr) => Some(tr.content.clone()),
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-
-            messages.push(serde_json::json!({
-                "role": role,
-                "content": content
-            }));
-        }
-
+        let messages = crate::providers::common::build_chat_messages(request);
         let mut body = serde_json::json!({
             "model": request.model,
             "messages": messages,
@@ -111,63 +75,57 @@ impl LlmDriver for DeepSeekDriver {
             .map_err(|e| UncodeError::Network(e.to_string()))?;
 
         if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            if status.as_u16() == 401 || status.as_u16() == 403 {
-                return Err(UncodeError::LlmAuth(text));
-            }
-            if status.as_u16() == 429 {
-                return Err(UncodeError::LlmRateLimit(text));
-            }
-            return Err(UncodeError::Llm(format!("HTTP {status}: {text}")));
+            return Err(crate::providers::common::map_http_error(
+                response.status(),
+                response.text().await.unwrap_or_default(),
+            ));
         }
 
         let stream = response
             .bytes_stream()
-            .map(|chunk| {
-                let chunk = match chunk {
-                    Ok(c) => c,
-                    Err(e) => return StreamEvent::Error(e.to_string()),
+            .flat_map(|chunk| {
+                let events: Vec<StreamEvent> = match chunk {
+                    Ok(c) => parse_deepseek_sse(&String::from_utf8_lossy(&c)),
+                    Err(e) => vec![StreamEvent::Error(e.to_string())],
                 };
-                let text = String::from_utf8_lossy(&chunk);
-
-                for line in text.lines() {
-                    let line = line.trim();
-                    if line.is_empty() || line == "data: [DONE]" {
-                        continue;
-                    }
-                    if let Some(json_str) = line.strip_prefix("data: ") {
-                        if let Ok(event) = serde_json::from_str::<Value>(json_str) {
-                            if let Some(choice) = event["choices"][0].as_object() {
-                                if let Some(delta) = choice.get("delta") {
-                                    if let Some(content) = delta["content"].as_str() {
-                                        if !content.is_empty() {
-                                            return StreamEvent::TextDelta(content.to_string());
-                                        }
-                                    }
-                                }
-                                if let Some(finish_reason) = choice.get("finish_reason") {
-                                    if finish_reason.as_str() == Some("stop") {
-                                        if let Some(usage) = event.get("usage") {
-                                            return StreamEvent::Usage(UsageInfo {
-                                                input_tokens: usage["prompt_tokens"]
-                                                    .as_u64()
-                                                    .unwrap_or(0),
-                                                output_tokens: usage["completion_tokens"]
-                                                    .as_u64()
-                                                    .unwrap_or(0),
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                StreamEvent::TextDelta(String::new())
+                stream::iter(events)
             })
             .chain(stream::once(async { StreamEvent::Done }));
 
         Ok(Box::pin(stream))
     }
+}
+
+fn parse_deepseek_sse(text: &str) -> Vec<StreamEvent> {
+    let mut events = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line == "data: [DONE]" {
+            continue;
+        }
+        if let Some(json_str) = line.strip_prefix("data: ") {
+            if let Ok(event) = serde_json::from_str::<serde_json::Value>(json_str) {
+                if let Some(choice) = event["choices"][0].as_object() {
+                    if let Some(delta) = choice.get("delta") {
+                        if let Some(content) = delta["content"].as_str() {
+                            if !content.is_empty() {
+                                events.push(StreamEvent::TextDelta(content.to_string()));
+                            }
+                        }
+                    }
+                    if let Some(finish_reason) = choice.get("finish_reason") {
+                        if finish_reason.as_str() == Some("stop") {
+                            if let Some(usage) = event.get("usage") {
+                                events.push(StreamEvent::Usage(UsageInfo {
+                                    input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
+                                    output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    events
 }

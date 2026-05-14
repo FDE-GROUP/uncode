@@ -106,3 +106,17 @@ pub struct SessionMetadata {
     pub working_dir: String,
     pub model: String,
 }
+
+impl From<SessionHeader> for SessionMetadata {
+    fn from(h: SessionHeader) -> Self {
+        Self {
+            id: h.id,
+            created_at: h.created_at,
+            updated_at: h.updated_at,
+            message_count: 0,
+            title: h.title,
+            working_dir: h.working_dir,
+            model: h.model,
+        }
+    }
+}

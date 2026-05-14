@@ -21,6 +21,17 @@ pub enum Role {
     Tool,
 }
 
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::System => f.write_str("system"),
+            Self::User => f.write_str("user"),
+            Self::Assistant => f.write_str("assistant"),
+            Self::Tool => f.write_str("tool"),
+        }
+    }
+}
+
 /// 消息内容块，一条消息可以包含多种类型的块
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
