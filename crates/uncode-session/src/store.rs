@@ -81,6 +81,13 @@ impl SessionStore {
         Ok(meta)
     }
 
+    /// 返回最近更新的会话，按 updated_at 降序取第一个
+    pub fn find_most_recent(&self) -> std::io::Result<Option<SessionMetadata>> {
+        let mut sessions = self.list_sessions()?;
+        sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        Ok(sessions.into_iter().next())
+    }
+
     pub fn init_session(
         &self,
         session_id: &str,
