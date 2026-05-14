@@ -1,0 +1,5 @@
+export { getAccent, getPreset, PRESETS } from './presets.ts'
+export { ThemeProvider, useTheme } from './ThemeContext.tsx'
+export { applyTheme } from './theme-engine.ts'
+export type { AccentSwatch, PresetId, ThemeConfig, ThemePreset } from './types.ts'
+export { DEFAULT_THEME_CONFIG } from './types.ts'
