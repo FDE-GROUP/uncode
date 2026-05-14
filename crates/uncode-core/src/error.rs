@@ -1,5 +1,6 @@
 use thiserror::Error;
 
+/// uncode 统一错误类型，覆盖所有子系统的错误
 #[derive(Error, Debug)]
 pub enum UncodeError {
     #[error("LLM error: {0}")]
@@ -42,4 +43,5 @@ pub enum UncodeError {
     Other(String),
 }
 
+/// uncode 通用 Result 类型别名
 pub type UncodeResult<T> = Result<T, UncodeError>;

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::message::UsageInfo;
 
+/// Agent 向 TUI/Platform 广播的事件，驱动四个面板的更新
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEvent {
