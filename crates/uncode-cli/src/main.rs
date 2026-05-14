@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
     let ctx = ContextLoader::new(cwd).load();
 
     let system_prompt = SystemPromptBuilder::new()
-        .base("你是一个 AI 编程助手。用中文回复。")
+        .base("你是一个 AI 编程助手。你可以使用工具来读写文件、搜索代码、执行命令。遇到需要分析代码的任务时，请主动使用工具读取文件。用中文回复。")
         .add_tool_guide(&tool_registry.definitions())
         .add_context(&ctx.agents_content)
         .add_skills(&ctx.skills)
