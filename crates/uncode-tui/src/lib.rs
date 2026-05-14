@@ -9,12 +9,18 @@ pub mod diff_viewer;
 pub mod highlight;
 pub mod input;
 pub mod markdown;
+pub mod message_queue;
+pub mod permission;
 pub mod selector;
 pub mod slash;
+pub mod theme;
+pub mod tool_renderer;
 
 use crate::chat::ChatState;
 use crate::complete::CompletionEngine;
 use crate::input::{InputAction, InputEditor};
+use crate::message_queue::{MessageQueue, QueueType};
+use crate::permission::PermissionManager;
 use crate::selector::OverlaySelector;
 use crate::slash::SlashCommands;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -34,6 +40,9 @@ pub struct TuiEngine {
     slash: SlashCommands,
     completion: CompletionEngine,
     leader_pending: bool,
+    queue: MessageQueue,
+    agent_busy: bool,
+    permission: PermissionManager,
 }
 
 impl TuiEngine {
@@ -47,6 +56,9 @@ impl TuiEngine {
             slash: SlashCommands::new(),
             completion: CompletionEngine::new(slash_commands()),
             leader_pending: false,
+            queue: MessageQueue::new(),
+            agent_busy: false,
+            permission: PermissionManager::new(),
         }
     }
 
@@ -146,7 +158,11 @@ impl TuiEngine {
 
             tokio::select! {
                 Ok(event) = event_rx.recv() => {
+                    let is_turn_end = matches!(event, AgentEvent::TurnEnd { .. } | AgentEvent::SessionEnd { .. });
                     self.handle_event(event);
+                    if is_turn_end {
+                        self.flush_queue(&on_submit);
+                    }
                 }
                 Ok(key_event) = async {
                     loop {
@@ -169,6 +185,24 @@ impl TuiEngine {
                     }
 
                     let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
+
+                    // Permission confirmation keys take priority
+                    if self.permission.has_pending() {
+                        match key_event.code {
+                            KeyCode::Char('y') | KeyCode::Enter => {
+                                self.permission.confirm(crate::permission::ConfirmOption::Allow);
+                            }
+                            KeyCode::Char('n') | KeyCode::Esc => {
+                                self.permission.deny();
+                            }
+                            KeyCode::Char('e') => {
+                                self.permission.confirm(crate::permission::ConfirmOption::Edit);
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
+
                     match key_event.code {
                         // Leader key prefix
                         KeyCode::Char('x') if ctrl => {
@@ -256,8 +290,16 @@ impl TuiEngine {
                 });
             }
             _ => {
-                self.chat.push_user_message(text.clone());
-                on_submit(text);
+                if self.agent_busy {
+                    self.queue.enqueue(text.clone(), QueueType::FollowUp);
+                    self.chat.messages.push(chat::ChatMessage::QueuedMessage {
+                        text,
+                    });
+                } else {
+                    self.agent_busy = true;
+                    self.chat.push_user_message(text.clone());
+                    on_submit(text);
+                }
             }
         }
     }
@@ -289,10 +331,24 @@ impl TuiEngine {
             AgentEvent::SessionStart { session_id, .. } => {
                 self.session_id = session_id.clone();
             }
-            AgentEvent::SessionEnd { .. } => {}
+            AgentEvent::TurnEnd { .. } | AgentEvent::SessionEnd { .. } => {
+                self.agent_busy = false;
+            }
             _ => {}
         }
         self.chat.handle_event(&event);
+    }
+
+    /// Agent 闲下来后提交排队消息
+    fn flush_queue<F>(&mut self, on_submit: &F)
+    where
+        F: Fn(String),
+    {
+        if let Some(text) = self.queue.drain_follow_up() {
+            self.agent_busy = true;
+            self.chat.push_user_message(text.clone());
+            on_submit(text);
+        }
     }
 }
 
