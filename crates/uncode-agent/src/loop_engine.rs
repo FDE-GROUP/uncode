@@ -64,8 +64,32 @@ impl AgentLoop {
         }
     }
 
+    pub fn with_event_sender(
+        driver: Arc<dyn LlmDriver>,
+        tool_registry: Arc<ToolRegistry>,
+        session_store: Arc<SessionStore>,
+        system_prompt: String,
+        model: String,
+        event_tx: broadcast::Sender<AgentEvent>,
+    ) -> Self {
+        Self {
+            driver,
+            tool_registry,
+            session_store,
+            system_prompt,
+            model,
+            model_max_tokens: DEFAULT_MAX_TOKENS,
+            session_id: None,
+            event_tx,
+        }
+    }
+
     pub fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
         self.event_tx.subscribe()
+    }
+
+    pub fn event_sender(&self) -> broadcast::Sender<AgentEvent> {
+        self.event_tx.clone()
     }
 
     pub fn set_session_id(&mut self, session_id: String) {

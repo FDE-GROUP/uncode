@@ -34,10 +34,12 @@ impl InputEditor {
         }
     }
 
-    pub fn handle_key(&mut self, code: crossterm::event::KeyCode) -> InputAction {
-        use crossterm::event::KeyCode;
+    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> InputAction {
+        use crossterm::event::{KeyCode, KeyModifiers};
 
-        match code {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+        match key.code {
             KeyCode::Enter => {
                 let text = std::mem::take(&mut self.buffer);
                 self.cursor = 0;
@@ -120,24 +122,24 @@ impl InputEditor {
                 }
                 InputAction::None
             }
-            KeyCode::Char('a') => {
+            KeyCode::Char('a') if ctrl => {
                 self.cursor = 0;
                 InputAction::None
             }
-            KeyCode::Char('e') => {
+            KeyCode::Char('e') if ctrl => {
                 self.cursor = self.buffer.len();
                 InputAction::None
             }
-            KeyCode::Char('k') => {
+            KeyCode::Char('k') if ctrl => {
                 self.buffer.truncate(self.cursor);
                 InputAction::None
             }
-            KeyCode::Char('u') => {
+            KeyCode::Char('u') if ctrl => {
                 self.buffer.drain(..self.cursor);
                 self.cursor = 0;
                 InputAction::None
             }
-            KeyCode::Char('w') => {
+            KeyCode::Char('w') if ctrl => {
                 self.delete_word_backward();
                 InputAction::None
             }
@@ -239,13 +241,21 @@ impl Default for InputEditor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crossterm::event::KeyCode;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl_key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::CONTROL)
+    }
 
     #[test]
     fn test_utf8_insert() {
         let mut editor = InputEditor::new();
-        editor.handle_key(KeyCode::Char('你'));
-        editor.handle_key(KeyCode::Char('好'));
+        editor.handle_key(key(KeyCode::Char('你')));
+        editor.handle_key(key(KeyCode::Char('好')));
         assert_eq!(editor.buffer(), "你好");
     }
 
@@ -253,7 +263,7 @@ mod tests {
     fn test_utf8_backspace() {
         let mut editor = InputEditor::new();
         editor.set_buffer("你好".into());
-        editor.handle_key(KeyCode::Backspace);
+        editor.handle_key(key(KeyCode::Backspace));
         assert_eq!(editor.buffer(), "你");
     }
 
@@ -261,16 +271,23 @@ mod tests {
     fn test_delete_word_cjk() {
         let mut editor = InputEditor::new();
         editor.set_buffer("你好 世界".into());
-        editor.handle_key(KeyCode::Char('w'));
+        editor.handle_key(ctrl_key(KeyCode::Char('w')));
         assert_eq!(editor.buffer(), "你好 ");
+    }
+
+    #[test]
+    fn test_bare_w_inserts_char() {
+        let mut editor = InputEditor::new();
+        editor.handle_key(key(KeyCode::Char('w')));
+        assert_eq!(editor.buffer(), "w");
     }
 
     #[test]
     fn test_submit_and_history() {
         let mut editor = InputEditor::new();
-        editor.handle_key(KeyCode::Char('h'));
-        editor.handle_key(KeyCode::Char('i'));
-        let action = editor.handle_key(KeyCode::Enter);
+        editor.handle_key(key(KeyCode::Char('h')));
+        editor.handle_key(key(KeyCode::Char('i')));
+        let action = editor.handle_key(key(KeyCode::Enter));
         assert_eq!(action, InputAction::Submit("hi".into()));
     }
 }

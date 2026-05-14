@@ -105,7 +105,7 @@ pub async fn compact_messages(
     Ok(())
 }
 
-fn extract_text(content: &[ContentBlock]) -> String {
+pub(crate) fn extract_text(content: &[ContentBlock]) -> String {
     content
         .iter()
         .filter_map(|block| match block {
@@ -114,7 +114,8 @@ fn extract_text(content: &[ContentBlock]) -> String {
             ContentBlock::ToolCall(_) => Some("\u{1f527}"),
             ContentBlock::ToolResult(tr) => {
                 if tr.content.len() > 200 {
-                    Some(&tr.content[..200])
+                    let end = tr.content.ceil_char_boundary(200);
+                    Some(&tr.content[..end])
                 } else {
                     Some(&tr.content)
                 }
