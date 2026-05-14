@@ -1,0 +1,243 @@
+use futures::StreamExt;
+use std::sync::Arc;
+use tokio::sync::broadcast;
+use tracing::{debug, error, info};
+
+use uncode_core::error::UncodeError;
+use uncode_core::event::AgentEvent;
+use uncode_core::message::{ContentBlock, Message, Role, UsageInfo};
+use uncode_llm::driver::{CompletionRequest, LlmDriver, StreamEvent};
+use uncode_session::store::SessionStore;
+use uncode_tools::registry::ToolRegistry;
+
+const MAX_TURNS: u64 = 50;
+
+pub struct AgentLoop {
+    driver: Arc<dyn LlmDriver>,
+    tool_registry: Arc<ToolRegistry>,
+    #[allow(dead_code)]
+    session_store: Arc<SessionStore>,
+    system_prompt: String,
+    model: String,
+    session_id: Option<String>,
+    event_tx: broadcast::Sender<AgentEvent>,
+}
+
+impl AgentLoop {
+    pub fn new(
+        driver: Arc<dyn LlmDriver>,
+        tool_registry: Arc<ToolRegistry>,
+        session_store: Arc<SessionStore>,
+        system_prompt: String,
+        model: String,
+    ) -> Self {
+        let (event_tx, _) = broadcast::channel(256);
+        Self {
+            driver,
+            tool_registry,
+            session_store,
+            system_prompt,
+            model,
+            session_id: None,
+            event_tx,
+        }
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
+        self.event_tx.subscribe()
+    }
+
+    pub fn set_session_id(&mut self, session_id: String) {
+        self.session_id = Some(session_id);
+    }
+
+    fn emit(&self, event: AgentEvent) {
+        let _ = self.event_tx.send(event);
+    }
+
+    pub async fn run(&self, user_message: Message) -> Result<Vec<Message>, UncodeError> {
+        let session_id = self.session_id.as_deref().unwrap_or("unknown").to_string();
+
+        self.emit(AgentEvent::SessionStart {
+            session_id: session_id.clone(),
+            timestamp: chrono::Utc::now(),
+        });
+
+        let mut messages: Vec<Message> = vec![Message::system(self.system_prompt.clone())];
+        messages.push(user_message);
+
+        let tools = self.tool_registry.definitions();
+        let mut total_input_tokens: u64 = 0;
+        let mut total_output_tokens: u64 = 0;
+        let mut turn = 0;
+
+        loop {
+            if turn >= MAX_TURNS {
+                info!("max turns ({MAX_TURNS}) reached");
+                break;
+            }
+
+            turn += 1;
+            debug!("turn {turn}/{}", MAX_TURNS);
+
+            let request = CompletionRequest {
+                model: self.model.clone(),
+                messages: messages.clone(),
+                system: None,
+                max_tokens: Some(8192),
+                temperature: Some(0.7),
+                tools: tools.clone(),
+            };
+
+            let mut stream = self.driver.complete(request).await?;
+            let mut current_text = String::new();
+            let mut pending_tool_calls = Vec::new();
+            let mut turn_input_tokens: u64 = 0;
+            let mut turn_output_tokens: u64 = 0;
+
+            while let Some(event) = stream.next().await {
+                match event {
+                    StreamEvent::TextDelta(text) => {
+                        current_text.push_str(&text);
+                        self.emit(AgentEvent::ContentDelta {
+                            delta_type: uncode_core::event::DeltaType::Text,
+                            content: text,
+                        });
+                    }
+                    StreamEvent::ToolCallStart { id, name } => {
+                        info!("tool call start: {name} ({id})");
+                        self.emit(AgentEvent::ToolCallStart {
+                            tool_id: id.clone(),
+                            tool_name: name.clone(),
+                            arguments_summary: String::new(),
+                        });
+                        pending_tool_calls.push((id, name, String::new()));
+                    }
+                    StreamEvent::ToolCallDelta { id, arguments } => {
+                        if let Some(tc) = pending_tool_calls.iter_mut().find(|(tid, ..)| tid == &id)
+                        {
+                            tc.2.push_str(&arguments);
+                        }
+                    }
+                    StreamEvent::ToolCallEnd {
+                        id,
+                        name,
+                        arguments,
+                    } => {
+                        info!("tool call end: {name} ({id})");
+                        self.emit(AgentEvent::ToolCallProgress {
+                            tool_id: id.clone(),
+                            progress_type: uncode_core::event::ProgressType::Spinner,
+                            detail: format!("executing {name}"),
+                        });
+
+                        let tool = self.tool_registry.get(&name);
+                        let result = match tool {
+                            Some(executor) => {
+                                let start = std::time::Instant::now();
+                                match executor.execute(arguments.clone()).await {
+                                    Ok(output) => {
+                                        let duration = start.elapsed();
+                                        self.emit(AgentEvent::ToolCallEnd {
+                                            tool_id: id.clone(),
+                                            status: uncode_core::event::ToolCallStatus::Success,
+                                            duration_ms: duration.as_millis() as u64,
+                                            output_size: Some(output.len()),
+                                        });
+                                        output
+                                    }
+                                    Err(e) => {
+                                        let duration = start.elapsed();
+                                        error!("tool {name} failed: {e}");
+                                        self.emit(AgentEvent::ToolCallEnd {
+                                            tool_id: id.clone(),
+                                            status: uncode_core::event::ToolCallStatus::Failed,
+                                            duration_ms: duration.as_millis() as u64,
+                                            output_size: None,
+                                        });
+                                        format!("error: {e}")
+                                    }
+                                }
+                            }
+                            None => {
+                                let msg = format!("tool '{name}' not found");
+                                self.emit(AgentEvent::ToolCallEnd {
+                                    tool_id: id.clone(),
+                                    status: uncode_core::event::ToolCallStatus::Failed,
+                                    duration_ms: 0,
+                                    output_size: None,
+                                });
+                                msg
+                            }
+                        };
+
+                        messages.push(Message::new(
+                            Role::Tool,
+                            vec![ContentBlock::ToolResult(uncode_core::message::ToolResult {
+                                tool_call_id: id,
+                                content: result,
+                                is_error: false,
+                            })],
+                        ));
+                    }
+                    StreamEvent::Usage(usage) => {
+                        turn_input_tokens = usage.input_tokens;
+                        turn_output_tokens = usage.output_tokens;
+                        total_input_tokens += usage.input_tokens;
+                        total_output_tokens += usage.output_tokens;
+                    }
+                    StreamEvent::Error(e) => {
+                        error!("stream error: {e}");
+                        self.emit(AgentEvent::Error {
+                            category: uncode_core::event::ErrorCategory::Llm,
+                            message: e.clone(),
+                            recoverable: true,
+                        });
+                    }
+                    StreamEvent::Done => {
+                        debug!("stream done");
+                        if !current_text.is_empty() {
+                            let mut msg = Message::assistant(current_text.clone());
+                            msg.usage = Some(UsageInfo {
+                                input_tokens: turn_input_tokens,
+                                output_tokens: turn_output_tokens,
+                            });
+                            messages.push(msg);
+                        }
+                    }
+                }
+            }
+
+            self.emit(AgentEvent::TurnEnd {
+                turn,
+                usage: UsageInfo {
+                    input_tokens: turn_input_tokens,
+                    output_tokens: turn_output_tokens,
+                },
+            });
+
+            if pending_tool_calls.is_empty() {
+                break;
+            }
+        }
+
+        let total_usage = UsageInfo {
+            input_tokens: total_input_tokens,
+            output_tokens: total_output_tokens,
+        };
+
+        self.emit(AgentEvent::SessionEnd {
+            session_id: session_id.clone(),
+            total_turns: turn,
+            total_tokens: total_usage,
+            exit_reason: if turn >= MAX_TURNS {
+                "max_turns"
+            } else {
+                "completed"
+            }
+            .into(),
+        });
+
+        Ok(messages)
+    }
+}
