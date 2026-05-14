@@ -73,7 +73,7 @@ cargo fmt --check           # 格式检查
 cargo clippy                # lint
 
 # Platform
-cd platform && bun install && bun dev
+cd apps/platform && bun install && bun dev
 ```
 
 ## License

@@ -61,7 +61,8 @@ uncode/
 │   ├── uncode-rpc/         #   JSON-RPC 外部接口（规划中）
 │   ├── uncode-platform/    #   Platform 服务端（规划中）
 │   └── uncode-cli/         #   命令行入口
-├── platform/               # Platform 前端（TypeScript，规划中）
+├── apps/                    # 前端应用
+│   └── platform/            #   Platform 前端（TypeScript + React 19 + TanStack）
 ├── tests/                  # 集成测试
 └── .github/workflows/      # CI/CD
 ```
