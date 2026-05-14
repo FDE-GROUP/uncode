@@ -20,14 +20,16 @@ impl SlashCommands {
             "help",
             "显示可用命令",
             Box::new(|_| {
-                let cmds = ["/help          — 显示此帮助",
+                let cmds = [
+                    "/help          — 显示此帮助",
                     "/issues pull   — 拉取 GitHub Issues 列表",
                     "/think simple  — 切换到自然语言提炼视图",
                     "/think full    — 恢复完整技术视图",
                     "/simple        — 切换到简化双面板视图",
                     "/full          — 恢复到完整四面板视图",
                     "/unlock        — 解锁面板布局",
-                    "/quit          — 退出"];
+                    "/quit          — 退出",
+                ];
                 cmds.join("\n")
             }),
         );
