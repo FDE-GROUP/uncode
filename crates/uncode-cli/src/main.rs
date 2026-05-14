@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::{Shell, generate};
+use std::io;
 use tracing_subscriber::EnvFilter;
 
 use uncode_agent::{AgentLoop, ContextLoader, GitHubClient, SystemPromptBuilder};
@@ -28,6 +30,9 @@ struct Cli {
     #[arg(short, long)]
     interactive: bool,
 
+    #[arg(long)]
+    completions: bool,
+
     prompt: Option<String>,
 }
 
@@ -38,6 +43,13 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cli = Cli::parse();
+
+    if cli.completions {
+        let mut cmd = Cli::command();
+        let shell = Shell::from_env().unwrap_or(Shell::Bash);
+        generate(shell, &mut cmd, "uncode", &mut io::stdout());
+        return Ok(());
+    }
     let config = load_config()?;
 
     let tool_registry = Arc::new(ToolRegistry::new());
