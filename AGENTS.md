@@ -3,7 +3,32 @@
 **重要约定**
 文档及Issues优先原则：没有文档和Issues不能开发，设计决策先写入 @docs/ 目录下的对应文档，确认后需要检查github issues 是否有对应的issues，如果没有应当及时创建，然后再开始编码
 
-当前阶段：进入 Phase 1 核心骨架开发。
+**（文档及Issues优先原则不适用于测试、错误修复）**
+
+当前阶段：进入 Phase 2 TUI 原型开发。
+
+## 开发工作流
+
+遵循 GitHub Flow 分支策略：
+
+```
+main ← PR(审查) ← feature-branch ← 编码
+```
+
+1. **创建 Issue** — GitHub 创建 Issue 描述任务需求，关联对应 Phase 路线图
+2. **创建分支** — `git checkout -b feat/issue-N-description`（如 `feat/12-llm-driver`）
+3. **编码 + 测试** — 在分支上开发，确保 `cargo build --workspace` 和 `cargo test --workspace` 通过
+4. **创建 PR** — 提交 Pull Request，描述中写 `closes #N` 关联 Issue
+5. **审查合并** — 审查通过后合并到 main，关闭 Issue
+6. **保持 main 干净** — main 分支始终可构建、测试全部通过
+
+**分支命名规范：**
+- `feat/N-description` — 新功能
+- `fix/N-description` — 错误修复
+- `refactor/N-description` — 重构
+- `docs/N-description` — 文档
+- `test/N-description` — 测试
+- `perf/N-description` — 性能优化
 
 ## 项目概述
 
