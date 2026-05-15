@@ -59,6 +59,18 @@ struct ToolStat {
     errors: u64,
 }
 
+#[derive(Serialize)]
+struct SessionMetricsResponse {
+    total_messages: u64,
+    total_tool_calls: u64,
+    tool_errors: u64,
+    input_tokens: u64,
+    output_tokens: u64,
+    duration_secs: f64,
+    tools: Vec<ToolStat>,
+    files_modified: Vec<String>,
+}
+
 async fn list_sessions(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<SessionSummary>>, StatusCode> {
@@ -106,6 +118,96 @@ async fn get_session(
         title: header.title,
         working_dir: header.working_dir,
         entries: json_entries,
+    }))
+}
+
+async fn get_session_metrics(
+    State(state): State<AppState>,
+    axum::extract::Path(session_id): axum::extract::Path<String>,
+) -> Result<Json<SessionMetricsResponse>, StatusCode> {
+    let header = state
+        .store
+        .read_header(&session_id)
+        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let entries = state.store.load_entries(&session_id).map_err(|e| match e {
+        SessionError::NotFound(_) => StatusCode::NOT_FOUND,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    })?;
+
+    let mut total_messages: u64 = 0;
+    let mut total_tool_calls: u64 = 0;
+    let mut tool_errors: u64 = 0;
+    let mut input_tokens: u64 = 0;
+    let mut output_tokens: u64 = 0;
+    let mut tool_counts: HashMap<String, (u64, u64)> = HashMap::new();
+    let mut files_modified: Vec<String> = Vec::new();
+
+    for entry in &entries {
+        if let SessionEntry::Message(me) = entry {
+            total_messages += 1;
+            if let Some(ref usage) = me.usage {
+                input_tokens += usage.input_tokens;
+                output_tokens += usage.output_tokens;
+            }
+
+            let mut last_tool_name: Option<String> = None;
+            for block in &me.content {
+                match block {
+                    ContentBlock::ToolCall(tc) => {
+                        total_tool_calls += 1;
+                        tool_counts
+                            .entry(tc.name.clone())
+                            .or_default()
+                            .0 += 1;
+                        last_tool_name = Some(tc.name.clone());
+
+                        // Track file modifications from write/edit/bash tools
+                        if tc.name == "write" || tc.name == "edit" {
+                            if let Some(path) = tc
+                                .arguments
+                                .get("path")
+                                .and_then(|v| v.as_str())
+                            {
+                                let p = path.to_string();
+                                if !files_modified.contains(&p) {
+                                    files_modified.push(p);
+                                }
+                            }
+                        }
+                    }
+                    ContentBlock::ToolResult(tr) => {
+                        if tr.is_error {
+                            tool_errors += 1;
+                            if let Some(name) = &last_tool_name {
+                                tool_counts.entry(name.clone()).or_default().1 += 1;
+                            }
+                        }
+                        last_tool_name = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    let duration_secs = (header.updated_at - header.created_at)
+        .num_seconds()
+        .max(0) as f64;
+
+    let tools: Vec<ToolStat> = tool_counts
+        .into_iter()
+        .map(|(name, (calls, errors))| ToolStat { name, calls, errors })
+        .collect();
+
+    Ok(Json(SessionMetricsResponse {
+        total_messages,
+        total_tool_calls,
+        tool_errors,
+        input_tokens,
+        output_tokens,
+        duration_secs,
+        tools,
+        files_modified,
     }))
 }
 
@@ -242,6 +344,7 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions/{id}", get(get_session))
+        .route("/api/sessions/{id}/metrics", get(get_session_metrics))
         .route("/api/metrics", get(get_metrics))
         .fallback_service(ServeDir::new(
             std::env::var("UNCODE_FRONTEND_DIR").unwrap_or_else(|_| "apps/platform/dist".into()),
