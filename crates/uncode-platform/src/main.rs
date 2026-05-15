@@ -342,6 +342,196 @@ async fn post_event(
     StatusCode::OK
 }
 
+// ── Optimization suggestions ────────────────────────────────────
+
+#[derive(Serialize)]
+struct Suggestion {
+    category: String,
+    severity: String, // "high", "medium", "low"
+    title: String,
+    description: String,
+    detail: String,
+}
+
+#[derive(Serialize)]
+struct SuggestionsResponse {
+    suggestions: Vec<Suggestion>,
+}
+
+async fn get_suggestions(
+    State(state): State<AppState>,
+) -> Result<Json<SuggestionsResponse>, StatusCode> {
+    let sessions = state.store.list_sessions().map_err(|e| {
+        tracing::error!("list sessions for suggestions: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let mut suggestions: Vec<Suggestion> = Vec::new();
+
+    // Per-tool stats
+    let mut tool_calls: HashMap<String, u64> = HashMap::new();
+    let mut tool_errors: HashMap<String, u64> = HashMap::new();
+    // Per-session read counts per file
+    let mut file_reads: HashMap<String, u64> = HashMap::new();
+    // Token totals
+    let mut total_input: u64 = 0;
+    let mut total_output: u64 = 0;
+    let mut session_count_with_tokens: u64 = 0;
+    // High-turn sessions
+    let mut high_turn_sessions: Vec<String> = Vec::new();
+
+    for s in &sessions {
+        if let Ok(entries) = state.store.load_entries(&s.id) {
+            let mut session_input: u64 = 0;
+            let mut session_output: u64 = 0;
+            let mut turn_count: u64 = 0;
+
+            for entry in &entries {
+                if let SessionEntry::Message(me) = entry {
+                    turn_count += 1;
+                    if let Some(ref usage) = me.usage {
+                        session_input += usage.input_tokens;
+                        session_output += usage.output_tokens;
+                    }
+                    for block in &me.content {
+                        match block {
+                            ContentBlock::ToolCall(tc) => {
+                                *tool_calls.entry(tc.name.clone()).or_default() += 1;
+                                if tc.name == "read" {
+                                    if let Some(path) =
+                                        tc.arguments.get("path").and_then(|v| v.as_str())
+                                    {
+                                        *file_reads.entry(path.to_string()).or_default() += 1;
+                                    }
+                                }
+                            }
+                            ContentBlock::ToolResult(tr) if tr.is_error => {
+                                let _ = tr;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    // Attribute errors to tools by order
+                    let mut last_tool: Option<String> = None;
+                    for block in &me.content {
+                        match block {
+                            ContentBlock::ToolCall(tc) => {
+                                last_tool = Some(tc.name.clone());
+                            }
+                            ContentBlock::ToolResult(tr) if tr.is_error => {
+                                if let Some(name) = &last_tool {
+                                    *tool_errors.entry(name.clone()).or_default() += 1;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+
+            total_input += session_input;
+            total_output += session_output;
+            if session_input > 0 || session_output > 0 {
+                session_count_with_tokens += 1;
+            }
+
+            if turn_count > 20 {
+                high_turn_sessions
+                    .push(s.title.clone().unwrap_or_else(|| s.id.chars().take(8).collect()));
+            }
+        }
+    }
+
+    // ── Rule 1: Unstable tools (error rate > 15%) ──
+    for (tool, calls) in &tool_calls {
+        let errors = tool_errors.get(tool).copied().unwrap_or(0);
+        if *calls >= 3 && errors > 0 {
+            let rate = errors as f64 / *calls as f64;
+            if rate > 0.15 {
+                suggestions.push(Suggestion {
+                    category: "tool_stability".into(),
+                    severity: if rate > 0.4 { "high" } else { "medium" }.into(),
+                    title: format!("工具 {tool} 错误率偏高 ({:.0}%)", rate * 100.0),
+                    description: format!(
+                        "{tool} 被调用 {calls} 次，其中 {errors} 次失败。检查工具实现或添加更好的错误处理。",
+                    ),
+                    detail: format!("error_rate={:.2},calls={calls},errors={errors}", rate),
+                });
+            }
+        }
+    }
+
+    // ── Rule 2: Repeated file reads (>5 reads of same file across sessions) ──
+    let mut repeated_files: Vec<_> = file_reads
+        .iter()
+        .filter(|(_, count)| **count > 5)
+        .collect();
+    repeated_files.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
+    for (path, count) in repeated_files.iter().take(3) {
+        suggestions.push(Suggestion {
+            category: "context_efficiency".into(),
+            severity: "medium".into(),
+            title: format!("文件 {path} 被反复读取 ({count} 次)"),
+            description: "Agent 频繁读取同一文件，可能是上下文窗口不足导致信息丢失。建议增大上下文或添加关键文件到系统提示。".into(),
+            detail: format!("reads={count}"),
+        });
+    }
+
+    // ── Rule 3: High-turn sessions (>20 turns) ──
+    if !high_turn_sessions.is_empty() {
+        suggestions.push(Suggestion {
+            category: "agent_efficiency".into(),
+            severity: "low".into(),
+            title: format!("{} 个会话超过 20 轮对话", high_turn_sessions.len()),
+            description: format!(
+                "长会话: {}。高轮次可能表示 Agent 需要更明确的指令或更好的上下文管理。",
+                high_turn_sessions.join("、")
+            ),
+            detail: format!("count={}", high_turn_sessions.len()),
+        });
+    }
+
+    // ── Rule 4: Token efficiency ──
+    if session_count_with_tokens > 0 {
+        let avg_tokens =
+            (total_input + total_output) as f64 / session_count_with_tokens as f64;
+        if avg_tokens > 50_000.0 {
+            suggestions.push(Suggestion {
+                category: "cost_control".into(),
+                severity: "medium".into(),
+                title: format!("平均 Token 消耗较高 ({:.0}/会话)", avg_tokens),
+                description: "会话平均消耗超过 50K tokens。建议优化系统提示长度、启用上下文压缩、或减少工具返回数据量。".into(),
+                detail: format!(
+                    "avg_tokens={avg_tokens:.0},total_input={total_input},total_output={total_output}"
+                ),
+            });
+        }
+    }
+
+    // ── Rule 5: No tool usage at all ──
+    let total_calls: u64 = tool_calls.values().sum();
+    if sessions.len() > 3 && total_calls == 0 {
+        suggestions.push(Suggestion {
+            category: "agent_capability".into(),
+            severity: "low".into(),
+            title: "Agent 未使用任何工具".into(),
+            description: "检测到多个会话但没有工具调用。确认 Agent 配置了正确的工具权限和系统提示。".into(),
+            detail: format!("sessions={},tool_calls=0", sessions.len()),
+        });
+    }
+
+    // Sort by severity
+    let severity_order = |s: &str| match s {
+        "high" => 0,
+        "medium" => 1,
+        _ => 2,
+    };
+    suggestions.sort_by_key(|s| severity_order(&s.severity));
+
+    Ok(Json(SuggestionsResponse { suggestions }))
+}
+
 // ── Main ────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -360,6 +550,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/sessions/{id}", get(get_session))
         .route("/api/sessions/{id}/metrics", get(get_session_metrics))
         .route("/api/metrics", get(get_metrics))
+        .route("/api/suggestions", get(get_suggestions))
         .route("/api/events", post(post_event))
         .route("/ws/events", get(ws_events_handler))
         .fallback_service(ServeDir::new(

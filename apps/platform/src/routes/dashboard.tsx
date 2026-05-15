@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { fetchApi } from '@/lib/api'
 import { useEvents } from '@/hooks/useEvents'
-import type { MetricsResponse } from '../types'
+import type { MetricsResponse, SuggestionsResponse } from '../types'
 
 function MetricCard({ title, value }: { title: string; value: string | number }) {
   return (
@@ -26,6 +26,11 @@ export function DashboardPage() {
   })
 
   const { events, clear } = useEvents()
+
+  const { data: suggestions } = useQuery<SuggestionsResponse>({
+    queryKey: ['suggestions'],
+    queryFn: () => fetchApi('/api/suggestions'),
+  })
 
   if (isLoading) {
     return (
@@ -168,6 +173,45 @@ export function DashboardPage() {
                     {ev.message.slice(0, 60)}
                   </span>
                 )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Optimization Suggestions */}
+      {suggestions && suggestions.suggestions.length > 0 && (
+        <div className="mt-6 rounded-lg border border-border-subtle bg-surface/50 p-6">
+          <h3 className="mb-4 text-lg font-semibold">Optimization Suggestions</h3>
+          <div className="space-y-3">
+            {suggestions.suggestions.map((s, i) => (
+              <div
+                key={i}
+                className={`rounded-lg border p-4 ${
+                  s.severity === 'high'
+                    ? 'border-red-400/30 bg-red-400/5'
+                    : s.severity === 'medium'
+                      ? 'border-yellow-400/30 bg-yellow-400/5'
+                      : 'border-border-subtle bg-hover/30'
+                }`}
+              >
+                <div className="mb-1 flex items-center gap-2">
+                  <span
+                    className={`inline-block h-2 w-2 rounded-full ${
+                      s.severity === 'high'
+                        ? 'bg-red-400'
+                        : s.severity === 'medium'
+                          ? 'bg-yellow-400'
+                          : 'bg-text-muted'
+                    }`}
+                  />
+                  <span className="text-sm font-semibold text-text-primary">
+                    {s.title}
+                  </span>
+                </div>
+                <p className="text-xs leading-relaxed text-text-secondary">
+                  {s.description}
+                </p>
               </div>
             ))}
           </div>
