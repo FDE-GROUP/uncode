@@ -538,6 +538,26 @@ async fn get_suggestions(
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
+    let mut host = "127.0.0.1".to_string();
+    let mut port: u16 = 3000;
+
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--host" => {
+                if let Some(h) = args.next() {
+                    host = h;
+                }
+            }
+            "--port" => {
+                if let Some(p) = args.next() {
+                    port = p.parse().unwrap_or(3000);
+                }
+            }
+            _ => {}
+        }
+    }
+
     let dir = SessionStore::default_dir()?;
     let store = Arc::new(SessionStore::new(dir));
 
@@ -559,9 +579,10 @@ async fn main() -> anyhow::Result<()> {
         .layer(CorsLayer::permissive())
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
-    info!("Platform server listening on http://127.0.0.1:3000");
-    info!("WebSocket endpoint: ws://127.0.0.1:3000/ws/events");
+    let addr = format!("{host}:{port}");
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    info!("Platform server listening on http://{addr}");
+    info!("WebSocket endpoint: ws://{addr}/ws/events");
     axum::serve(listener, app).await?;
 
     Ok(())
