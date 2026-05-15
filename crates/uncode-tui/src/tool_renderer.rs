@@ -2,8 +2,10 @@
 ///
 /// 每个工具有独立的 render_call() 和 render_result() 函数，
 /// 用于内联折叠方框中的摘要和展开内容。
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
+
+use crate::theme::Theme;
 
 /// 已知工具类型 — 静态分发，避免 HashMap + vtable 开销
 #[derive(Clone, Copy)]
@@ -32,12 +34,10 @@ impl ToolKind {
     }
 }
 
-/// 工具渲染 trait
+/// 工具渲染 trait — 所有颜色从 Theme 获取
 pub trait ToolRenderer: Send + Sync {
-    /// 渲染工具调用摘要（折叠状态）
-    fn render_call(&self, args: &str, width: u16) -> Vec<Line<'static>>;
-    /// 渲染工具结果（展开状态）
-    fn render_result(&self, result: &str, width: u16) -> Vec<Line<'static>>;
+    fn render_call(&self, args: &str, width: u16, theme: &Theme) -> Vec<Line<'static>>;
+    fn render_result(&self, result: &str, width: u16, theme: &Theme) -> Vec<Line<'static>>;
 }
 
 /// 工具渲染注册表 — 零分配静态分发
@@ -82,30 +82,33 @@ static STATIC_FALLBACK: FallbackRenderer = FallbackRenderer;
 struct ReadRenderer;
 
 impl ToolRenderer for ReadRenderer {
-    fn render_call(&self, args: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let path = extract_path(args);
         vec![Line::from(Span::styled(
             format!("📖 读取 {path}"),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(theme.tool_status.running),
         ))]
     }
 
-    fn render_result(&self, result: &str, width: u16) -> Vec<Line<'static>> {
+    fn render_result(&self, result: &str, width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let lines: Vec<&str> = result.lines().collect();
         let line_count = lines.len();
         let mut out = vec![Line::from(Span::styled(
             format!("{line_count} 行"),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.ui.footer_text),
         ))];
 
         let max_lines = (width as usize).min(20);
         for line in lines.iter().take(max_lines) {
-            out.push(Line::from(line.to_string()));
+            out.push(Line::from(Span::styled(
+                line.to_string(),
+                Style::default().fg(theme.markdown.code_text),
+            )));
         }
         if lines.len() > max_lines {
             out.push(Line::from(Span::styled(
                 "...",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.ui.footer_text),
             )));
         }
         out
@@ -115,23 +118,26 @@ impl ToolRenderer for ReadRenderer {
 struct WriteRenderer;
 
 impl ToolRenderer for WriteRenderer {
-    fn render_call(&self, args: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let path = extract_path(args);
         vec![Line::from(Span::styled(
             format!("📝 写入 {path}"),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme.tool_status.await_confirm),
         ))]
     }
 
-    fn render_result(&self, result: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let bytes = result.len();
         let mut out = vec![Line::from(Span::styled(
             format!("写入 {bytes} 字节"),
-            Style::default().fg(Color::Green),
+            Style::default().fg(theme.tool_status.success),
         ))];
         let lines: Vec<&str> = result.lines().take(10).collect();
         for line in lines {
-            out.push(Line::from(line.to_string()));
+            out.push(Line::from(Span::styled(
+                line.to_string(),
+                Style::default().fg(theme.markdown.code_text),
+            )));
         }
         out
     }
@@ -140,40 +146,43 @@ impl ToolRenderer for WriteRenderer {
 struct EditRenderer;
 
 impl ToolRenderer for EditRenderer {
-    fn render_call(&self, args: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let path = extract_path(args);
         vec![Line::from(Span::styled(
             format!("✏️ 编辑 {path}"),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme.tool_status.await_confirm),
         ))]
     }
 
-    fn render_result(&self, result: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let mut out = Vec::new();
         for line in result.lines().take(20) {
             if line.starts_with('+') && !line.starts_with("++") {
                 out.push(Line::from(Span::styled(
                     line.to_string(),
-                    Style::default().fg(Color::Green),
+                    Style::default().fg(theme.diff.added_text),
                 )));
             } else if line.starts_with('-') && !line.starts_with("--") {
                 out.push(Line::from(Span::styled(
                     line.to_string(),
-                    Style::default().fg(Color::Red),
+                    Style::default().fg(theme.diff.removed_text),
                 )));
             } else if line.starts_with("@@") {
                 out.push(Line::from(Span::styled(
                     line.to_string(),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(theme.diff.header),
                 )));
             } else {
-                out.push(Line::from(line.to_string()));
+                out.push(Line::from(Span::styled(
+                    line.to_string(),
+                    Style::default().fg(theme.diff.context),
+                )));
             }
         }
         if result.lines().count() > 20 {
             out.push(Line::from(Span::styled(
                 "...",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.ui.footer_text),
             )));
         }
         out
@@ -183,26 +192,29 @@ impl ToolRenderer for EditRenderer {
 struct GrepRenderer;
 
 impl ToolRenderer for GrepRenderer {
-    fn render_call(&self, args: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         vec![Line::from(Span::styled(
             format!("🔍 搜索 {args}"),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(theme.tool_status.running),
         ))]
     }
 
-    fn render_result(&self, result: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let matches: Vec<&str> = result.lines().collect();
         let mut out = vec![Line::from(Span::styled(
             format!("找到 {} 处匹配", matches.len()),
-            Style::default().fg(Color::Green),
+            Style::default().fg(theme.tool_status.success),
         ))];
         for line in matches.iter().take(15) {
-            out.push(Line::from(line.to_string()));
+            out.push(Line::from(Span::styled(
+                line.to_string(),
+                Style::default().fg(theme.markdown.code_text),
+            )));
         }
         if matches.len() > 15 {
             out.push(Line::from(Span::styled(
                 format!("... 还有 {} 处", matches.len() - 15),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.ui.footer_text),
             )));
         }
         out
@@ -212,21 +224,26 @@ impl ToolRenderer for GrepRenderer {
 struct BashRenderer;
 
 impl ToolRenderer for BashRenderer {
-    fn render_call(&self, args: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let cmd = extract_command(args);
         vec![Line::from(Span::styled(
             format!("$ {cmd}"),
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.bash.command)
                 .add_modifier(Modifier::BOLD),
         ))]
     }
 
-    fn render_result(&self, result: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         result
             .lines()
             .take(20)
-            .map(|l| Line::from(l.to_string()))
+            .map(|l| {
+                Line::from(Span::styled(
+                    l.to_string(),
+                    Style::default().fg(theme.bash.stdout),
+                ))
+            })
             .collect()
     }
 }
@@ -234,23 +251,23 @@ impl ToolRenderer for BashRenderer {
 struct FindRenderer;
 
 impl ToolRenderer for FindRenderer {
-    fn render_call(&self, args: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         vec![Line::from(Span::styled(
             format!("📂 查找 {args}"),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(theme.tool_status.running),
         ))]
     }
 
-    fn render_result(&self, result: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let files: Vec<&str> = result.lines().collect();
         let mut out = vec![Line::from(Span::styled(
             format!("找到 {} 个文件", files.len()),
-            Style::default().fg(Color::Green),
+            Style::default().fg(theme.tool_status.success),
         ))];
         for f in files.iter().take(20) {
             out.push(Line::from(Span::styled(
                 f.to_string(),
-                Style::default().fg(Color::Cyan),
+                Style::default().fg(theme.tool_status.running),
             )));
         }
         out
@@ -260,21 +277,24 @@ impl ToolRenderer for FindRenderer {
 struct LsRenderer;
 
 impl ToolRenderer for LsRenderer {
-    fn render_call(&self, args: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         vec![Line::from(Span::styled(
             format!("📂 列出 {args}"),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(theme.tool_status.running),
         ))]
     }
 
-    fn render_result(&self, result: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let entries: Vec<&str> = result.lines().collect();
         let mut out = vec![Line::from(Span::styled(
             format!("{} 个条目", entries.len()),
-            Style::default().fg(Color::Green),
+            Style::default().fg(theme.tool_status.success),
         ))];
         for e in entries.iter().take(20) {
-            out.push(Line::from(e.to_string()));
+            out.push(Line::from(Span::styled(
+                e.to_string(),
+                Style::default().fg(theme.markdown.code_text),
+            )));
         }
         out
     }
@@ -285,11 +305,11 @@ impl ToolRenderer for LsRenderer {
 struct FallbackRenderer;
 
 impl ToolRenderer for FallbackRenderer {
-    fn render_call(&self, args: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_call(&self, args: &str, _width: u16, _theme: &Theme) -> Vec<Line<'static>> {
         vec![Line::from(args.to_string())]
     }
 
-    fn render_result(&self, result: &str, _width: u16) -> Vec<Line<'static>> {
+    fn render_result(&self, result: &str, _width: u16, _theme: &Theme) -> Vec<Line<'static>> {
         result
             .lines()
             .take(10)
@@ -326,11 +346,16 @@ fn extract_command(args: &str) -> String {
 mod tests {
     use super::*;
 
+    fn test_theme() -> Theme {
+        Theme::default()
+    }
+
     #[test]
     fn test_registry_has_all_tools() {
         let reg = ToolRendererRegistry::new();
+        let theme = test_theme();
         for tool in &["read", "write", "edit", "grep", "bash", "find", "ls"] {
-            let lines = reg.get(tool).render_call("test", 80);
+            let lines = reg.get(tool).render_call("test", 80, &theme);
             assert!(!lines.is_empty());
         }
     }
@@ -338,31 +363,35 @@ mod tests {
     #[test]
     fn test_fallback_for_unknown_tool() {
         let reg = ToolRendererRegistry::new();
-        let lines = reg.get("unknown_tool").render_call("args", 80);
+        let theme = test_theme();
+        let lines = reg.get("unknown_tool").render_call("args", 80, &theme);
         assert!(!lines.is_empty());
     }
 
     #[test]
     fn test_read_renderer() {
         let r = ReadRenderer;
-        let call = r.render_call(r#"{"path":"src/main.rs"}"#, 80);
+        let theme = test_theme();
+        let call = r.render_call(r#"{"path":"src/main.rs"}"#, 80, &theme);
         assert!(call[0].to_string().contains("src/main.rs"));
 
-        let result = r.render_result("line1\nline2\nline3", 80);
+        let result = r.render_result("line1\nline2\nline3", 80, &theme);
         assert!(result[0].to_string().contains("3 行"));
     }
 
     #[test]
     fn test_edit_renderer_diff_colors() {
         let r = EditRenderer;
-        let result = r.render_result("@@ -1,3 +1,4 @@\n-old\n+new\n ctx", 80);
+        let theme = test_theme();
+        let result = r.render_result("@@ -1,3 +1,4 @@\n-old\n+new\n ctx", 80, &theme);
         assert_eq!(result.len(), 4);
     }
 
     #[test]
     fn test_bash_renderer() {
         let r = BashRenderer;
-        let call = r.render_call(r#"{"command":"cargo test"}"#, 80);
+        let theme = test_theme();
+        let call = r.render_call(r#"{"command":"cargo test"}"#, 80, &theme);
         assert!(call[0].to_string().contains("$ cargo test"));
     }
 

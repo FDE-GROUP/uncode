@@ -621,7 +621,7 @@ fn render_tool_call(
 
     // Use custom renderer for the call header
     let renderer = renderers.get(tool_name);
-    let call_lines = renderer.render_call(args, width);
+    let call_lines = renderer.render_call(args, width, theme);
 
     let mut lines = Vec::new();
 
@@ -640,7 +640,7 @@ fn render_tool_call(
 
     if expanded {
         if let Some(res) = result {
-            let result_lines = renderer.render_result(res, width);
+            let result_lines = renderer.render_result(res, width, theme);
             for rl in result_lines {
                 lines.push(Line::from(Span::styled(" │ ", Style::default().fg(color))));
                 lines.push(rl);
