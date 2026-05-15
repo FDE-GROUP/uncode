@@ -449,24 +449,51 @@ impl TuiEngine {
             "/tree" => {
                 self.handle_tree_command();
             }
-            _ => {
-                if self.agent_busy {
-                    let preview = text.clone();
-                    self.queue.enqueue(text, QueueType::FollowUp);
-                    self.chat
-                        .messages
-                        .push(chat::ChatMessage::QueuedMessage { text: preview });
+            "/skills" => {
+                self.handle_skills_command();
+            }
+            t if t.starts_with('/') && !t.contains(' ') && t.len() > 1 => {
+                // Try as skill invocation
+                let skill_name = &t[1..];
+                self.handle_skill_invoke(skill_name, "", on_submit);
+            }
+            t if t.starts_with('/') && t.contains(' ') => {
+                let parts: Vec<&str> = t[1..].splitn(2, ' ').collect();
+                let skill_name = parts[0];
+                let args = parts.get(1).copied().unwrap_or("");
+                let registry = uncode_core::skill::SkillRegistry::load();
+                if registry.get(skill_name).is_some() {
+                    self.handle_skill_invoke(skill_name, args, on_submit);
                 } else {
-                    self.agent_busy = true;
-                    self.chat.push_user_message(text.clone());
-                    let file_expanded = uncode_core::context::expand_file_refs(
-                        &text,
-                        &std::env::current_dir().unwrap_or_default(),
-                    );
-                    let token = self.new_cancel_token();
-                    on_submit(file_expanded, token);
+                    // Unknown command — pass through as normal input
+                    self.submit_text(text, on_submit);
                 }
             }
+            _ => {
+                self.submit_text(text.clone(), on_submit);
+            }
+        }
+    }
+
+    fn submit_text<F>(&mut self, text: String, on_submit: &F)
+    where
+        F: Fn(String, CancellationToken),
+    {
+        if self.agent_busy {
+            let preview = text.clone();
+            self.queue.enqueue(text, QueueType::FollowUp);
+            self.chat
+                .messages
+                .push(chat::ChatMessage::QueuedMessage { text: preview });
+        } else {
+            self.agent_busy = true;
+            self.chat.push_user_message(text.clone());
+            let file_expanded = uncode_core::context::expand_file_refs(
+                &text,
+                &std::env::current_dir().unwrap_or_default(),
+            );
+            let token = self.new_cancel_token();
+            on_submit(file_expanded, token);
         }
     }
 
@@ -614,6 +641,71 @@ impl TuiEngine {
         }
     }
 
+    fn handle_skills_command(&mut self) {
+        use uncode_core::skill::SkillRegistry;
+        let registry = SkillRegistry::load();
+        let list = registry.list();
+        if list.is_empty() {
+            self.chat.messages.push(chat::ChatMessage::Summary {
+                completed: vec!["没有可用 Skills。".into()],
+                next_steps: vec![],
+            });
+            return;
+        }
+        let lines: Vec<String> = list.iter().map(|s| format!("  {s}")).collect();
+        let mut completed = vec!["可用 Skills:".to_string()];
+        completed.extend(lines);
+        completed.push("调用方式: /<skill_name> <args>".to_string());
+        self.chat.messages.push(chat::ChatMessage::Summary {
+            completed,
+            next_steps: vec![],
+        });
+    }
+
+    fn handle_skill_invoke<F>(&mut self, skill_name: &str, args_str: &str, on_submit: &F)
+    where
+        F: Fn(String, CancellationToken),
+    {
+        use uncode_core::skill::SkillRegistry;
+        let registry = SkillRegistry::load();
+        let _skill = match registry.get(skill_name) {
+            Some(s) => s,
+            None => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("Skill '{skill_name}' 不存在。使用 /skills 查看可用列表。"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return;
+            }
+        };
+
+        let mut vars = std::collections::HashMap::new();
+        if !args_str.is_empty() {
+            for pair in args_str.split_whitespace() {
+                if let Some((k, v)) = pair.split_once('=') {
+                    vars.insert(k.to_string(), v.to_string());
+                }
+            }
+        }
+
+        let prompt = match registry.render(skill_name, &vars) {
+            Some(p) => p,
+            None => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("Skill '{skill_name}' 渲染失败。"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return;
+            }
+        };
+
+        self.agent_busy = true;
+        self.chat
+            .push_user_message(format!("[skill: {skill_name}] {args_str}"));
+        let token = self.new_cancel_token();
+        on_submit(prompt, token);
+    }
+
     fn flush_queue<F>(&mut self, on_submit: &F)
     where
         F: Fn(String, CancellationToken),
@@ -670,7 +762,7 @@ fn render_session_tree(
 }
 
 fn slash_commands() -> Vec<String> {
-    vec![
+    let mut cmds = vec![
         "help".into(),
         "quit".into(),
         "thinking".into(),
@@ -678,7 +770,14 @@ fn slash_commands() -> Vec<String> {
         "issues".into(),
         "template".into(),
         "tree".into(),
-    ]
+        "skills".into(),
+    ];
+    // Add skill names
+    let registry = uncode_core::skill::SkillRegistry::load();
+    for skill in registry.list() {
+        cmds.push(skill.name.clone());
+    }
+    cmds
 }
 
 #[cfg(test)]
