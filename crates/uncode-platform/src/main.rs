@@ -612,6 +612,35 @@ async fn get_suggestions(
     Ok(Json(SuggestionsResponse { suggestions }))
 }
 
+// ── Settings ──────────────────────────────────────────────────────
+
+#[derive(Serialize)]
+struct SettingsResponse {
+    data_dir: String,
+    version: String,
+    github_repo: String,
+    has_github_token: bool,
+}
+
+async fn get_settings(State(_state): State<AppState>) -> Json<SettingsResponse> {
+    let data_dir_str = format!(
+        "{}",
+        dirs::data_dir()
+            .unwrap_or_default()
+            .join("uncode")
+            .join("sessions")
+            .display()
+    );
+
+    Json(SettingsResponse {
+        data_dir: data_dir_str,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        github_repo: std::env::var("UNCODE_GITHUB_REPO")
+            .unwrap_or_else(|_| "FDE-GROUP/uncode".into()),
+        has_github_token: std::env::var("UNCODE_GITHUB_TOKEN").is_ok(),
+    })
+}
+
 // ── GitHub Issues proxy ──────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -733,6 +762,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/sessions/{id}/metrics", get(get_session_metrics))
         .route("/api/metrics", get(get_metrics))
         .route("/api/suggestions", get(get_suggestions))
+        .route("/api/settings", get(get_settings))
         .route("/api/issues", get(list_issues))
         .route("/api/issues/{number}", get(get_issue))
         .route("/api/events", post(post_event))
