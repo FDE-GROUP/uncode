@@ -22,27 +22,32 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    #[arg(short, long)]
+    /// 模型名称
+    #[arg(short, long, value_name = "MODEL")]
     model: Option<String>,
 
-    #[arg(long)]
+    /// 会话 ID
+    #[arg(long, value_name = "SESSION_ID")]
     session: Option<String>,
 
+    /// 继续最近会话
     #[arg(short = 'c', long = "continue")]
     continue_last: bool,
 
+    /// GitHub Issue 编号
     #[arg(long)]
     issue: Option<u64>,
 
+    /// REPL 模式
     #[arg(short, long)]
     repl: bool,
 
-    /// 输出模式：默认交互式，json 输出 JSON Lines
-    #[arg(long, default_value = "interactive")]
+    /// 输出模式：interactive 或 json
+    #[arg(long, default_value = "interactive", value_name = "MODE")]
     mode: String,
 
     /// 使用 prompt 模板
-    #[arg(short = 't', long = "template")]
+    #[arg(short = 't', long = "template", value_name = "TEMPLATE")]
     template: Option<String>,
 
     /// 模板变量 key=value
@@ -50,7 +55,7 @@ struct Cli {
     var: Vec<String>,
 
     /// 从指定会话 fork 新分支
-    #[arg(long)]
+    #[arg(long, value_name = "SESSION_ID")]
     fork: Option<String>,
 
     prompt: Option<String>,
