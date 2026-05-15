@@ -2,6 +2,8 @@ export {
   ArrowUpDown,
   BarChart3,
   Bug,
+  ChevronDown,
+  ChevronRight,
   Home,
   MessageSquare,
   Moon,
