@@ -22,7 +22,10 @@ impl SlashCommands {
             Box::new(|_| {
                 let cmds = [
                     "/help          — 显示此帮助",
-                    "/issues pull   — 拉取 GitHub Issues 列表",
+                    "/fork [id]     — 从当前/指定会话创建分支",
+                    "/export [fmt]  — 导出会话（html/jsonl，默认 jsonl）",
+                    "/sessions      — 列出历史会话",
+                    "/branch        — 显示当前会话分支信息",
                     "/think simple  — 切换到自然语言提炼视图",
                     "/think full    — 恢复完整技术视图",
                     "/simple        — 切换到简化双面板视图",

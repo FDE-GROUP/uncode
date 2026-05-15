@@ -454,11 +454,23 @@ impl TuiEngine {
                 self.chat.tool_output_visible = !self.chat.tool_output_visible;
             }
             "/help" => {
-                let help = "快捷键: Ctrl+O 工具输出 | Ctrl+T 思考 | Ctrl+L 模型 | Shift+Tab 思考级别 | Ctrl+X 前缀命令 | Ctrl+C 中断/退出\n命令: /theme [name] | /thinking | /details | /tree | /skills | /template";
+                let help = "快捷键: Ctrl+O 工具输出 | Ctrl+T 思考 | Ctrl+L 模型 | Shift+Tab 思考级别 | Ctrl+X 前缀命令 | Ctrl+C 中断/退出\n命令: /fork [id] | /export [html|jsonl] | /sessions | /branch | /theme [name] | /thinking | /details | /tree | /skills | /template";
                 self.chat.messages.push(chat::ChatMessage::Summary {
                     completed: vec![help.into()],
                     next_steps: vec![],
                 });
+            }
+            t if t.starts_with("/fork") => {
+                self.handle_fork_command(&text);
+            }
+            t if t.starts_with("/export") => {
+                self.handle_export_command(&text);
+            }
+            "/sessions" => {
+                self.handle_sessions_command();
+            }
+            "/branch" => {
+                self.handle_branch_command();
             }
             t if t.starts_with("/theme") => {
                 self.handle_theme_command(&text);
@@ -514,6 +526,264 @@ impl TuiEngine {
             );
             let token = self.new_cancel_token();
             on_submit(file_expanded, token);
+        }
+    }
+
+    fn handle_fork_command(&mut self, text: &str) {
+        if self.session_id.is_empty() {
+            self.chat.messages.push(chat::ChatMessage::Error {
+                message: "当前没有活跃会话，无法 fork。".into(),
+                category: uncode_core::event::ErrorCategory::Config,
+            });
+            return;
+        }
+
+        let parts: Vec<&str> = text.splitn(2, ' ').collect();
+        let parent_id = if parts.len() > 1 && !parts[1].trim().is_empty() {
+            parts[1].trim().to_string()
+        } else {
+            self.session_id.clone()
+        };
+
+        let session_dir = match uncode_session::store::SessionStore::default_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("无法获取会话目录: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return;
+            }
+        };
+        let store = uncode_session::store::SessionStore::new(session_dir);
+
+        match store.fork_session(&parent_id, "用户 fork") {
+            Ok(new_id) => {
+                let old_short = &parent_id[..8.min(parent_id.len())];
+                let new_short = &new_id[..8.min(new_id.len())];
+                self.session_id = new_id.clone();
+                self.chat.messages.push(chat::ChatMessage::Summary {
+                    completed: vec![format!(
+                        "会话已 fork: session:{old_short} → session:{new_short}"
+                    )],
+                    next_steps: vec![],
+                });
+            }
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("Fork 失败: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+            }
+        }
+    }
+
+    fn handle_export_command(&mut self, text: &str) {
+        if self.session_id.is_empty() {
+            self.chat.messages.push(chat::ChatMessage::Error {
+                message: "当前没有活跃会话，无法导出。".into(),
+                category: uncode_core::event::ErrorCategory::Config,
+            });
+            return;
+        }
+
+        let parts: Vec<&str> = text.splitn(2, ' ').collect();
+        let format = parts.get(1).map(|s| s.trim()).unwrap_or("jsonl");
+
+        let session_dir = match uncode_session::store::SessionStore::default_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("无法获取会话目录: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return;
+            }
+        };
+        let store = uncode_session::store::SessionStore::new(session_dir);
+        let sid_short = &self.session_id[..8.min(self.session_id.len())];
+
+        match format {
+            "jsonl" => match store.load_entries(&self.session_id) {
+                Ok(entries) => {
+                    let filename = format!("uncode-export-{sid_short}.jsonl");
+                    let mut out = String::new();
+                    for entry in &entries {
+                        if let Ok(line) = serde_json::to_string(entry) {
+                            out.push_str(&line);
+                            out.push('\n');
+                        }
+                    }
+                    match std::fs::write(&filename, &out) {
+                        Ok(()) => {
+                            self.chat.messages.push(chat::ChatMessage::Summary {
+                                completed: vec![format!(
+                                    "已导出 JSONL: {filename} ({} 条目)",
+                                    entries.len()
+                                )],
+                                next_steps: vec![],
+                            });
+                        }
+                        Err(e) => {
+                            self.chat.messages.push(chat::ChatMessage::Error {
+                                message: format!("写入文件失败: {e}"),
+                                category: uncode_core::event::ErrorCategory::Config,
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.chat.messages.push(chat::ChatMessage::Error {
+                        message: format!("读取会话失败: {e}"),
+                        category: uncode_core::event::ErrorCategory::Config,
+                    });
+                }
+            },
+            "html" => match store.load_entries(&self.session_id) {
+                Ok(entries) => {
+                    let filename = format!("uncode-export-{sid_short}.html");
+                    let html = render_export_html(&entries);
+                    match std::fs::write(&filename, &html) {
+                        Ok(()) => {
+                            self.chat.messages.push(chat::ChatMessage::Summary {
+                                completed: vec![format!(
+                                    "已导出 HTML: {filename} ({} 条目)",
+                                    entries.len()
+                                )],
+                                next_steps: vec![],
+                            });
+                        }
+                        Err(e) => {
+                            self.chat.messages.push(chat::ChatMessage::Error {
+                                message: format!("写入文件失败: {e}"),
+                                category: uncode_core::event::ErrorCategory::Config,
+                            });
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.chat.messages.push(chat::ChatMessage::Error {
+                        message: format!("读取会话失败: {e}"),
+                        category: uncode_core::event::ErrorCategory::Config,
+                    });
+                }
+            },
+            other => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("不支持的导出格式: '{other}'。支持: jsonl, html"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+            }
+        }
+    }
+
+    fn handle_sessions_command(&mut self) {
+        let session_dir = match uncode_session::store::SessionStore::default_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("无法获取会话目录: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return;
+            }
+        };
+        let store = uncode_session::store::SessionStore::new(session_dir);
+
+        match store.list_sessions() {
+            Ok(sessions) => {
+                if sessions.is_empty() {
+                    self.chat.messages.push(chat::ChatMessage::Summary {
+                        completed: vec!["没有历史会话。".into()],
+                        next_steps: vec![],
+                    });
+                    return;
+                }
+
+                let mut sessions = sessions;
+                sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                let display: Vec<String> = sessions
+                    .iter()
+                    .take(20)
+                    .map(|s| {
+                        let id_short = &s.id[..8.min(s.id.len())];
+                        let title = s
+                            .title
+                            .as_deref()
+                            .unwrap_or("(无标题)")
+                            .chars()
+                            .take(30)
+                            .collect::<String>();
+                        let time = s.updated_at.format("%m-%d %H:%M");
+                        format!(
+                            "  session:{id_short}  {title}  {} msgs  {time}",
+                            s.message_count
+                        )
+                    })
+                    .collect();
+
+                let mut completed = vec![format!("最近 {} 条会话:", display.len())];
+                completed.extend(display);
+                self.chat.messages.push(chat::ChatMessage::Summary {
+                    completed,
+                    next_steps: vec![],
+                });
+            }
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("读取会话列表失败: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+            }
+        }
+    }
+
+    fn handle_branch_command(&mut self) {
+        if self.session_id.is_empty() {
+            self.chat.messages.push(chat::ChatMessage::Summary {
+                completed: vec!["当前没有活跃会话。".into()],
+                next_steps: vec![],
+            });
+            return;
+        }
+
+        let session_dir = match uncode_session::store::SessionStore::default_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("无法获取会话目录: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return;
+            }
+        };
+        let store = uncode_session::store::SessionStore::new(session_dir);
+        let sid_short = &self.session_id[..8.min(self.session_id.len())];
+
+        match store.get_children(&self.session_id) {
+            Ok(children) => {
+                let mut lines = vec![format!("当前会话: session:{sid_short}")];
+                if children.is_empty() {
+                    lines.push("无子分支。".into());
+                } else {
+                    lines.push(format!("子分支 ({}):", children.len()));
+                    for child in &children {
+                        let cid = &child.id[..8.min(child.id.len())];
+                        let title = child.title.as_deref().unwrap_or("(无标题)");
+                        lines.push(format!("  session:{cid}  {title}"));
+                    }
+                }
+                self.chat.messages.push(chat::ChatMessage::Summary {
+                    completed: lines,
+                    next_steps: vec![],
+                });
+            }
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("获取分支信息失败: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+            }
         }
     }
 
@@ -827,10 +1097,50 @@ fn render_session_tree(
     lines
 }
 
+fn render_export_html(entries: &[uncode_core::session::SessionEntry]) -> String {
+    let mut body = String::new();
+    for entry in entries {
+        match entry {
+            uncode_core::session::SessionEntry::Message(msg) => {
+                let role = &msg.role;
+                let content = msg
+                    .content
+                    .iter()
+                    .filter_map(|block| match block {
+                        uncode_core::message::ContentBlock::Text { text } => Some(text.clone()),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if !content.is_empty() {
+                    body.push_str(&format!(
+                        "<div class=\"msg {role}\"><b>{role}</b><pre>{content}</pre></div>\n"
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    format!(
+        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">\
+         <title>uncode session export</title>\
+         <style>body{{font-family:monospace;margin:2em}}\
+         .msg{{margin:1em 0;padding:0.5em;border-left:3px solid #ccc}}\
+         .user{{border-color:#4a9}}.assistant{{border-color:#69f}}\
+         pre{{white-space:pre-wrap;margin:0.5em 0}}</style>\
+         </head><body>{body}</body></html>"
+    )
+}
+
 fn slash_commands() -> Vec<String> {
     let mut cmds = vec![
         "help".into(),
         "quit".into(),
+        "fork".into(),
+        "export".into(),
+        "sessions".into(),
+        "branch".into(),
         "thinking".into(),
         "details".into(),
         "issues".into(),
