@@ -453,17 +453,22 @@ TUI 界面和 Platform 不属于 MTE 范围——MTE 验证的是核心代理能
 
 ### Phase 4: Platform 原型
 
-- [ ] Rust 后端服务
-- [ ] TypeScript 前端框架搭建
-- [ ] 会话数据展示 + 源码关联
-- [ ] Issues 面板
+- [x] Rust 后端服务（axum REST + WebSocket）
+- [x] TypeScript 前端框架搭建（React 19 + TanStack Router/Query + Vite）
+- [x] 会话数据展示 + 源码关联（Session 列表/详情/Diff 查看/Metrics API）
+- [x] Issues 面板（GitHub Issues 代理 + 状态筛选）
 
-### Phase 5: 生产就绪
+### Phase 5: TUI 功能对齐（Pi 对标）
 
-- [ ] 上下文压缩
-- [ ] JSON-RPC 模式
-- [ ] TUI 错误态完善（开发者友好的错误信息与重试机制）
-- [ ] Token 计数与成本追踪
+基于 CLI_TUI_COMPARISON.md 对比报告，缩小与 Pi 的功能差距：
+
+- [ ] 斜杠命令扩展（/clear /compact /model /new /fork /export /branch /sessions /tree 等）
+- [ ] 快捷键扩展（Ctrl+P 模型循环 / Ctrl+R 重试 / Ctrl+N 新会话 / Ctrl+/ 撤销）
+- [ ] 输入编辑器增强（Shift+Enter 多行 / Undo-Redo / 单词导航 Alt+Left/Right / 外部编辑器 Ctrl+G）
+- [ ] 选择器系统（会话选择器 / 设置选择器 / 模糊匹配）
+- [ ] Markdown 渲染补全（表格 / 任务列表 / 数学 / OSC 8 链接）
+- [ ] 会话管理命令（/sessions 列表 / /fork 分支 / /export HTML-JSONL / /tree 树形导航）
+- [ ] JSON-RPC 模式（18 命令 + 25 事件，IDE 集成基础）
 - [ ] 完善文档
 - [ ] Agent 行为质量评估（Golden Set 测试）
 - [ ] 安全增强（命令沙箱、SecretString、认证中间件）
@@ -472,4 +477,4 @@ TUI 界面和 Platform 不属于 MTE 范围——MTE 验证的是核心代理能
 
 *本文档是 uncode 项目的顶层设计指引，所有后续设计文档和代码实现均以此为准。*
 
-当前进度：Phase 0-3 完成，Phase 4（Platform）待启动。
+当前进度：Phase 0-4 完成，Phase 5（TUI 功能对齐）进行中。

@@ -454,11 +454,23 @@ impl TuiEngine {
                 self.chat.tool_output_visible = !self.chat.tool_output_visible;
             }
             "/help" => {
-                let help = "快捷键: Ctrl+O 工具输出 | Ctrl+T 思考 | Ctrl+L 模型 | Shift+Tab 思考级别 | Ctrl+X 前缀命令 | Ctrl+C 中断/退出\n命令: /theme [name] | /thinking | /details | /tree | /skills | /template";
+                let help = "快捷键: Ctrl+O 工具输出 | Ctrl+T 思考 | Ctrl+L 模型 | Shift+Tab 思考级别 | Ctrl+X 前缀命令 | Ctrl+C 中断/退出\n命令: /clear | /compact | /model [name] | /new | /theme [name] | /thinking | /details | /tree | /skills | /template";
                 self.chat.messages.push(chat::ChatMessage::Summary {
                     completed: vec![help.into()],
                     next_steps: vec![],
                 });
+            }
+            "/clear" => {
+                self.handle_clear_command();
+            }
+            "/compact" => {
+                self.handle_compact_command();
+            }
+            "/new" => {
+                self.handle_new_command();
+            }
+            t if t.starts_with("/model") => {
+                self.handle_model_command(&text);
             }
             t if t.starts_with("/theme") => {
                 self.handle_theme_command(&text);
@@ -473,7 +485,6 @@ impl TuiEngine {
                 self.handle_skills_command();
             }
             t if t.starts_with('/') && !t.contains(' ') && t.len() > 1 => {
-                // Try as skill invocation
                 let skill_name = &t[1..];
                 self.handle_skill_invoke(skill_name, "", on_submit);
             }
@@ -485,7 +496,6 @@ impl TuiEngine {
                 if registry.get(skill_name).is_some() {
                     self.handle_skill_invoke(skill_name, args, on_submit);
                 } else {
-                    // Unknown command — pass through as normal input
                     self.submit_text(text, on_submit);
                 }
             }
@@ -515,6 +525,87 @@ impl TuiEngine {
             let token = self.new_cancel_token();
             on_submit(file_expanded, token);
         }
+    }
+
+    fn handle_clear_command(&mut self) {
+        self.chat.messages.clear();
+        self.chat.scroll_offset = 0;
+        self.chat.auto_scroll = true;
+        self.chat.messages.push(chat::ChatMessage::Summary {
+            completed: vec!["对话已清空。".into()],
+            next_steps: vec![],
+        });
+    }
+
+    fn handle_compact_command(&mut self) {
+        let ctx_pct = self.footer.context_percent;
+        let in_str = format_tokens(self.footer.input_tokens);
+        let out_str = format_tokens(self.footer.output_tokens);
+        let msg_count = self.chat.messages.len();
+
+        let mut lines = vec![
+            format!("上下文使用: {ctx_pct}% (in:{in_str} out:{out_str})"),
+            format!("对话消息数: {msg_count}"),
+        ];
+
+        if ctx_pct >= 80 {
+            lines.push("已达压缩阈值，下轮对话将自动压缩。".into());
+        } else if ctx_pct >= 50 {
+            lines.push("上下文使用中等，建议在超过 80% 前主动压缩。".into());
+        } else {
+            lines.push("上下文使用率低，无需压缩。".into());
+        }
+
+        self.chat.messages.push(chat::ChatMessage::Summary {
+            completed: lines,
+            next_steps: vec![],
+        });
+    }
+
+    fn handle_new_command(&mut self) {
+        let old_id = if self.session_id.is_empty() {
+            "无".to_string()
+        } else {
+            self.session_id[..8.min(self.session_id.len())].to_string()
+        };
+
+        self.session_id = uuid::Uuid::new_v4().to_string();
+        self.chat.messages.clear();
+        self.chat.scroll_offset = 0;
+        self.chat.auto_scroll = true;
+        self.footer.input_tokens = 0;
+        self.footer.output_tokens = 0;
+        self.footer.cost = 0.0;
+        self.footer.context_percent = 0;
+
+        let new_id = &self.session_id[..8];
+        self.chat.messages.push(chat::ChatMessage::Summary {
+            completed: vec![format!(
+                "新会话已创建。session:{} → session:{new_id}",
+                old_id
+            )],
+            next_steps: vec![],
+        });
+    }
+
+    fn handle_model_command(&mut self, text: &str) {
+        let parts: Vec<&str> = text.splitn(2, ' ').collect();
+        let name = parts.get(1).copied().unwrap_or("").trim();
+
+        if name.is_empty() {
+            self.selector.show(
+                "切换模型",
+                vec!["deepseek-v3".into(), "glm-5.1".into(), "ollama".into()],
+            );
+            return;
+        }
+
+        let old = self.model.clone();
+        self.model = name.to_string();
+        self.chat.messages.push(chat::ChatMessage::Summary {
+            completed: vec![format!("模型切换: {old} → {name}")],
+            next_steps: vec![],
+        });
     }
 
     fn handle_leader_key(&mut self, key_event: KeyEvent) {
@@ -831,6 +922,10 @@ fn slash_commands() -> Vec<String> {
     let mut cmds = vec![
         "help".into(),
         "quit".into(),
+        "clear".into(),
+        "compact".into(),
+        "model".into(),
+        "new".into(),
         "thinking".into(),
         "details".into(),
         "issues".into(),
