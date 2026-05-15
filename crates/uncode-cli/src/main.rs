@@ -75,6 +75,17 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// 导出会话为 HTML
+    Export {
+        /// 会话 ID
+        session_id: String,
+        /// 输出到文件
+        #[arg(short, long)]
+        output: Option<String>,
+        /// 导出最近会话
+        #[arg(long)]
+        latest: bool,
+    },
     /// 生成 shell 补全脚本
     Completions { shell: clap_complete::Shell },
 }
@@ -98,6 +109,13 @@ async fn main() -> anyhow::Result<()> {
             }
             Commands::Models { json } => {
                 return run_models(*json);
+            }
+            Commands::Export {
+                session_id,
+                output,
+                latest,
+            } => {
+                return run_export(session_id, output.as_deref(), *latest);
             }
             Commands::Completions { shell } => {
                 clap_complete::generate(
@@ -388,15 +406,57 @@ fn run_models(json_output: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    println!(
-        "{:<15} {:<20} {:<12} STATUS",
-        "PROVIDER", "MODEL", "CTX"
-    );
+    println!("{:<15} {:<20} {:<12} STATUS", "PROVIDER", "MODEL", "CTX");
     println!("{}", "-".repeat(70));
     for (m, configured) in &models {
         let status = if *configured { "✅" } else { "❌" };
         let ctx = format!("{}k", m.max_tokens / 1000);
         println!("{:<15} {:<20} {:<12} {status}", m.provider, m.id, ctx);
+    }
+    Ok(())
+}
+
+fn run_export(session_id: &str, output: Option<&str>, latest: bool) -> anyhow::Result<()> {
+    use uncode_core::message::{ContentBlock, Role};
+    use uncode_core::session::SessionEntry;
+    use uncode_session::export::export_html;
+
+    let session_dir = SessionStore::default_dir().context("session dir")?;
+    let store = SessionStore::new(session_dir);
+
+    let sid = if latest {
+        let recent = store
+            .find_most_recent()
+            .context("查找会话")?
+            .context("没有历史会话")?;
+        eprintln!(
+            "导出会话: {} ({})",
+            recent.id,
+            recent.title.as_deref().unwrap_or("无标题")
+        );
+        recent.id
+    } else {
+        session_id.to_string()
+    };
+
+    let header = store.read_header(&sid).context("读取会话头")?;
+    let entries = store.load_entries(&sid).context("读取会话内容")?;
+
+    // Extract messages from entries
+    let mut messages: Vec<(Role, Vec<ContentBlock>)> = Vec::new();
+    for entry in &entries {
+        if let SessionEntry::Message(me) = entry {
+            messages.push((me.role.clone(), me.content.clone()));
+        }
+    }
+
+    let html = export_html(&header, &entries, &messages);
+
+    if let Some(path) = output {
+        std::fs::write(path, &html)?;
+        eprintln!("已导出到: {path}");
+    } else {
+        println!("{html}");
     }
     Ok(())
 }
