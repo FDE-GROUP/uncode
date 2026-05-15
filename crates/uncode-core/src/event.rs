@@ -73,6 +73,10 @@ pub enum AgentEvent {
     MessageDelivered {
         text: String,
     },
+    AgentInterrupted {
+        turn: u64,
+        partial_response: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

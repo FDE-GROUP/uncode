@@ -16,6 +16,7 @@ uncode-session.workspace = true
 uncode-tools.workspace = true
 
 tokio.workspace = true
+tokio-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -34,6 +34,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 use uncode_core::event::AgentEvent;
 use uncode_core::message::UsageInfo;
 
@@ -153,6 +154,7 @@ pub struct TuiEngine {
     leader_pending: bool,
     queue: MessageQueue,
     agent_busy: bool,
+    current_cancel: Option<CancellationToken>,
     permission: PermissionManager,
     footer: FooterState,
     theme: Theme,
@@ -160,6 +162,12 @@ pub struct TuiEngine {
 }
 
 impl TuiEngine {
+    pub fn new_cancel_token(&mut self) -> CancellationToken {
+        let token = CancellationToken::new();
+        self.current_cancel = Some(token.clone());
+        token
+    }
+
     pub fn new() -> Self {
         Self {
             chat: ChatState::new(),
@@ -172,6 +180,7 @@ impl TuiEngine {
             leader_pending: false,
             queue: MessageQueue::new(),
             agent_busy: false,
+            current_cancel: None,
             permission: PermissionManager::new(),
             footer: FooterState::new(),
             theme: Theme::default(),
@@ -227,9 +236,20 @@ impl TuiEngine {
         line1_area: ratatui::layout::Rect,
         line2_area: ratatui::layout::Rect,
     ) {
-        let line1 = self.footer.render_line1(&self.session_id);
+        let (status_icon, status_color) = if self.agent_busy {
+            ("◉ RUNNING", Color::Yellow)
+        } else {
+            ("● IDLE", Color::Green)
+        };
+
         f.render_widget(
-            Paragraph::new(line1).style(Style::default().fg(self.theme.ui.footer_text)),
+            Paragraph::new(Line::from(vec![
+                Span::styled(format!("{status_icon} "), Style::default().fg(status_color)),
+                Span::styled(
+                    self.footer.render_line1(&self.session_id),
+                    Style::default().fg(self.theme.ui.footer_text),
+                ),
+            ])),
             line1_area,
         );
 
@@ -245,7 +265,7 @@ impl TuiEngine {
 
     pub async fn run<F>(&mut self, mut event_rx: broadcast::Receiver<AgentEvent>, on_submit: F)
     where
-        F: Fn(String),
+        F: Fn(String, CancellationToken),
     {
         let mut terminal = ratatui::init();
         let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
@@ -257,7 +277,7 @@ impl TuiEngine {
 
             tokio::select! {
                 Ok(event) = event_rx.recv() => {
-                    let is_turn_end = matches!(event, AgentEvent::TurnEnd { .. } | AgentEvent::SessionEnd { .. });
+                    let is_turn_end = matches!(event, AgentEvent::TurnEnd { .. } | AgentEvent::SessionEnd { .. } | AgentEvent::AgentInterrupted { .. });
                     self.handle_event(event);
                     if is_turn_end {
                         self.flush_queue(&on_submit);
@@ -340,8 +360,22 @@ impl TuiEngine {
                                 KeyCode::Char('j') if ctrl && self.selector.is_visible() => self.selector.next(),
                                 KeyCode::Char('k') if ctrl && self.selector.is_visible() => self.selector.prev(),
                                 KeyCode::Enter if self.selector.is_visible() => self.selector.hide(),
-                                // Quit
-                                KeyCode::Char('c') if ctrl => break,
+                                // Quit / Interrupt
+                                KeyCode::Char('c') if ctrl => {
+                                    if self.agent_busy {
+                                        if let Some(ref token) = self.current_cancel {
+                                            token.cancel();
+                                        }
+                                        self.agent_busy = false;
+                                        self.current_cancel = None;
+                                        self.chat.messages.push(chat::ChatMessage::Summary {
+                                            completed: vec!["[中断] Agent 已停止".into()],
+                                            next_steps: vec![],
+                                        });
+                                    } else {
+                                        break;
+                                    }
+                                }
                                 // Default: pass to input editor
                                 KeyCode::Esc => {
                                     let _ = self.editor.handle_key(key_event);
@@ -385,10 +419,9 @@ impl TuiEngine {
 
     fn handle_submit<F>(&mut self, text: String, on_submit: &F)
     where
-        F: Fn(String),
+        F: Fn(String, CancellationToken),
     {
         if let Some(response) = self.slash.execute(&text) {
-            // Slash command response displayed in chat
             self.chat.messages.push(chat::ChatMessage::Summary {
                 completed: vec![response],
                 next_steps: vec![],
@@ -404,7 +437,7 @@ impl TuiEngine {
                 self.chat.tool_output_visible = !self.chat.tool_output_visible;
             }
             "/help" => {
-                let help = "快捷键: Ctrl+O 工具输出 | Ctrl+T 思考 | Ctrl+L 模型 | Shift+Tab 思考级别 | Ctrl+X 前缀命令 | Ctrl+C 退出";
+                let help = "快捷键: Ctrl+O 工具输出 | Ctrl+T 思考 | Ctrl+L 模型 | Shift+Tab 思考级别 | Ctrl+X 前缀命令 | Ctrl+C 中断/退出";
                 self.chat.messages.push(chat::ChatMessage::Summary {
                     completed: vec![help.into()],
                     next_steps: vec![],
@@ -424,7 +457,8 @@ impl TuiEngine {
                         &text,
                         &std::env::current_dir().unwrap_or_default(),
                     );
-                    on_submit(file_expanded);
+                    let token = self.new_cancel_token();
+                    on_submit(file_expanded, token);
                 }
             }
         }
@@ -465,20 +499,23 @@ impl TuiEngine {
                 self.agent_busy = false;
                 self.footer.update_usage(total_tokens);
             }
+            AgentEvent::AgentInterrupted { .. } => {
+                self.agent_busy = false;
+            }
             _ => {}
         }
         self.chat.handle_event(event);
     }
 
-    /// Agent 闲下来后提交排队消息
     fn flush_queue<F>(&mut self, on_submit: &F)
     where
-        F: Fn(String),
+        F: Fn(String, CancellationToken),
     {
         if let Some(text) = self.queue.drain_follow_up() {
             self.agent_busy = true;
             self.chat.push_user_message(text.clone());
-            on_submit(text);
+            let token = self.new_cancel_token();
+            on_submit(text, token);
         }
     }
 }

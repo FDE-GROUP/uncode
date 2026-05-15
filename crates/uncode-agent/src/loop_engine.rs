@@ -1,6 +1,7 @@
 use futures::StreamExt;
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use uncode_core::error::UncodeError;
@@ -23,6 +24,7 @@ pub struct AgentLoop {
     model_max_tokens: u64,
     session_id: Option<String>,
     event_tx: broadcast::Sender<AgentEvent>,
+    cancel_token: CancellationToken,
 }
 
 impl AgentLoop {
@@ -61,6 +63,7 @@ impl AgentLoop {
             model_max_tokens,
             session_id: None,
             event_tx,
+            cancel_token: CancellationToken::new(),
         }
     }
 
@@ -81,6 +84,7 @@ impl AgentLoop {
             model_max_tokens: DEFAULT_MAX_TOKENS,
             session_id: None,
             event_tx,
+            cancel_token: CancellationToken::new(),
         }
     }
 
@@ -94,6 +98,14 @@ impl AgentLoop {
 
     pub fn set_session_id(&mut self, session_id: String) {
         self.session_id = Some(session_id);
+    }
+
+    pub fn set_cancel_token(&mut self, token: CancellationToken) {
+        self.cancel_token = token;
+    }
+
+    pub fn cancel(&self) {
+        self.cancel_token.cancel();
     }
 
     fn emit(&self, event: AgentEvent) {
@@ -117,6 +129,15 @@ impl AgentLoop {
         let mut turn = 0;
 
         loop {
+            if self.cancel_token.is_cancelled() {
+                info!("agent interrupted at turn {turn}");
+                self.emit(AgentEvent::AgentInterrupted {
+                    turn,
+                    partial_response: false,
+                });
+                break;
+            }
+
             if turn >= MAX_TURNS {
                 info!("max turns ({MAX_TURNS}) reached");
                 break;
@@ -157,6 +178,30 @@ impl AgentLoop {
             let mut turn_output_tokens: u64 = 0;
 
             while let Some(event) = stream.next().await {
+                if self.cancel_token.is_cancelled() {
+                    info!("agent interrupted during streaming at turn {turn}");
+                    // Preserve partial response
+                    if !current_text.is_empty() || !current_thinking.is_empty() {
+                        let mut content: Vec<ContentBlock> = Vec::new();
+                        if !current_thinking.is_empty() {
+                            content.push(ContentBlock::Thinking {
+                                text: std::mem::take(&mut current_thinking),
+                            });
+                        }
+                        if !current_text.is_empty() {
+                            content.push(ContentBlock::Text {
+                                text: std::mem::take(&mut current_text),
+                            });
+                        }
+                        messages.push(Message::new(Role::Assistant, content));
+                    }
+                    self.emit(AgentEvent::AgentInterrupted {
+                        turn,
+                        partial_response: !current_text.is_empty(),
+                    });
+                    break;
+                }
+
                 match event {
                     StreamEvent::ThinkingDelta(text) => {
                         if !text.is_empty() {
@@ -312,15 +357,18 @@ impl AgentLoop {
                 }
             }
 
-            self.emit(AgentEvent::TurnEnd {
-                turn,
-                usage: UsageInfo {
-                    input_tokens: turn_input_tokens,
-                    output_tokens: turn_output_tokens,
-                },
-            });
+            let was_interrupted = self.cancel_token.is_cancelled();
+            if !was_interrupted {
+                self.emit(AgentEvent::TurnEnd {
+                    turn,
+                    usage: UsageInfo {
+                        input_tokens: turn_input_tokens,
+                        output_tokens: turn_output_tokens,
+                    },
+                });
+            }
 
-            if pending_tool_calls.is_empty() {
+            if pending_tool_calls.is_empty() || was_interrupted {
                 break;
             }
         }
@@ -334,7 +382,9 @@ impl AgentLoop {
             session_id: session_id.clone(),
             total_turns: turn,
             total_tokens: total_usage,
-            exit_reason: (if turn >= MAX_TURNS {
+            exit_reason: (if self.cancel_token.is_cancelled() {
+                "interrupted"
+            } else if turn >= MAX_TURNS {
                 "max_turns"
             } else {
                 "completed"
