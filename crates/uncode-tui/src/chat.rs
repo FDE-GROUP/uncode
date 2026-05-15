@@ -712,16 +712,21 @@ fn render_bash(
     ])];
 
     if !stdout.is_empty() {
-        for line in stdout.lines().take(15) {
+        let all_lines: Vec<&str> = stdout.lines().collect();
+        let max_show = 100;
+        for line in all_lines.iter().take(max_show) {
             lines.push(Line::from(vec![
                 Span::styled(" │ ", Style::default().fg(color)),
                 Span::raw(line.to_string()),
             ]));
         }
-        if stdout.lines().count() > 15 {
+        if all_lines.len() > max_show {
             lines.push(Line::from(vec![
                 Span::styled(" │ ", Style::default().fg(color)),
-                Span::styled("...", Style::default().fg(theme.ui.footer_text)),
+                Span::styled(
+                    format!("... ({} more lines)", all_lines.len() - max_show),
+                    Style::default().fg(theme.ui.footer_text),
+                ),
             ]));
         }
     }
