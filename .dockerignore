@@ -1,0 +1,14 @@
+target/
+.git/
+.github/
+.claude/
+node_modules/
+dist/
+*.md
+!README.md
+LICENSE
+bun.lock
+index.ts
+tsconfig.json
+.turbo/
+.next/
