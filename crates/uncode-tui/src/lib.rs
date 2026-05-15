@@ -446,6 +446,9 @@ impl TuiEngine {
             t if t.starts_with("/template") => {
                 self.handle_template_command(&text);
             }
+            "/tree" => {
+                self.handle_tree_command();
+            }
             _ => {
                 if self.agent_busy {
                     let preview = text.clone();
@@ -567,6 +570,50 @@ impl TuiEngine {
         }
     }
 
+    fn handle_tree_command(&mut self) {
+        if self.session_id.is_empty() {
+            self.chat.messages.push(chat::ChatMessage::Summary {
+                completed: vec!["当前没有活跃会话。".into()],
+                next_steps: vec![],
+            });
+            return;
+        }
+
+        let session_dir = match uncode_session::store::SessionStore::default_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("无法获取会话目录: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return;
+            }
+        };
+        let store = uncode_session::store::SessionStore::new(session_dir);
+
+        match store.build_tree(&self.session_id) {
+            Ok(tree) => {
+                let lines = render_session_tree(&tree.root, "", true);
+                let header = format!(
+                    "会话分支树 (root: {})",
+                    &tree.root.id[..8.min(tree.root.id.len())]
+                );
+                let mut completed = vec![header];
+                completed.extend(lines);
+                self.chat.messages.push(chat::ChatMessage::Summary {
+                    completed,
+                    next_steps: vec![],
+                });
+            }
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("构建会话树失败: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+            }
+        }
+    }
+
     fn flush_queue<F>(&mut self, on_submit: &F)
     where
         F: Fn(String, CancellationToken),
@@ -586,6 +633,42 @@ impl Default for TuiEngine {
     }
 }
 
+fn render_session_tree(
+    node: &uncode_core::session::SessionNode,
+    prefix: &str,
+    is_last: bool,
+) -> Vec<String> {
+    let id_short = &node.id[..8.min(node.id.len())];
+    let title = node.title.as_deref().unwrap_or("无标题");
+    let line = format!(
+        "{prefix}{}{id_short}  {title}  ({} msgs, {})",
+        if prefix.is_empty() && is_last {
+            ""
+        } else if is_last {
+            "└── "
+        } else {
+            "├── "
+        },
+        node.message_count,
+        node.model
+    );
+    let mut lines = vec![line];
+
+    let child_prefix = if prefix.is_empty() && is_last {
+        String::new()
+    } else if is_last {
+        format!("{prefix}    ")
+    } else {
+        format!("{prefix}│   ")
+    };
+
+    for (i, child) in node.children.iter().enumerate() {
+        let child_is_last = i == node.children.len() - 1;
+        lines.extend(render_session_tree(child, &child_prefix, child_is_last));
+    }
+    lines
+}
+
 fn slash_commands() -> Vec<String> {
     vec![
         "help".into(),
@@ -594,6 +677,7 @@ fn slash_commands() -> Vec<String> {
         "details".into(),
         "issues".into(),
         "template".into(),
+        "tree".into(),
     ]
 }
 

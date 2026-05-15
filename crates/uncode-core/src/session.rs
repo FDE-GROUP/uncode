@@ -126,3 +126,19 @@ impl From<SessionHeader> for SessionMetadata {
         }
     }
 }
+
+/// 会话树节点
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionNode {
+    pub id: String,
+    pub title: Option<String>,
+    pub model: String,
+    pub message_count: usize,
+    pub children: Vec<SessionNode>,
+}
+
+/// 会话分支树
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionTree {
+    pub root: SessionNode,
+}
