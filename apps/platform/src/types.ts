@@ -59,3 +59,14 @@ export interface MetricsResponse {
   recent_sessions: SessionSummary[]
   tool_usage: ToolStat[]
 }
+
+export interface SessionMetrics {
+  total_messages: number
+  total_tool_calls: number
+  tool_errors: number
+  input_tokens: number
+  output_tokens: number
+  duration_secs: number
+  tools: ToolStat[]
+  files_modified: string[]
+}
