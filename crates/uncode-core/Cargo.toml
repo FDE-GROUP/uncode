@@ -17,6 +17,7 @@ chrono.workspace = true
 uuid.workspace = true
 async-trait.workspace = true
 schemars.workspace = true
+reqwest.workspace = true
 
 [lints]
 workspace = true
