@@ -49,6 +49,10 @@ struct Cli {
     #[arg(long = "var")]
     var: Vec<String>,
 
+    /// 从指定会话 fork 新分支
+    #[arg(long)]
+    fork: Option<String>,
+
     prompt: Option<String>,
 }
 
@@ -219,6 +223,25 @@ async fn main() -> anyhow::Result<()> {
         println!("模板: {template_name}");
         println!("---");
         let messages = agent.run(Message::user(prompt)).await?;
+        print_messages(&messages);
+        println!("\n--- done ---");
+        return Ok(());
+    }
+
+    // --fork：从指定会话 fork
+    if let Some(fork_id) = &cli.fork {
+        let reason = cli.prompt.as_deref().unwrap_or("fork from CLI");
+        let new_id = session_store.fork_session(fork_id, reason)?;
+        eprintln!("Fork 会话: {fork_id} -> {new_id}");
+        agent.set_session_id(new_id);
+
+        let prompt_text = cli
+            .prompt
+            .clone()
+            .unwrap_or_else(|| "继续从这个分叉开发".to_string());
+        let expanded = expand_file_refs(&prompt_text, &cwd);
+        let expanded = expand_url_refs(&expanded).await;
+        let messages = agent.run(Message::user(expanded)).await?;
         print_messages(&messages);
         println!("\n--- done ---");
         return Ok(());
