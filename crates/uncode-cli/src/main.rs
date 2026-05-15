@@ -69,6 +69,12 @@ enum Commands {
     },
     /// 列出 prompt 模板
     Templates,
+    /// 列出可用模型
+    Models {
+        /// JSON 格式输出
+        #[arg(long)]
+        json: bool,
+    },
     /// 生成 shell 补全脚本
     Completions { shell: clap_complete::Shell },
 }
@@ -89,6 +95,9 @@ async fn main() -> anyhow::Result<()> {
             }
             Commands::Templates => {
                 return run_templates();
+            }
+            Commands::Models { json } => {
+                return run_models(*json);
             }
             Commands::Completions { shell } => {
                 clap_complete::generate(
@@ -349,6 +358,45 @@ fn run_templates() -> anyhow::Result<()> {
             format!(" [{}]", t.variables.join(", "))
         };
         println!("{:<15} {}{}", t.name, t.description, vars);
+    }
+    Ok(())
+}
+
+fn run_models(json_output: bool) -> anyhow::Result<()> {
+    let config = load_config()?;
+    let registry = ProviderRegistry::new();
+    register_providers(&registry, &config)?;
+
+    let models = registry.all_models();
+
+    if json_output {
+        let output: Vec<serde_json::Value> = models
+            .iter()
+            .map(|(m, configured)| {
+                serde_json::json!({
+                    "id": m.id,
+                    "provider": m.provider,
+                    "display_name": m.display_name,
+                    "max_tokens": m.max_tokens,
+                    "supports_tools": m.supports_tools,
+                    "supports_vision": m.supports_vision,
+                    "configured": configured,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
+    println!(
+        "{:<15} {:<20} {:<12} STATUS",
+        "PROVIDER", "MODEL", "CTX"
+    );
+    println!("{}", "-".repeat(70));
+    for (m, configured) in &models {
+        let status = if *configured { "✅" } else { "❌" };
+        let ctx = format!("{}k", m.max_tokens / 1000);
+        println!("{:<15} {:<20} {:<12} {status}", m.provider, m.id, ctx);
     }
     Ok(())
 }
