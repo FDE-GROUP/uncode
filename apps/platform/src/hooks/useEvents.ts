@@ -5,7 +5,9 @@ export interface LiveEvent {
   [key: string]: unknown
 }
 
-export function useEvents(url = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/events`) {
+export function useEvents(
+  url = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/events`,
+) {
   const [events, setEvents] = useState<LiveEvent[]>([])
   const [connected, setConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
@@ -23,7 +25,6 @@ export function useEvents(url = `${location.protocol === 'https:' ? 'wss:' : 'ws
     ws.onclose = () => {
       setConnected(false)
       wsRef.current = null
-      // Auto-reconnect after 3s
       reconnectRef.current = setTimeout(connect, 3000)
     }
 
@@ -47,7 +48,12 @@ export function useEvents(url = `${location.protocol === 'https:' ? 'wss:' : 'ws
     connect()
     return () => {
       clearTimeout(reconnectRef.current)
-      wsRef.current?.close()
+      const ws = wsRef.current
+      if (ws) {
+        ws.onclose = null
+        ws.close()
+        wsRef.current = null
+      }
     }
   }, [connect])
 
