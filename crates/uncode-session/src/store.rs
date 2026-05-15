@@ -1,7 +1,9 @@
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 
-use uncode_core::session::{SessionEntry, SessionHeader, SessionMetadata};
+use uncode_core::session::{
+    SessionEntry, SessionHeader, SessionMetadata, SessionNode, SessionTree,
+};
 
 /// 会话存储层的错误类型
 #[derive(Debug, thiserror::Error)]
@@ -168,5 +170,80 @@ impl SessionStore {
             .ok_or_else(|| SessionError::InvalidData("empty file".into()))??;
         let header: SessionHeader = serde_json::from_str(&first_line)?;
         Ok(header)
+    }
+
+    /// 获取直接引用指定 session 为 parent 的子会话
+    pub fn get_children(&self, session_id: &str) -> std::io::Result<Vec<SessionMetadata>> {
+        let all = self.list_sessions()?;
+        let mut children = Vec::new();
+        for meta in all {
+            if let Ok(entries) = self.load_entries(&meta.id) {
+                for entry in &entries {
+                    if let SessionEntry::Branch(be) = entry {
+                        if be.parent_id == session_id {
+                            children.push(meta);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(children)
+    }
+
+    /// 计算会话中的消息条数
+    pub fn message_count(&self, session_id: &str) -> usize {
+        self.load_entries(session_id)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|e| matches!(e, SessionEntry::Message(_)))
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    /// 构建以指定会话为根的分支树
+    pub fn build_tree(&self, session_id: &str) -> std::io::Result<SessionTree> {
+        let root = self.build_node(session_id)?;
+        Ok(SessionTree { root })
+    }
+
+    fn build_node(&self, session_id: &str) -> std::io::Result<SessionNode> {
+        let header = self
+            .read_header(session_id)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e.to_string()))?;
+        let msg_count = self.message_count(session_id);
+
+        let children_meta = self.get_children(session_id)?;
+        let mut children = Vec::new();
+        for child in children_meta {
+            children.push(self.build_node(&child.id)?);
+        }
+
+        Ok(SessionNode {
+            id: session_id.to_string(),
+            title: header.title,
+            model: header.model,
+            message_count: msg_count,
+            children,
+        })
+    }
+
+    /// 从指定会话 fork，返回新会话 ID
+    pub fn fork_session(&self, parent_id: &str, reason: &str) -> SessionResult<String> {
+        let header = self.read_header(parent_id)?;
+        let new_id = uuid::Uuid::new_v4().to_string();
+
+        self.init_session(&new_id, &header.model, &header.working_dir)?;
+
+        let branch_entry = SessionEntry::Branch(uncode_core::session::BranchEntry {
+            timestamp: chrono::Utc::now(),
+            parent_id: parent_id.to_string(),
+            reason: reason.to_string(),
+        });
+        self.append_entry(&new_id, &branch_entry)?;
+
+        Ok(new_id)
     }
 }
