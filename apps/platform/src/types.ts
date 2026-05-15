@@ -70,3 +70,15 @@ export interface SessionMetrics {
   tools: ToolStat[]
   files_modified: string[]
 }
+
+export interface Suggestion {
+  category: string
+  severity: 'high' | 'medium' | 'low'
+  title: string
+  description: string
+  detail: string
+}
+
+export interface SuggestionsResponse {
+  suggestions: Suggestion[]
+}
