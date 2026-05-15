@@ -1,7 +1,11 @@
-use axum::{Json, Router, extract::State, http::StatusCode, routing::get};
-use serde::Serialize;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::response::IntoResponse;
+use axum::{Json, Router, extract::State, http::StatusCode, routing::get, routing::post};
+use futures::{SinkExt, StreamExt};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tracing::info;
@@ -9,10 +13,15 @@ use uncode_core::message::ContentBlock;
 use uncode_core::session::SessionEntry;
 use uncode_session::store::{SessionError, SessionStore};
 
+const EVENT_CHANNEL_CAPACITY: usize = 256;
+
 #[derive(Clone)]
 struct AppState {
     store: Arc<SessionStore>,
+    event_tx: broadcast::Sender<serde_json::Value>,
 }
+
+// ── Response types ──────────────────────────────────────────────
 
 #[derive(Serialize)]
 struct SessionSummary {
@@ -70,6 +79,8 @@ struct SessionMetricsResponse {
     tools: Vec<ToolStat>,
     files_modified: Vec<String>,
 }
+
+// ── REST handlers ───────────────────────────────────────────────
 
 async fn list_sessions(
     State(state): State<AppState>,
@@ -161,7 +172,6 @@ async fn get_session_metrics(
                             .0 += 1;
                         last_tool_name = Some(tc.name.clone());
 
-                        // Track file modifications from write/edit/bash tools
                         if tc.name == "write" || tc.name == "edit" {
                             if let Some(path) = tc
                                 .arguments
@@ -221,14 +231,13 @@ async fn get_metrics(
 
     let total_sessions = sessions.len() as u64;
 
-    // Aggregate across all sessions
     let mut total_messages: u64 = 0;
     let mut total_tool_calls: u64 = 0;
     let mut total_tool_errors: u64 = 0;
     let mut total_input_tokens: u64 = 0;
     let mut total_output_tokens: u64 = 0;
     let mut model_counts: HashMap<String, u64> = HashMap::new();
-    let mut tool_counts: HashMap<String, (u64, u64)> = HashMap::new(); // (calls, errors)
+    let mut tool_counts: HashMap<String, (u64, u64)> = HashMap::new();
 
     for s in &sessions {
         *model_counts.entry(s.model.clone()).or_default() += 1;
@@ -243,6 +252,7 @@ async fn get_metrics(
                         total_output_tokens += usage.output_tokens;
                     }
 
+                    let mut last_tool_name: Option<String> = None;
                     for block in &me.content {
                         match block {
                             ContentBlock::ToolCall(tc) => {
@@ -251,30 +261,15 @@ async fn get_metrics(
                                     .entry(tc.name.clone())
                                     .or_default()
                                     .0 += 1;
+                                last_tool_name = Some(tc.name.clone());
                             }
                             ContentBlock::ToolResult(tr) if tr.is_error => {
                                 total_tool_errors += 1;
+                                if let Some(name) = &last_tool_name {
+                                    tool_counts.entry(name.clone()).or_default().1 += 1;
+                                }
                             }
                             ContentBlock::ToolResult(_) => {}
-                            _ => {}
-                        }
-                    }
-
-                    // Second pass to attribute tool errors by order (match ToolResult to preceding ToolCall)
-                    let mut last_tool_name: Option<String> = None;
-                    for block in &me.content {
-                        match block {
-                            ContentBlock::ToolCall(tc) => {
-                                last_tool_name = Some(tc.name.clone());
-                            }
-                            ContentBlock::ToolResult(tr) => {
-                                if tr.is_error {
-                                    if let Some(name) = &last_tool_name {
-                                        tool_counts.entry(name.clone()).or_default().1 += 1;
-                                    }
-                                }
-                                last_tool_name = None;
-                            }
                             _ => {}
                         }
                     }
@@ -295,7 +290,6 @@ async fn get_metrics(
         0.0
     };
 
-    // Recent 10 sessions (sorted by updated_at desc)
     sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
     let recent_sessions: Vec<SessionSummary> = sessions
         .iter()
@@ -333,19 +327,41 @@ async fn get_metrics(
     }))
 }
 
+// ── Event ingestion (POST /api/events) ──────────────────────────
+
+#[derive(Deserialize)]
+struct EventPayload {
+    event: serde_json::Value,
+}
+
+async fn post_event(
+    State(state): State<AppState>,
+    Json(payload): Json<EventPayload>,
+) -> StatusCode {
+    let _ = state.event_tx.send(payload.event);
+    StatusCode::OK
+}
+
+// ── Main ────────────────────────────────────────────────────────
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt().init();
 
     let dir = SessionStore::default_dir()?;
     let store = Arc::new(SessionStore::new(dir));
-    let state = AppState { store };
+
+    let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+
+    let state = AppState { store, event_tx };
 
     let app = Router::new()
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions/{id}", get(get_session))
         .route("/api/sessions/{id}/metrics", get(get_session_metrics))
         .route("/api/metrics", get(get_metrics))
+        .route("/api/events", post(post_event))
+        .route("/ws/events", get(ws_events_handler))
         .fallback_service(ServeDir::new(
             std::env::var("UNCODE_FRONTEND_DIR").unwrap_or_else(|_| "apps/platform/dist".into()),
         ))
@@ -354,7 +370,52 @@ async fn main() -> anyhow::Result<()> {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
     info!("Platform server listening on http://127.0.0.1:3000");
+    info!("WebSocket endpoint: ws://127.0.0.1:3000/ws/events");
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+async fn ws_events_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    ws.on_upgrade(move |socket| handle_ws_connection(socket, state.event_tx.clone()))
+}
+
+async fn handle_ws_connection(socket: WebSocket, event_tx: broadcast::Sender<serde_json::Value>) {
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+    let mut rx = event_tx.subscribe();
+
+    // Forward broadcast events to WebSocket client
+    let send_task = tokio::spawn(async move {
+        while let Ok(event) = rx.recv().await {
+            let json = match serde_json::to_string(&event) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            if ws_sender.send(Message::Text(json.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    // Read incoming messages (keep-alive / close)
+    let recv_task = tokio::spawn(async move {
+        while let Some(msg) = ws_receiver.next().await {
+            match msg {
+                Ok(Message::Close(_)) | Err(_) => break,
+                Ok(Message::Ping(data)) => {
+                    // Pong is auto-sent by axum
+                    let _ = data;
+                }
+                _ => {}
+            }
+        }
+    });
+
+    tokio::select! {
+        _ = send_task => {},
+        _ = recv_task => {},
+    }
 }
