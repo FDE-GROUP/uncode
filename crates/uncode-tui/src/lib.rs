@@ -454,11 +454,26 @@ impl TuiEngine {
                 self.chat.tool_output_visible = !self.chat.tool_output_visible;
             }
             "/help" => {
-                let help = "快捷键: Ctrl+O 工具输出 | Ctrl+T 思考 | Ctrl+L 模型 | Shift+Tab 思考级别 | Ctrl+X 前缀命令 | Ctrl+C 中断/退出\n命令: /theme [name] | /thinking | /details | /tree | /skills | /template";
+                let help = "快捷键: Ctrl+O 工具输出 | Ctrl+T 思考 | Ctrl+L 模型 | Shift+Tab 思考级别 | Ctrl+X 前缀命令 | Ctrl+C 中断/退出\n命令: /name [title] | /copy | /usage | /reload | /diff | /theme [name] | /thinking | /details | /tree | /skills | /template";
                 self.chat.messages.push(chat::ChatMessage::Summary {
                     completed: vec![help.into()],
                     next_steps: vec![],
                 });
+            }
+            t if t.starts_with("/name") => {
+                self.handle_name_command(&text);
+            }
+            "/copy" => {
+                self.handle_copy_command();
+            }
+            "/usage" => {
+                self.handle_usage_command();
+            }
+            "/reload" => {
+                self.handle_reload_command();
+            }
+            "/diff" => {
+                self.handle_diff_command();
             }
             t if t.starts_with("/theme") => {
                 self.handle_theme_command(&text);
@@ -514,6 +529,217 @@ impl TuiEngine {
             );
             let token = self.new_cancel_token();
             on_submit(file_expanded, token);
+        }
+    }
+
+    fn handle_name_command(&mut self, text: &str) {
+        if self.session_id.is_empty() {
+            self.chat.messages.push(chat::ChatMessage::Error {
+                message: "当前没有活跃会话。".into(),
+                category: uncode_core::event::ErrorCategory::Config,
+            });
+            return;
+        }
+
+        let parts: Vec<&str> = text.splitn(2, ' ').collect();
+        let title = parts.get(1).map(|s| s.trim()).unwrap_or("");
+
+        if title.is_empty() {
+            let session_dir = match uncode_session::store::SessionStore::default_dir() {
+                Ok(d) => d,
+                Err(e) => {
+                    self.chat.messages.push(chat::ChatMessage::Error {
+                        message: format!("无法获取会话目录: {e}"),
+                        category: uncode_core::event::ErrorCategory::Config,
+                    });
+                    return;
+                }
+            };
+            let store = uncode_session::store::SessionStore::new(session_dir);
+            let header = match store.read_header(&self.session_id) {
+                Ok(h) => h,
+                Err(e) => {
+                    self.chat.messages.push(chat::ChatMessage::Error {
+                        message: format!("读取会话失败: {e}"),
+                        category: uncode_core::event::ErrorCategory::Config,
+                    });
+                    return;
+                }
+            };
+            let current_title = header.title.as_deref().unwrap_or("(无标题)");
+            self.chat.messages.push(chat::ChatMessage::Summary {
+                completed: vec![format!("当前标题: {current_title}")],
+                next_steps: vec![],
+            });
+            return;
+        }
+
+        // Write title to session by re-initializing with title
+        let session_dir = match uncode_session::store::SessionStore::default_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("无法获取会话目录: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return;
+            }
+        };
+        let store = uncode_session::store::SessionStore::new(session_dir);
+        // Update title by reading header and rewriting
+        if let Ok(mut header) = store.read_header(&self.session_id) {
+            header.title = Some(title.to_string());
+            let header_path = store.session_path(&self.session_id);
+            // Rewrite the file: header + existing entries
+            let entries = store.load_entries(&self.session_id).unwrap_or_default();
+            if let Ok(mut file) = std::fs::File::create(&header_path) {
+                use std::io::Write;
+                if let Ok(header_json) = serde_json::to_string(&header) {
+                    let _ = writeln!(file, "{header_json}");
+                }
+                for entry in &entries {
+                    if let Ok(entry_json) = serde_json::to_string(entry) {
+                        let _ = writeln!(file, "{entry_json}");
+                    }
+                }
+            }
+        }
+
+        self.chat.messages.push(chat::ChatMessage::Summary {
+            completed: vec![format!("会话标题已设置: {title}")],
+            next_steps: vec![],
+        });
+    }
+
+    fn handle_copy_command(&mut self) {
+        // Find last assistant message
+        let last_assistant = self.chat.messages.iter().rev().find_map(|msg| match msg {
+            chat::ChatMessage::Assistant { text, .. } => Some(text.clone()),
+            _ => None,
+        });
+
+        match last_assistant {
+            Some(text) => {
+                // Use OSC 52 clipboard sequence with simple base64
+                let encoded = base64_encode(&text);
+                let osc = format!("\x1b]52;c;{encoded}\x07");
+                let _ = std::io::Write::write_all(&mut std::io::stdout(), osc.as_bytes());
+                self.chat.messages.push(chat::ChatMessage::Summary {
+                    completed: vec![format!("已复制到剪贴板 ({} 字符)", text.len())],
+                    next_steps: vec![],
+                });
+            }
+            None => {
+                self.chat.messages.push(chat::ChatMessage::Summary {
+                    completed: vec!["没有可复制的 Agent 回复。".into()],
+                    next_steps: vec![],
+                });
+            }
+        }
+    }
+
+    fn handle_usage_command(&mut self) {
+        let in_str = format_tokens(self.footer.input_tokens);
+        let out_str = format_tokens(self.footer.output_tokens);
+        let cost_str = format!("${:.4}", self.footer.cost);
+        let ctx_pct = self.footer.context_percent;
+        let msg_count = self.chat.messages.len();
+
+        let lines = vec![
+            format!("Input tokens:  {in_str}"),
+            format!("Output tokens: {out_str}"),
+            format!("费用:          {cost_str}"),
+            format!("上下文使用:    {ctx_pct}%"),
+            format!("对话消息数:    {msg_count}"),
+        ];
+
+        self.chat.messages.push(chat::ChatMessage::Summary {
+            completed: lines,
+            next_steps: vec![],
+        });
+    }
+
+    fn handle_reload_command(&mut self) {
+        // Reload theme
+        let theme_name = self.theme.name.clone();
+        if let Some(theme) = Theme::load_by_name(&theme_name) {
+            self.theme = theme;
+        }
+
+        // Refresh git branch
+        let git_branch = std::process::Command::new("git")
+            .args(["branch", "--show-current"])
+            .output()
+            .ok()
+            .and_then(|o| {
+                o.status
+                    .success()
+                    .then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            })
+            .unwrap_or_default();
+        self.footer.git_branch = git_branch;
+
+        self.chat.messages.push(chat::ChatMessage::Summary {
+            completed: vec!["配置已重新加载。".into()],
+            next_steps: vec![],
+        });
+    }
+
+    fn handle_diff_command(&mut self) {
+        let output = std::process::Command::new("git")
+            .args(["diff", "--stat"])
+            .output();
+
+        match output {
+            Ok(o) if o.status.success() => {
+                let stat = String::from_utf8_lossy(&o.stdout);
+                if stat.trim().is_empty() {
+                    self.chat.messages.push(chat::ChatMessage::Summary {
+                        completed: vec!["工作区干净，没有未提交的变更。".into()],
+                        next_steps: vec![],
+                    });
+                } else {
+                    // Get full diff for summary
+                    let full = std::process::Command::new("git").args(["diff"]).output();
+                    let diff_lines = full
+                        .ok()
+                        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                        .unwrap_or_default();
+
+                    let mut lines = vec!["工作区变更:".to_string()];
+                    lines.push(stat.trim().to_string());
+                    lines.push(String::new());
+
+                    for line in diff_lines.lines().take(30) {
+                        if line.starts_with('+') && !line.starts_with("++") {
+                            lines.push(format!("  \x1b[32m{line}\x1b[0m"));
+                        } else if line.starts_with('-') && !line.starts_with("--") {
+                            lines.push(format!("  \x1b[31m{line}\x1b[0m"));
+                        } else if line.starts_with("@@") {
+                            lines.push(format!("  \x1b[36m{line}\x1b[0m"));
+                        } else {
+                            lines.push(format!("  {line}"));
+                        }
+                    }
+                    if diff_lines.lines().count() > 30 {
+                        lines.push(format!(
+                            "  ... ({} more lines)",
+                            diff_lines.lines().count() - 30
+                        ));
+                    }
+
+                    self.chat.messages.push(chat::ChatMessage::Summary {
+                        completed: lines,
+                        next_steps: vec![],
+                    });
+                }
+            }
+            _ => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: "无法获取 git diff。请确认当前目录是 git 仓库。".into(),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+            }
         }
     }
 
@@ -827,10 +1053,40 @@ fn render_session_tree(
     lines
 }
 
+fn base64_encode(input: &str) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[((triple >> 18) & 0x3F) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 0x3F) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[((triple >> 6) & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[(triple & 0x3F) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 fn slash_commands() -> Vec<String> {
     let mut cmds = vec![
         "help".into(),
         "quit".into(),
+        "name".into(),
+        "copy".into(),
+        "usage".into(),
+        "reload".into(),
+        "diff".into(),
         "thinking".into(),
         "details".into(),
         "issues".into(),
