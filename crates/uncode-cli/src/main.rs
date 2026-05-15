@@ -9,6 +9,7 @@ use uncode_core::config::AppConfig;
 use uncode_core::context::{expand_file_refs, expand_url_refs};
 use uncode_core::event::AgentEvent;
 use uncode_core::message::{ContentBlock, Message, Role};
+use uncode_core::template::{TemplateStore, parse_vars};
 use uncode_llm::registry::ProviderRegistry;
 use uncode_llm::{DeepSeekDriver, OllamaDriver};
 use uncode_session::store::SessionStore;
@@ -40,6 +41,14 @@ struct Cli {
     #[arg(long, default_value = "interactive")]
     mode: String,
 
+    /// 使用 prompt 模板
+    #[arg(short = 't', long = "template")]
+    template: Option<String>,
+
+    /// 模板变量 key=value
+    #[arg(long = "var")]
+    var: Vec<String>,
+
     prompt: Option<String>,
 }
 
@@ -54,6 +63,8 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// 列出 prompt 模板
+    Templates,
     /// 生成 shell 补全脚本
     Completions { shell: clap_complete::Shell },
 }
@@ -71,6 +82,9 @@ async fn main() -> anyhow::Result<()> {
         match cmd {
             Commands::Sessions { all, json } => {
                 return run_sessions(*all, *json);
+            }
+            Commands::Templates => {
+                return run_templates();
             }
             Commands::Completions { shell } => {
                 clap_complete::generate(
@@ -185,14 +199,28 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    if let Some(prompt) = cli.prompt {
-        let expanded = expand_file_refs(&prompt, &cwd);
-        let expanded = expand_url_refs(&expanded).await;
+    if let Some(ref prompt) = cli.prompt {
+        let resolved = resolve_prompt(&cli, prompt.clone(), &cwd).await;
         if cli.mode == "json" {
-            return run_json_mode(agent, expanded).await;
+            return run_json_mode(agent, resolved).await;
         }
-        let messages = agent.run(Message::user(expanded)).await?;
+        let messages = agent.run(Message::user(resolved)).await?;
         print_messages(&messages);
+        return Ok(());
+    }
+
+    // --template without prompt: execute template directly
+    if let Some(template_name) = &cli.template {
+        let store = TemplateStore::load();
+        let vars = parse_vars(&cli.var);
+        let prompt = store
+            .render(template_name, &vars)
+            .context(format!("模板 '{template_name}' 不存在"))?;
+        println!("模板: {template_name}");
+        println!("---");
+        let messages = agent.run(Message::user(prompt)).await?;
+        print_messages(&messages);
+        println!("\n--- done ---");
         return Ok(());
     }
 
@@ -278,6 +306,27 @@ async fn run_json_mode(agent: AgentLoop, prompt: String) -> anyhow::Result<()> {
     }
 
     let _ = agent_handle.await?;
+    Ok(())
+}
+
+fn run_templates() -> anyhow::Result<()> {
+    let store = TemplateStore::load();
+    let list = store.list();
+    if list.is_empty() {
+        println!("没有可用模板。");
+        return Ok(());
+    }
+
+    println!("{:<15} DESCRIPTION", "NAME");
+    println!("{}", "-".repeat(60));
+    for t in &list {
+        let vars = if t.variables.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", t.variables.join(", "))
+        };
+        println!("{:<15} {}{}", t.name, t.description, vars);
+    }
     Ok(())
 }
 
@@ -401,4 +450,18 @@ fn register_providers(registry: &ProviderRegistry, config: &AppConfig) -> anyhow
         registry.register("ollama".into(), Arc::new(driver));
     }
     Ok(())
+}
+
+async fn resolve_prompt(cli: &Cli, prompt: String, cwd: &std::path::Path) -> String {
+    if let Some(template_name) = &cli.template {
+        let store = TemplateStore::load();
+        let vars = parse_vars(&cli.var);
+        if let Some(rendered) = store.render(template_name, &vars) {
+            let expanded = expand_file_refs(&prompt, cwd);
+            let expanded = expand_url_refs(&expanded).await;
+            return format!("{rendered}\n\n{expanded}");
+        }
+    }
+    let expanded = expand_file_refs(&prompt, cwd);
+    expand_url_refs(&expanded).await
 }
