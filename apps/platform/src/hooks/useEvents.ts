@@ -5,7 +5,7 @@ export interface LiveEvent {
   [key: string]: unknown
 }
 
-export function useEvents(url = 'ws://127.0.0.1:3000/ws/events') {
+export function useEvents(url = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/events`) {
   const [events, setEvents] = useState<LiveEvent[]>([])
   const [connected, setConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
