@@ -4,6 +4,13 @@ export interface SessionSummary {
   title: string | null
   message_count: number
   working_dir: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SessionListResponse {
+  items: SessionSummary[]
+  total: number
 }
 
 export interface SessionDetail {

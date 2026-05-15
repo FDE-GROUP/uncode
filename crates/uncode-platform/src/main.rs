@@ -13,6 +13,30 @@ use uncode_core::message::ContentBlock;
 use uncode_core::session::SessionEntry;
 use uncode_session::store::{SessionError, SessionStore};
 
+#[derive(Deserialize)]
+struct SessionQuery {
+    #[serde(default)]
+    search: Option<String>,
+    #[serde(default = "default_sort")]
+    sort: String,
+    #[serde(default = "default_order")]
+    order: String,
+    #[serde(default = "default_limit")]
+    limit: usize,
+    #[serde(default)]
+    offset: usize,
+}
+
+fn default_sort() -> String {
+    "updated_at".into()
+}
+fn default_order() -> String {
+    "desc".into()
+}
+fn default_limit() -> usize {
+    50
+}
+
 const EVENT_CHANNEL_CAPACITY: usize = 256;
 
 #[derive(Clone)]
@@ -30,6 +54,14 @@ struct SessionSummary {
     title: Option<String>,
     message_count: usize,
     working_dir: String,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Serialize)]
+struct SessionListResponse {
+    items: Vec<SessionSummary>,
+    total: usize,
 }
 
 #[derive(Serialize)]
@@ -84,24 +116,76 @@ struct SessionMetricsResponse {
 
 async fn list_sessions(
     State(state): State<AppState>,
-) -> Result<Json<Vec<SessionSummary>>, StatusCode> {
+    axum::extract::Query(query): axum::extract::Query<SessionQuery>,
+) -> Result<Json<SessionListResponse>, StatusCode> {
     let sessions = state.store.list_sessions().map_err(|e| {
         tracing::error!("list sessions: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
-    let summaries: Vec<SessionSummary> = sessions
+    let mut filtered: Vec<_> = if let Some(ref search) = query.search {
+        let keyword = search.to_lowercase();
+        sessions
+            .into_iter()
+            .filter(|s| {
+                s.model.to_lowercase().contains(&keyword)
+                    || s.title
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .contains(&keyword)
+                    || s.id.contains(&keyword)
+            })
+            .collect()
+    } else {
+        sessions
+    };
+
+    let total = filtered.len();
+
+    match query.sort.as_str() {
+        "created_at" => filtered.sort_by(|a, b| {
+            let cmp = a.created_at.cmp(&b.created_at);
+            if query.order == "asc" {
+                cmp
+            } else {
+                cmp.reverse()
+            }
+        }),
+        "message_count" => filtered.sort_by(|a, b| {
+            let cmp = a.message_count.cmp(&b.message_count);
+            if query.order == "asc" {
+                cmp
+            } else {
+                cmp.reverse()
+            }
+        }),
+        _ => filtered.sort_by(|a, b| {
+            let cmp = a.updated_at.cmp(&b.updated_at);
+            if query.order == "asc" {
+                cmp
+            } else {
+                cmp.reverse()
+            }
+        }),
+    }
+
+    let items: Vec<SessionSummary> = filtered
         .into_iter()
+        .skip(query.offset)
+        .take(query.limit)
         .map(|s| SessionSummary {
             id: s.id,
             model: s.model,
             title: s.title,
             message_count: s.message_count as usize,
             working_dir: s.working_dir,
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
         })
         .collect();
 
-    Ok(Json(summaries))
+    Ok(Json(SessionListResponse { items, total }))
 }
 
 async fn get_session(
@@ -166,18 +250,11 @@ async fn get_session_metrics(
                 match block {
                     ContentBlock::ToolCall(tc) => {
                         total_tool_calls += 1;
-                        tool_counts
-                            .entry(tc.name.clone())
-                            .or_default()
-                            .0 += 1;
+                        tool_counts.entry(tc.name.clone()).or_default().0 += 1;
                         last_tool_name = Some(tc.name.clone());
 
                         if tc.name == "write" || tc.name == "edit" {
-                            if let Some(path) = tc
-                                .arguments
-                                .get("path")
-                                .and_then(|v| v.as_str())
-                            {
+                            if let Some(path) = tc.arguments.get("path").and_then(|v| v.as_str()) {
                                 let p = path.to_string();
                                 if !files_modified.contains(&p) {
                                     files_modified.push(p);
@@ -200,13 +277,15 @@ async fn get_session_metrics(
         }
     }
 
-    let duration_secs = (header.updated_at - header.created_at)
-        .num_seconds()
-        .max(0) as f64;
+    let duration_secs = (header.updated_at - header.created_at).num_seconds().max(0) as f64;
 
     let tools: Vec<ToolStat> = tool_counts
         .into_iter()
-        .map(|(name, (calls, errors))| ToolStat { name, calls, errors })
+        .map(|(name, (calls, errors))| ToolStat {
+            name,
+            calls,
+            errors,
+        })
         .collect();
 
     Ok(Json(SessionMetricsResponse {
@@ -221,9 +300,7 @@ async fn get_session_metrics(
     }))
 }
 
-async fn get_metrics(
-    State(state): State<AppState>,
-) -> Result<Json<MetricsResponse>, StatusCode> {
+async fn get_metrics(State(state): State<AppState>) -> Result<Json<MetricsResponse>, StatusCode> {
     let mut sessions = state.store.list_sessions().map_err(|e| {
         tracing::error!("list sessions for metrics: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
@@ -257,10 +334,7 @@ async fn get_metrics(
                         match block {
                             ContentBlock::ToolCall(tc) => {
                                 total_tool_calls += 1;
-                                tool_counts
-                                    .entry(tc.name.clone())
-                                    .or_default()
-                                    .0 += 1;
+                                tool_counts.entry(tc.name.clone()).or_default().0 += 1;
                                 last_tool_name = Some(tc.name.clone());
                             }
                             ContentBlock::ToolResult(tr) if tr.is_error => {
@@ -300,6 +374,8 @@ async fn get_metrics(
             title: s.title.clone(),
             message_count: s.message_count as usize,
             working_dir: s.working_dir.clone(),
+            created_at: s.created_at.to_rfc3339(),
+            updated_at: s.updated_at.to_rfc3339(),
         })
         .collect();
 
@@ -310,7 +386,11 @@ async fn get_metrics(
 
     let tool_usage: Vec<ToolStat> = tool_counts
         .into_iter()
-        .map(|(name, (calls, errors))| ToolStat { name, calls, errors })
+        .map(|(name, (calls, errors))| ToolStat {
+            name,
+            calls,
+            errors,
+        })
         .collect();
 
     Ok(Json(MetricsResponse {
@@ -437,8 +517,11 @@ async fn get_suggestions(
             }
 
             if turn_count > 20 {
-                high_turn_sessions
-                    .push(s.title.clone().unwrap_or_else(|| s.id.chars().take(8).collect()));
+                high_turn_sessions.push(
+                    s.title
+                        .clone()
+                        .unwrap_or_else(|| s.id.chars().take(8).collect()),
+                );
             }
         }
     }
@@ -463,10 +546,7 @@ async fn get_suggestions(
     }
 
     // ── Rule 2: Repeated file reads (>5 reads of same file across sessions) ──
-    let mut repeated_files: Vec<_> = file_reads
-        .iter()
-        .filter(|(_, count)| **count > 5)
-        .collect();
+    let mut repeated_files: Vec<_> = file_reads.iter().filter(|(_, count)| **count > 5).collect();
     repeated_files.sort_by_key(|(_, c)| std::cmp::Reverse(**c));
     for (path, count) in repeated_files.iter().take(3) {
         suggestions.push(Suggestion {
@@ -494,8 +574,7 @@ async fn get_suggestions(
 
     // ── Rule 4: Token efficiency ──
     if session_count_with_tokens > 0 {
-        let avg_tokens =
-            (total_input + total_output) as f64 / session_count_with_tokens as f64;
+        let avg_tokens = (total_input + total_output) as f64 / session_count_with_tokens as f64;
         if avg_tokens > 50_000.0 {
             suggestions.push(Suggestion {
                 category: "cost_control".into(),
@@ -516,7 +595,8 @@ async fn get_suggestions(
             category: "agent_capability".into(),
             severity: "low".into(),
             title: "Agent 未使用任何工具".into(),
-            description: "检测到多个会话但没有工具调用。确认 Agent 配置了正确的工具权限和系统提示。".into(),
+            description:
+                "检测到多个会话但没有工具调用。确认 Agent 配置了正确的工具权限和系统提示。".into(),
             detail: format!("sessions={},tool_calls=0", sessions.len()),
         });
     }
