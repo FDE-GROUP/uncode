@@ -612,6 +612,88 @@ async fn get_suggestions(
     Ok(Json(SuggestionsResponse { suggestions }))
 }
 
+// ── GitHub Issues proxy ──────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct IssuesQuery {
+    #[serde(default = "default_issues_state")]
+    state: String,
+    #[serde(default = "default_issues_per_page")]
+    per_page: u32,
+}
+
+fn default_issues_state() -> String {
+    "open".into()
+}
+fn default_issues_per_page() -> u32 {
+    30
+}
+
+async fn list_issues(
+    axum::extract::Query(query): axum::extract::Query<IssuesQuery>,
+) -> Result<Json<Vec<serde_json::Value>>, StatusCode> {
+    let repo = std::env::var("UNCODE_GITHUB_REPO").unwrap_or_else(|_| "FDE-GROUP/uncode".into());
+
+    let url = format!(
+        "https://api.github.com/repos/{repo}/issues?state={}&per_page={}&sort=updated",
+        query.state, query.per_page
+    );
+
+    let client = reqwest::Client::builder()
+        .user_agent("uncode-platform")
+        .build()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut request = client.get(&url);
+    if let Ok(token) = std::env::var("UNCODE_GITHUB_TOKEN") {
+        request = request.bearer_auth(&token);
+    }
+
+    match request.send().await {
+        Ok(resp) => {
+            let issues: Vec<serde_json::Value> = resp.json().await.unwrap_or_default();
+            Ok(Json(issues))
+        }
+        Err(e) => {
+            tracing::warn!("GitHub API error: {e}");
+            Ok(Json(vec![]))
+        }
+    }
+}
+
+async fn get_issue(
+    axum::extract::Path(number): axum::extract::Path<u32>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let repo = std::env::var("UNCODE_GITHUB_REPO").unwrap_or_else(|_| "FDE-GROUP/uncode".into());
+
+    let url = format!("https://api.github.com/repos/{repo}/issues/{number}");
+
+    let client = reqwest::Client::builder()
+        .user_agent("uncode-platform")
+        .build()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let mut request = client.get(&url);
+    if let Ok(token) = std::env::var("UNCODE_GITHUB_TOKEN") {
+        request = request.bearer_auth(&token);
+    }
+
+    match request.send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let issue: serde_json::Value = resp.json().await.unwrap_or_default();
+            Ok(Json(issue))
+        }
+        Ok(resp) => {
+            tracing::warn!("GitHub API returned {}", resp.status());
+            Err(StatusCode::NOT_FOUND)
+        }
+        Err(e) => {
+            tracing::warn!("GitHub API error: {e}");
+            Err(StatusCode::BAD_GATEWAY)
+        }
+    }
+}
+
 // ── Main ────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -651,6 +733,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/sessions/{id}/metrics", get(get_session_metrics))
         .route("/api/metrics", get(get_metrics))
         .route("/api/suggestions", get(get_suggestions))
+        .route("/api/issues", get(list_issues))
+        .route("/api/issues/{number}", get(get_issue))
         .route("/api/events", post(post_event))
         .route("/ws/events", get(ws_events_handler))
         .fallback_service(ServeDir::new(
