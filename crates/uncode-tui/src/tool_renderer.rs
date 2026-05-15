@@ -90,7 +90,7 @@ impl ToolRenderer for ReadRenderer {
         ))]
     }
 
-    fn render_result(&self, result: &str, width: u16, theme: &Theme) -> Vec<Line<'static>> {
+    fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let lines: Vec<&str> = result.lines().collect();
         let line_count = lines.len();
         let mut out = vec![Line::from(Span::styled(
@@ -98,7 +98,7 @@ impl ToolRenderer for ReadRenderer {
             Style::default().fg(theme.ui.footer_text),
         ))];
 
-        let max_lines = (width as usize).min(20);
+        let max_lines = 80;
         for line in lines.iter().take(max_lines) {
             out.push(Line::from(Span::styled(
                 line.to_string(),
@@ -107,7 +107,7 @@ impl ToolRenderer for ReadRenderer {
         }
         if lines.len() > max_lines {
             out.push(Line::from(Span::styled(
-                "...",
+                format!("... ({} more lines)", lines.len() - max_lines),
                 Style::default().fg(theme.ui.footer_text),
             )));
         }
@@ -205,15 +205,15 @@ impl ToolRenderer for GrepRenderer {
             format!("找到 {} 处匹配", matches.len()),
             Style::default().fg(theme.tool_status.success),
         ))];
-        for line in matches.iter().take(15) {
+        for line in matches.iter().take(50) {
             out.push(Line::from(Span::styled(
                 line.to_string(),
                 Style::default().fg(theme.markdown.code_text),
             )));
         }
-        if matches.len() > 15 {
+        if matches.len() > 50 {
             out.push(Line::from(Span::styled(
-                format!("... 还有 {} 处", matches.len() - 15),
+                format!("... 还有 {} 处", matches.len() - 50),
                 Style::default().fg(theme.ui.footer_text),
             )));
         }
