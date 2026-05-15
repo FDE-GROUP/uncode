@@ -7,6 +7,7 @@ use tracing::{debug, error, info};
 use uncode_core::error::UncodeError;
 use uncode_core::event::AgentEvent;
 use uncode_core::message::{ContentBlock, Message, Role, UsageInfo};
+use uncode_core::session::SessionEntry;
 use uncode_llm::driver::{CompletionRequest, LlmDriver, StreamEvent};
 use uncode_session::store::SessionStore;
 use uncode_tools::registry::ToolRegistry;
@@ -17,7 +18,6 @@ const DEFAULT_MAX_TOKENS: u64 = 128_000;
 pub struct AgentLoop {
     driver: Arc<dyn LlmDriver>,
     tool_registry: Arc<ToolRegistry>,
-    #[allow(dead_code)]
     session_store: Arc<SessionStore>,
     system_prompt: String,
     model: String,
@@ -113,7 +113,31 @@ impl AgentLoop {
     }
 
     pub async fn run(&self, user_message: Message) -> Result<Vec<Message>, UncodeError> {
-        let session_id = self.session_id.as_deref().unwrap_or("unknown").to_string();
+        let session_id = match &self.session_id {
+            Some(id) => id.clone(),
+            None => {
+                let id = uuid::Uuid::new_v4().to_string();
+                let cwd = std::env::current_dir()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                if let Err(e) =
+                    self.session_store
+                        .init_session_with_title(&id, &self.model, &cwd, None)
+                {
+                    debug!("session init skipped: {e}");
+                }
+                id
+            }
+        };
+
+        // Persist user message
+        if let Err(e) = self.session_store.append_entry(
+            &session_id,
+            &SessionEntry::Message(user_message.clone().into()),
+        ) {
+            debug!("persist user message skipped: {e}");
+        }
 
         self.emit(AgentEvent::SessionStart {
             session_id: session_id.clone(),
@@ -347,11 +371,28 @@ impl AgentLoop {
                                 input_tokens: turn_input_tokens,
                                 output_tokens: turn_output_tokens,
                             });
+
+                            // Persist assistant message
+                            if let Err(e) = self.session_store.append_entry(
+                                &session_id,
+                                &SessionEntry::Message(msg.clone().into()),
+                            ) {
+                                debug!("persist assistant message skipped: {e}");
+                            }
+
                             messages.push(msg);
                         }
 
                         for result in tool_results.drain(..) {
-                            messages.push(Message::new(Role::Tool, vec![result]));
+                            // Persist tool result
+                            let tool_msg = Message::new(Role::Tool, vec![result]);
+                            if let Err(e) = self.session_store.append_entry(
+                                &session_id,
+                                &SessionEntry::Message(tool_msg.clone().into()),
+                            ) {
+                                debug!("persist tool result skipped: {e}");
+                            }
+                            messages.push(tool_msg);
                         }
                     }
                 }
