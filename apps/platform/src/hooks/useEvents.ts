@@ -12,6 +12,7 @@ export function useEvents(
   const [connected, setConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined)
 
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
@@ -45,8 +46,11 @@ export function useEvents(
   }, [url])
 
   useEffect(() => {
-    connect()
+    // Defer to avoid React StrictMode double-mount closing the socket
+    // before it connects. In production (no StrictMode) this is instant.
+    timerRef.current = setTimeout(connect, 0)
     return () => {
+      clearTimeout(timerRef.current)
       clearTimeout(reconnectRef.current)
       const ws = wsRef.current
       if (ws) {
