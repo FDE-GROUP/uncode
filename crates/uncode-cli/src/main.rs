@@ -93,6 +93,15 @@ enum Commands {
     },
     /// 生成 shell 补全脚本
     Completions { shell: clap_complete::Shell },
+    /// 启动 Platform Web 服务器
+    Platform {
+        /// 监听端口
+        #[arg(short, long, default_value = "3000")]
+        port: u16,
+        /// 监听地址
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+    },
 }
 
 #[tokio::main]
@@ -130,6 +139,9 @@ async fn main() -> anyhow::Result<()> {
                     &mut std::io::stdout(),
                 );
                 return Ok(());
+            }
+            Commands::Platform { port, host } => {
+                return run_platform(host, *port);
             }
         }
     }
@@ -600,4 +612,39 @@ async fn resolve_prompt(cli: &Cli, prompt: String, cwd: &std::path::Path) -> Str
     }
     let expanded = expand_file_refs(&prompt, cwd);
     expand_url_refs(&expanded).await
+}
+
+fn run_platform(host: &str, port: u16) -> anyhow::Result<()> {
+    let current_exe = std::env::current_exe()?;
+    let exe_dir = current_exe
+        .parent()
+        .context("无法确定可执行文件目录")?;
+
+    let platform_bin = exe_dir.join("uncode-platform");
+    if !platform_bin.exists() {
+        anyhow::bail!(
+            "未找到 uncode-platform 二进制文件。请确认已编译：cargo build --release -p uncode-platform"
+        );
+    }
+
+    let frontend_dir = std::env::var("UNCODE_FRONTEND_DIR").unwrap_or_else(|_| {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        cwd.join("apps/platform/dist")
+            .to_string_lossy()
+            .to_string()
+    });
+
+    eprintln!("启动 Platform 服务器: http://{host}:{port}");
+    eprintln!("前端目录: {frontend_dir}");
+
+    let status = std::process::Command::new(platform_bin)
+        .env("UNCODE_FRONTEND_DIR", &frontend_dir)
+        .args(["--host", host, "--port", &port.to_string()])
+        .status()
+        .context("启动 uncode-platform 失败")?;
+
+    if !status.success() {
+        anyhow::bail!("uncode-platform 退出: {status}");
+    }
+    Ok(())
 }
