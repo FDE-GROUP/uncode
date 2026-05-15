@@ -368,9 +368,21 @@ impl ChatState {
             return all_lines;
         }
 
+        let mut prev_is_user = false;
         for msg in &self.messages {
+            let is_user = matches!(msg, ChatMessage::User { .. });
+
+            // Add separator between messages
+            if !all_lines.is_empty() && (is_user || prev_is_user) {
+                all_lines.push(Line::from(Span::styled(
+                    " · · ·",
+                    Style::default().fg(theme.markdown.code_block_border),
+                )));
+            }
+
             let msg_lines = render_message(msg, area.width, renderers, theme);
             all_lines.extend(msg_lines);
+            prev_is_user = is_user;
         }
 
         all_lines
@@ -397,13 +409,28 @@ fn render_message(
             text,
             rendered_cache,
         } => {
-            if let Some(cached) = rendered_cache {
+            let mut lines = if let Some(cached) = rendered_cache {
                 cached.clone()
             } else if text.is_empty() {
                 vec![]
             } else {
                 crate::markdown::render_markdown_with_theme(text, theme)
+            };
+
+            // Add "uncode" name prefix to first line
+            if !lines.is_empty() {
+                let first = lines.remove(0);
+                let mut new_spans = vec![Span::styled(
+                    "uncode ",
+                    Style::default()
+                        .fg(theme.tool_status.success)
+                        .add_modifier(Modifier::BOLD),
+                )];
+                new_spans.extend(first.spans);
+                lines.insert(0, Line::from(new_spans));
             }
+
+            lines
         }
         ChatMessage::Thinking { text, expanded } => {
             if *expanded {
