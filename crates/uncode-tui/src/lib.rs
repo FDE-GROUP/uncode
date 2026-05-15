@@ -151,6 +151,9 @@ pub struct TuiEngine {
     chat: ChatState,
     session_id: String,
     model: String,
+    model_index: usize,
+    available_models: Vec<String>,
+    last_user_input: Option<String>,
     editor: InputEditor,
     selector: OverlaySelector,
     slash: SlashCommands,
@@ -174,10 +177,18 @@ impl TuiEngine {
     }
 
     pub fn new() -> Self {
+        let available_models = vec![
+            "deepseek-v3".to_string(),
+            "glm-5.1".to_string(),
+            "ollama".to_string(),
+        ];
         Self {
             chat: ChatState::new(),
             session_id: String::new(),
             model: String::new(),
+            model_index: 0,
+            available_models,
+            last_user_input: None,
             editor: InputEditor::new(),
             selector: OverlaySelector::new(),
             slash: SlashCommands::new(),
@@ -360,8 +371,112 @@ impl TuiEngine {
                                 KeyCode::Char('l') if ctrl => {
                                     self.selector.show(
                                         "切换模型",
-                                        vec!["deepseek-v3".into(), "glm-5.1".into(), "ollama".into()],
+                                        self.available_models.iter().map(|s| s.as_str().into()).collect(),
                                     );
+                                }
+                                // Model cycling: Ctrl+P forward, Shift+Ctrl+P backward
+                                KeyCode::Char('p') if ctrl => {
+                                    let shift = key_event.modifiers.contains(KeyModifiers::SHIFT);
+                                    if self.available_models.len() > 1 {
+                                        if shift {
+                                            self.model_index = if self.model_index == 0 {
+                                                self.available_models.len() - 1
+                                            } else {
+                                                self.model_index - 1
+                                            };
+                                        } else {
+                                            self.model_index =
+                                                (self.model_index + 1) % self.available_models.len();
+                                        }
+                                        self.model =
+                                            self.available_models[self.model_index].clone();
+                                        self.chat.messages.push(chat::ChatMessage::Summary {
+                                            completed: vec![format!(
+                                                "模型: {}",
+                                                self.model
+                                            )],
+                                            next_steps: vec![],
+                                        });
+                                    }
+                                }
+                                // Retry last message: Ctrl+R
+                                KeyCode::Char('r') if ctrl => {
+                                    if !self.agent_busy {
+                                        if let Some(ref input) = self.last_user_input {
+                                            let text = input.clone();
+                                            self.agent_busy = true;
+                                            self.chat.push_user_message(format!("[重试] {text}"));
+                                            let file_expanded =
+                                                uncode_core::context::expand_file_refs(
+                                                    &text,
+                                                    &std::env::current_dir().unwrap_or_default(),
+                                                );
+                                            let token = self.new_cancel_token();
+                                            on_submit(file_expanded, token);
+                                        } else {
+                                            self.chat.messages.push(
+                                                chat::ChatMessage::Summary {
+                                                    completed: vec![
+                                                        "没有可重试的消息。".into(),
+                                                    ],
+                                                    next_steps: vec![],
+                                                },
+                                            );
+                                        }
+                                    }
+                                }
+                                // New session: Ctrl+N
+                                KeyCode::Char('n') if ctrl => {
+                                    if !self.agent_busy {
+                                        self.session_id = uuid::Uuid::new_v4().to_string();
+                                        self.chat.messages.clear();
+                                        self.chat.scroll_offset = 0;
+                                        self.chat.auto_scroll = true;
+                                        self.footer.input_tokens = 0;
+                                        self.footer.output_tokens = 0;
+                                        self.footer.cost = 0.0;
+                                        self.footer.context_percent = 0;
+                                        self.last_user_input = None;
+                                        let sid = &self.session_id[..8];
+                                        self.chat.messages.push(chat::ChatMessage::Summary {
+                                            completed: vec![format!(
+                                                "新会话已创建。session:{sid}"
+                                            )],
+                                            next_steps: vec![],
+                                        });
+                                    }
+                                }
+                                // Undo last turn: Ctrl+/
+                                KeyCode::Char('/') if ctrl => {
+                                    if !self.agent_busy && self.chat.messages.len() >= 2 {
+                                        let last_idx = self.chat.messages.len() - 1;
+                                        let second_last_idx = last_idx.saturating_sub(1);
+                                        let removed_count = if matches!(
+                                            self.chat.messages[last_idx],
+                                            chat::ChatMessage::Assistant { .. }
+                                        ) {
+                                            // Remove assistant + preceding user message
+                                            self.chat.messages.truncate(second_last_idx);
+                                            2
+                                        } else {
+                                            1
+                                        };
+                                        self.chat.messages.push(chat::ChatMessage::Summary {
+                                            completed: vec![format!(
+                                                "已撤销最近 {} 条消息。",
+                                                removed_count
+                                            )],
+                                            next_steps: vec![],
+                                        });
+                                    }
+                                }
+                                // External editor: Ctrl+G
+                                KeyCode::Char('g') if ctrl => {
+                                    if let Some(content) = open_external_editor() {
+                                        if !content.is_empty() {
+                                            self.editor.set_buffer(content);
+                                        }
+                                    }
                                 }
                                 KeyCode::BackTab => {
                                     self.chat.thinking_level = self.chat.thinking_level.cycle_next();
@@ -506,6 +621,7 @@ impl TuiEngine {
                 .messages
                 .push(chat::ChatMessage::QueuedMessage { text: preview });
         } else {
+            self.last_user_input = Some(text.clone());
             self.agent_busy = true;
             self.chat.push_user_message(text.clone());
             let file_expanded = uncode_core::context::expand_file_refs(
@@ -532,7 +648,10 @@ impl TuiEngine {
             KeyCode::Char('m') => {
                 self.selector.show(
                     "切换模型",
-                    vec!["deepseek-v3".into(), "glm-5.1".into(), "ollama".into()],
+                    self.available_models
+                        .iter()
+                        .map(|s| s.as_str().into())
+                        .collect(),
                 );
             }
             _ => {}
@@ -825,6 +944,39 @@ fn render_session_tree(
         lines.extend(render_session_tree(child, &child_prefix, child_is_last));
     }
     lines
+}
+
+fn open_external_editor() -> Option<String> {
+    let editor = std::env::var("EDITOR")
+        .unwrap_or_else(|_| std::env::var("VISUAL").unwrap_or_else(|_| "vi".to_string()));
+
+    let tmp_dir = std::env::temp_dir();
+    let tmp_path = tmp_dir.join(format!("uncode-input-{}.md", uuid::Uuid::new_v4()));
+
+    // Create empty temp file
+    std::fs::write(&tmp_path, "").ok()?;
+
+    // Suspend TUI, run editor, restore TUI
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
+    ratatui::restore();
+
+    let status = std::process::Command::new(&editor)
+        .arg(&tmp_path)
+        .status()
+        .ok();
+
+    // Re-initialize terminal
+    let _ = ratatui::init();
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
+
+    if status.as_ref().map(|s| s.success()).unwrap_or(false) {
+        let content = std::fs::read_to_string(&tmp_path).unwrap_or_default();
+        let _ = std::fs::remove_file(&tmp_path);
+        Some(content.trim().to_string())
+    } else {
+        let _ = std::fs::remove_file(&tmp_path);
+        None
+    }
 }
 
 fn slash_commands() -> Vec<String> {
