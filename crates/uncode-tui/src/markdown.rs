@@ -16,7 +16,8 @@ pub fn render_markdown_with_theme(text: &str, theme: &Theme) -> Vec<Line<'static
         return vec![Line::from("")];
     }
 
-    let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES;
+    let options =
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
     let parser = Parser::new_ext(text, options);
 
     let mut ctx = RenderContext::new(theme);
@@ -31,6 +32,22 @@ pub fn render_markdown_with_theme(text: &str, theme: &Theme) -> Vec<Line<'static
             Event::HardBreak => ctx.flush_line(),
             Event::Rule => ctx.push_rule(),
             Event::Html(html) => ctx.push_text(&html),
+            Event::TaskListMarker(checked) => {
+                // Replace the last "• " bullet span with a checkbox
+                let marker = if checked { "☑ " } else { "☐ " };
+                if let Some(pos) = ctx
+                    .current_line
+                    .iter()
+                    .rposition(|s| s.content.as_ref() == "• ")
+                {
+                    ctx.current_line[pos] = Span::styled(
+                        marker,
+                        Style::default()
+                            .fg(ctx.theme.markdown.link)
+                            .add_modifier(Modifier::BOLD),
+                    );
+                }
+            }
             _ => {}
         }
     }
@@ -49,6 +66,7 @@ struct RenderContext<'a> {
     quote_depth: usize,
     table_state: Option<TableState>,
     list_depth: usize,
+    link_url: Option<String>,
 }
 
 struct TableState {
@@ -93,6 +111,7 @@ impl<'a> RenderContext<'a> {
             quote_depth: 0,
             table_state: None,
             list_depth: 0,
+            link_url: None,
         }
     }
 
@@ -164,12 +183,12 @@ impl<'a> RenderContext<'a> {
                 title: _,
                 id: _,
             } => {
-                self.current_line.push(Span::styled(
-                    dest_url.to_string(),
-                    Style::default()
-                        .fg(self.theme.markdown.link)
-                        .add_modifier(Modifier::UNDERLINED),
-                ));
+                // OSC 8 hyperlink: \x1b]8;;url\x1b\\ text \x1b]8;;\x1b\\
+                // We store the URL to emit the closing sequence in TagEnd::Link
+                let url = dest_url.to_string();
+                let osc_open = format!("\x1b]8;;{}\x1b\\", url);
+                self.current_line.push(Span::raw(osc_open));
+                self.link_url = Some(url);
             }
             Tag::Table(_) => {
                 self.table_state = Some(TableState::new());
@@ -226,7 +245,19 @@ impl<'a> RenderContext<'a> {
             TagEnd::Item => {
                 self.flush_line();
             }
-            TagEnd::Link => {}
+            TagEnd::Link => {
+                // Close OSC 8 hyperlink
+                self.current_line.push(Span::raw("\x1b]8;;\x1b\\"));
+                // Append visible URL in dim style
+                if let Some(url) = self.link_url.take() {
+                    self.current_line.push(Span::styled(
+                        format!(" ({})", url),
+                        Style::default()
+                            .fg(self.theme.ui.footer_text)
+                            .add_modifier(Modifier::DIM),
+                    ));
+                }
+            }
             TagEnd::Table => {
                 if let Some(ts) = self.table_state.take() {
                     self.render_table(ts);

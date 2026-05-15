@@ -444,6 +444,22 @@ fn render_message(
                 crate::markdown::render_markdown_with_theme(text, theme)
             };
 
+            // Truncate long assistant messages: first 50 + ... + last 50
+            const HEAD: usize = 50;
+            const TAIL: usize = 50;
+            if lines.len() > HEAD + TAIL + 5 {
+                let tail = lines.split_off(lines.len() - TAIL);
+                let head = lines.split_off(HEAD);
+                let omitted = head.len();
+                lines.push(Line::from(Span::styled(
+                    format!("  ... ({} lines omitted) ...", omitted),
+                    Style::default()
+                        .fg(theme.ui.footer_text)
+                        .add_modifier(Modifier::DIM),
+                )));
+                lines.extend(tail);
+            }
+
             // Add "uncode" name prefix to first line
             if !lines.is_empty() {
                 let first = lines.remove(0);

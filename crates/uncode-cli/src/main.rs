@@ -616,9 +616,7 @@ async fn resolve_prompt(cli: &Cli, prompt: String, cwd: &std::path::Path) -> Str
 
 fn run_platform(host: &str, port: u16) -> anyhow::Result<()> {
     let current_exe = std::env::current_exe()?;
-    let exe_dir = current_exe
-        .parent()
-        .context("无法确定可执行文件目录")?;
+    let exe_dir = current_exe.parent().context("无法确定可执行文件目录")?;
 
     let platform_bin = exe_dir.join("uncode-platform");
     if !platform_bin.exists() {
@@ -629,9 +627,7 @@ fn run_platform(host: &str, port: u16) -> anyhow::Result<()> {
 
     let frontend_dir = std::env::var("UNCODE_FRONTEND_DIR").unwrap_or_else(|_| {
         let cwd = std::env::current_dir().unwrap_or_default();
-        cwd.join("apps/platform/dist")
-            .to_string_lossy()
-            .to_string()
+        cwd.join("apps/platform/dist").to_string_lossy().to_string()
     });
 
     eprintln!("启动 Platform 服务器: http://{host}:{port}");
