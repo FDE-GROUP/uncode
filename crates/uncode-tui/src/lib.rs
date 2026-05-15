@@ -443,6 +443,9 @@ impl TuiEngine {
                     next_steps: vec![],
                 });
             }
+            t if t.starts_with("/template") => {
+                self.handle_template_command(&text);
+            }
             _ => {
                 if self.agent_busy {
                     let preview = text.clone();
@@ -507,6 +510,63 @@ impl TuiEngine {
         self.chat.handle_event(event);
     }
 
+    fn handle_template_command(&mut self, text: &str) {
+        use uncode_core::template::TemplateStore;
+
+        let parts: Vec<&str> = text.splitn(3, ' ').collect();
+        let store = TemplateStore::load();
+
+        if parts.len() == 1 || (parts.len() == 2 && parts[1].is_empty()) {
+            // /template — list all
+            let list: Vec<String> = store
+                .list()
+                .iter()
+                .map(|t| format!("  {} — {}", t.name, t.description))
+                .collect();
+            let header = "可用模板:".to_string();
+            self.chat.messages.push(chat::ChatMessage::Summary {
+                completed: std::iter::once(header).chain(list).collect(),
+                next_steps: vec![],
+            });
+            return;
+        }
+
+        let name = parts[1];
+        let vars_str = parts.get(2).copied().unwrap_or("");
+
+        let mut vars = std::collections::HashMap::new();
+        if !vars_str.is_empty() {
+            for pair in vars_str.split_whitespace() {
+                if let Some((k, v)) = pair.split_once('=') {
+                    vars.insert(k.to_string(), v.to_string());
+                }
+            }
+        }
+
+        match store.render(name, &vars) {
+            Some(prompt) => {
+                self.agent_busy = true;
+                self.chat
+                    .push_user_message(format!("[template: {name}] {prompt}"));
+                // For TUI, we need to trigger on_submit but we're not in handle_submit's scope
+                // Instead, we emit the prompt as a user message and show it
+                self.agent_busy = false;
+                self.chat.messages.push(chat::ChatMessage::Summary {
+                    completed: vec![format!(
+                        "模板 '{name}' 已渲染。复制以下内容作为输入：\n{prompt}"
+                    )],
+                    next_steps: vec![],
+                });
+            }
+            None => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("模板 '{name}' 不存在。使用 /template 查看可用模板。"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+            }
+        }
+    }
+
     fn flush_queue<F>(&mut self, on_submit: &F)
     where
         F: Fn(String, CancellationToken),
@@ -533,6 +593,7 @@ fn slash_commands() -> Vec<String> {
         "thinking".into(),
         "details".into(),
         "issues".into(),
+        "template".into(),
     ]
 }
 
