@@ -36,9 +36,26 @@ export interface TokenUsage {
   output_tokens: number
 }
 
-export interface DashboardStats {
-  totalSessions: number
-  totalToolCalls: number
-  successRate: number
-  recentSessions: SessionSummary[]
+export interface ModelStat {
+  model: string
+  count: number
+}
+
+export interface ToolStat {
+  name: string
+  calls: number
+  errors: number
+}
+
+export interface MetricsResponse {
+  total_sessions: number
+  total_messages: number
+  total_tool_calls: number
+  tool_success_rate: number
+  total_input_tokens: number
+  total_output_tokens: number
+  avg_messages_per_session: number
+  models: ModelStat[]
+  recent_sessions: SessionSummary[]
+  tool_usage: ToolStat[]
 }
