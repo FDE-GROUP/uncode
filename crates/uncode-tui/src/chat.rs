@@ -357,6 +357,8 @@ impl ChatState {
         area: Rect,
         renderers: &ToolRendererRegistry,
         theme: &Theme,
+        tick: usize,
+        agent_busy: bool,
     ) -> Vec<Line<'static>> {
         let mut all_lines: Vec<Line<'static>> = Vec::with_capacity(self.messages.len() * 3);
 
@@ -369,8 +371,9 @@ impl ChatState {
         }
 
         let mut prev_is_user = false;
-        for msg in &self.messages {
+        for (idx, msg) in self.messages.iter().enumerate() {
             let is_user = matches!(msg, ChatMessage::User { .. });
+            let is_last = idx == self.messages.len() - 1;
 
             // Add separator between messages
             if !all_lines.is_empty() && (is_user || prev_is_user) {
@@ -380,7 +383,31 @@ impl ChatState {
                 )));
             }
 
-            let msg_lines = render_message(msg, area.width, renderers, theme);
+            let mut msg_lines = render_message(msg, area.width, renderers, theme);
+
+            // Streaming cursor: if last message is an active Assistant text, blink cursor
+            if is_last && agent_busy {
+                if let ChatMessage::Assistant {
+                    text,
+                    rendered_cache,
+                } = msg
+                {
+                    if rendered_cache.is_none() && !text.is_empty() && !msg_lines.is_empty() {
+                        // Blink every 2 ticks (~100ms at 50ms poll)
+                        let show_cursor = tick % 4 < 2;
+                        let last = msg_lines.pop().unwrap();
+                        let mut spans = last.spans;
+                        if show_cursor {
+                            spans.push(Span::styled(
+                                "█",
+                                Style::default().fg(theme.tool_status.running),
+                            ));
+                        }
+                        msg_lines.push(Line::from(spans));
+                    }
+                }
+            }
+
             all_lines.extend(msg_lines);
             prev_is_user = is_user;
         }
@@ -915,7 +942,7 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].to_string().contains("描述你的需求"));
     }
@@ -926,7 +953,7 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::light();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false);
         assert_eq!(lines.len(), 1);
     }
 
@@ -945,7 +972,7 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         // 验证自定义渲染器输出包含路径信息
         assert!(combined.contains("src/main.rs"));
@@ -965,7 +992,7 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("编译失败"));
         assert!(combined.contains("✖"));
@@ -981,7 +1008,7 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("阶段总结"));
         assert!(combined.contains("重构完成"));
@@ -1003,7 +1030,7 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("cargo test"));
         assert!(combined.contains("✅"));
@@ -1020,7 +1047,7 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("排队中"));
         assert!(combined.contains("帮我修复那个 bug"));
@@ -1033,8 +1060,35 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("分析 @Cargo.toml"));
+    }
+
+    #[test]
+    fn test_streaming_cursor_when_busy() {
+        let mut state = ChatState::new();
+        state.handle_event(AgentEvent::ContentDelta {
+            delta_type: DeltaType::Text,
+            content: "Hello world".to_string(),
+        });
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+
+        // tick 0 — cursor visible (tick % 4 < 2)
+        let lines = state.render_lines(area, &renderers, &theme, 0, true);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains("█"), "cursor should be visible at tick 0");
+
+        // tick 2 — cursor hidden (tick % 4 >= 2)
+        let lines = state.render_lines(area, &renderers, &theme, 2, true);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(!combined.contains("█"), "cursor should be hidden at tick 2");
+
+        // Not busy — no cursor
+        let lines = state.render_lines(area, &renderers, &theme, 0, false);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(!combined.contains("█"), "no cursor when agent not busy");
     }
 }

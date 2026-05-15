@@ -163,6 +163,7 @@ pub struct TuiEngine {
     footer: FooterState,
     theme: Theme,
     renderers: ToolRendererRegistry,
+    tick: usize,
 }
 
 impl TuiEngine {
@@ -189,10 +190,12 @@ impl TuiEngine {
             footer: FooterState::new(),
             theme: Theme::default(),
             renderers: ToolRendererRegistry::new(),
+            tick: 0,
         }
     }
 
     pub fn render(&mut self, f: &mut Frame) {
+        self.tick = self.tick.wrapping_add(1);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -214,7 +217,13 @@ impl TuiEngine {
     }
 
     fn render_chat(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let lines = self.chat.render_lines(area, &self.renderers, &self.theme);
+        let lines = self.chat.render_lines(
+            area,
+            &self.renderers,
+            &self.theme,
+            self.tick,
+            self.agent_busy,
+        );
         let total_lines = lines.len() as u16;
         let visible_height = area.height;
 
@@ -240,10 +249,12 @@ impl TuiEngine {
         line1_area: ratatui::layout::Rect,
         line2_area: ratatui::layout::Rect,
     ) {
+        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let (status_icon, status_color) = if self.agent_busy {
-            ("◉ RUNNING", Color::Yellow)
+            let frame = spinner_frames[self.tick % spinner_frames.len()];
+            (frame, Color::Yellow)
         } else {
-            ("● IDLE", Color::Green)
+            ("●", Color::Green)
         };
 
         f.render_widget(
@@ -940,13 +951,15 @@ mod tests {
         // 空消息 — 不 panic，返回提示文字
         let lines = engine
             .chat
-            .render_lines(area, &engine.renderers, &engine.theme);
+            .render_lines(area, &engine.renderers, &engine.theme, 0, false);
         assert_eq!(lines.len(), 1);
         assert!(lines[0].to_string().contains("描述你的需求"));
 
         // 使用 light theme — 不 panic
         let light = Theme::light();
-        let lines_light = engine.chat.render_lines(area, &engine.renderers, &light);
+        let lines_light = engine
+            .chat
+            .render_lines(area, &engine.renderers, &light, 0, false);
         assert_eq!(lines_light.len(), 1);
     }
 }
