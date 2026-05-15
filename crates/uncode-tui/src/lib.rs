@@ -100,35 +100,39 @@ impl FooterState {
         format!("{} {}{}", self.workdir, self.git_branch, sid)
     }
 
-    fn render_line2(&self, model: &str, level_icon: &str) -> Line<'static> {
+    fn render_line2(&self, model: &str, level_icon: &str, theme: &Theme) -> Line<'static> {
         let in_str = format_tokens(self.input_tokens);
         let out_str = format_tokens(self.output_tokens);
         let cost_str = format!("${:.4}", self.cost);
+
+        // Three-level ctx% warning: <50% green, 50-80% yellow, >80% red
         let ctx_color = if self.context_percent > 80 {
             Color::Red
+        } else if self.context_percent > 50 {
+            Color::Yellow
         } else {
-            Color::DarkGray
+            Color::Green
         };
 
+        let dim = Style::default().fg(theme.ui.footer_text);
+        let value_style = Style::default().fg(theme.ui.agent_text);
+
         Line::from(vec![
+            Span::styled("in:", dim),
+            Span::styled(format!("{in_str} "), value_style),
+            Span::styled("out:", dim),
+            Span::styled(format!("{out_str} "), value_style),
+            Span::styled(format!("{cost_str} "), value_style),
+            Span::styled("ctx:", dim),
             Span::styled(
-                format!("in:{in_str} "),
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::styled(
-                format!("out:{out_str} "),
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::styled(format!("{cost_str} "), Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("ctx:{}% ", self.context_percent),
+                format!("{}% ", self.context_percent),
                 Style::default().fg(ctx_color),
             ),
-            Span::styled(model.to_string(), Style::default().fg(Color::DarkGray)),
             Span::styled(
-                format!(" {level_icon}"),
-                Style::default().fg(Color::DarkGray),
+                model.to_string(),
+                Style::default().fg(theme.tool_status.running),
             ),
+            Span::styled(format!(" {level_icon}"), dim),
         ])
     }
 }
@@ -259,7 +263,9 @@ impl TuiEngine {
         } else {
             &self.model
         };
-        let line2 = self.footer.render_line2(model_display, level.icon());
+        let line2 = self
+            .footer
+            .render_line2(model_display, level.icon(), &self.theme);
         f.render_widget(Paragraph::new(line2), line2_area);
     }
 
@@ -862,10 +868,10 @@ mod tests {
         footer.output_tokens = 1_200;
         footer.cost = 0.05;
         footer.context_percent = 30;
-        let line = footer.render_line2("deepseek-v3", "◕");
+        let line = footer.render_line2("deepseek-v3", "◕", &Theme::default());
         let line_str = line.to_string();
-        assert!(line_str.contains("in:5.0k"));
-        assert!(line_str.contains("out:1.2k"));
+        assert!(line_str.contains("5.0k"));
+        assert!(line_str.contains("1.2k"));
         assert!(line_str.contains("$0.0500"));
         assert!(line_str.contains("ctx:30%"));
         assert!(line_str.contains("deepseek-v3"));
@@ -876,7 +882,7 @@ mod tests {
     fn test_footer_context_high_percent_shows_red() {
         let mut footer = FooterState::new();
         footer.context_percent = 90;
-        let line = footer.render_line2("model", "○");
+        let line = footer.render_line2("model", "○", &Theme::default());
         // Line 包含 spans，检查渲染不 panic
         assert!(!line.to_string().is_empty());
     }
