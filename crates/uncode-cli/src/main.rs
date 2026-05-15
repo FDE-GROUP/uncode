@@ -6,7 +6,7 @@ use tracing_subscriber::EnvFilter;
 
 use uncode_agent::{AgentLoop, ContextLoader, GitHubClient, SystemPromptBuilder};
 use uncode_core::config::AppConfig;
-use uncode_core::context::expand_file_refs;
+use uncode_core::context::{expand_file_refs, expand_url_refs};
 use uncode_core::event::AgentEvent;
 use uncode_core::message::{ContentBlock, Message, Role};
 use uncode_llm::registry::ProviderRegistry;
@@ -187,6 +187,7 @@ async fn main() -> anyhow::Result<()> {
 
     if let Some(prompt) = cli.prompt {
         let expanded = expand_file_refs(&prompt, &cwd);
+        let expanded = expand_url_refs(&expanded).await;
         if cli.mode == "json" {
             return run_json_mode(agent, expanded).await;
         }
@@ -216,6 +217,7 @@ async fn main() -> anyhow::Result<()> {
                 break;
             }
             let expanded = expand_file_refs(&input, &cwd);
+            let expanded = expand_url_refs(&expanded).await;
             let messages = agent.run(Message::user(expanded)).await?;
             print_messages(&messages);
         }
@@ -241,11 +243,12 @@ async fn main() -> anyhow::Result<()> {
             let sid = session_opt.clone();
             let m = model.clone();
             tokio::spawn(async move {
+                let expanded = expand_url_refs(&text).await;
                 let mut a = AgentLoop::with_event_sender(d, t, s, sp, m, tx);
                 if let Some(ref sid) = sid {
                     a.set_session_id(sid.clone());
                 }
-                let _ = a.run(Message::user(text)).await;
+                let _ = a.run(Message::user(expanded)).await;
             });
         })
         .await;
