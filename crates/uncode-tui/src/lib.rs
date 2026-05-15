@@ -454,11 +454,14 @@ impl TuiEngine {
                 self.chat.tool_output_visible = !self.chat.tool_output_visible;
             }
             "/help" => {
-                let help = "快捷键: Ctrl+O 工具输出 | Ctrl+T 思考 | Ctrl+L 模型 | Shift+Tab 思考级别 | Ctrl+X 前缀命令 | Ctrl+C 中断/退出";
+                let help = "快捷键: Ctrl+O 工具输出 | Ctrl+T 思考 | Ctrl+L 模型 | Shift+Tab 思考级别 | Ctrl+X 前缀命令 | Ctrl+C 中断/退出\n命令: /theme [name] | /thinking | /details | /tree | /skills | /template";
                 self.chat.messages.push(chat::ChatMessage::Summary {
                     completed: vec![help.into()],
                     next_steps: vec![],
                 });
+            }
+            t if t.starts_with("/theme") => {
+                self.handle_theme_command(&text);
             }
             t if t.starts_with("/template") => {
                 self.handle_template_command(&text);
@@ -723,6 +726,52 @@ impl TuiEngine {
         on_submit(prompt, token);
     }
 
+    fn handle_theme_command(&mut self, text: &str) {
+        let parts: Vec<&str> = text.splitn(2, ' ').collect();
+        let name = parts.get(1).copied().unwrap_or("").trim();
+
+        if name.is_empty() {
+            // List available themes
+            let themes = Theme::available_themes();
+            let current = &self.theme.name;
+            let lines: Vec<String> = themes
+                .iter()
+                .map(|t| {
+                    if t == current {
+                        format!("  {t}  ← 当前")
+                    } else {
+                        format!("  {t}")
+                    }
+                })
+                .collect();
+            let mut completed = vec!["可用主题:".to_string()];
+            completed.extend(lines);
+            completed.push("使用 /theme <name> 切换".to_string());
+            self.chat.messages.push(chat::ChatMessage::Summary {
+                completed,
+                next_steps: vec![],
+            });
+            return;
+        }
+
+        match Theme::load_by_name(name) {
+            Some(theme) => {
+                let old = self.theme.name.clone();
+                self.theme = theme;
+                self.chat.messages.push(chat::ChatMessage::Summary {
+                    completed: vec![format!("主题切换: {old} → {}", self.theme.name)],
+                    next_steps: vec![],
+                });
+            }
+            None => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("主题 '{name}' 不存在。使用 /theme 查看可用列表。"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+            }
+        }
+    }
+
     fn flush_queue<F>(&mut self, on_submit: &F)
     where
         F: Fn(String, CancellationToken),
@@ -788,6 +837,7 @@ fn slash_commands() -> Vec<String> {
         "template".into(),
         "tree".into(),
         "skills".into(),
+        "theme".into(),
     ];
     // Add skill names
     let registry = uncode_core::skill::SkillRegistry::load();
