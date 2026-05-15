@@ -17,6 +17,7 @@ uncode-tools.workspace = true
 uncode-agent.workspace = true
 
 tokio.workspace = true
+tokio-util.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
 serde.workspace = true

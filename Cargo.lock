@@ -2987,6 +2987,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "uncode-core",
  "uncode-llm",
@@ -2999,6 +3000,7 @@ name = "uncode-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "clap_complete",
  "dirs",
@@ -3022,6 +3024,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "reqwest",
  "schemars",
  "serde",
  "serde_json",
@@ -3155,6 +3158,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "tree-sitter",
  "tree-sitter-bash",
