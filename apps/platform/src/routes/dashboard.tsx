@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { fetchApi } from '@/lib/api'
+import { useEvents } from '@/hooks/useEvents'
 import type { MetricsResponse } from '../types'
 
 function MetricCard({ title, value }: { title: string; value: string | number }) {
@@ -23,6 +24,8 @@ export function DashboardPage() {
     queryKey: ['metrics'],
     queryFn: () => fetchApi('/api/metrics'),
   })
+
+  const { events, clear } = useEvents()
 
   if (isLoading) {
     return (
@@ -131,6 +134,45 @@ export function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Live Events */}
+      {events.length > 0 && (
+        <div className="mt-6 rounded-lg border border-border-subtle bg-surface/50 p-6">
+          <div className="mb-4 flex items-center justify-between">
+            <h3 className="text-lg font-semibold">Live Events</h3>
+            <button
+              type="button"
+              onClick={clear}
+              className="text-xs text-text-muted transition-colors hover:text-text-primary"
+            >
+              Clear
+            </button>
+          </div>
+          <div className="max-h-48 space-y-1 overflow-y-auto">
+            {events.slice(-20).map((ev, i) => (
+              <div
+                key={i}
+                className="flex items-center gap-2 rounded px-2 py-1 text-xs hover:bg-hover"
+              >
+                <span className="font-mono text-accent">{ev.type}</span>
+                {typeof ev.session_id === 'string' && (
+                  <span className="text-text-muted">
+                    {ev.session_id.slice(0, 8)}
+                  </span>
+                )}
+                {typeof ev.tool_name === 'string' && (
+                  <span className="text-text-secondary">{ev.tool_name}</span>
+                )}
+                {typeof ev.message === 'string' && (
+                  <span className="truncate text-text-muted">
+                    {ev.message.slice(0, 60)}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
