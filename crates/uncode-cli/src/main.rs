@@ -234,7 +234,7 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::spawn(async move {
         let mut tui = uncode_tui::TuiEngine::new();
-        tui.run(event_rx, move |text| {
+        tui.run(event_rx, move |text, cancel_token| {
             let d = driver_tui.clone();
             let t = tools_tui.clone();
             let s = store_tui.clone();
@@ -248,6 +248,7 @@ async fn main() -> anyhow::Result<()> {
                 if let Some(ref sid) = sid {
                     a.set_session_id(sid.clone());
                 }
+                a.set_cancel_token(cancel_token);
                 let _ = a.run(Message::user(expanded)).await;
             });
         })

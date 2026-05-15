@@ -35,6 +35,7 @@ authors = ["EA Team"]
 # ── Async ──
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
+tokio-util = "0.7"
 futures = "0.3"
 async-trait = "0.1"
 
