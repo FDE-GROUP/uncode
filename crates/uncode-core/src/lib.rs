@@ -10,6 +10,7 @@ pub mod event;
 pub mod message;
 pub mod model;
 pub mod session;
+pub mod skill;
 pub mod template;
 pub mod tool;
 
