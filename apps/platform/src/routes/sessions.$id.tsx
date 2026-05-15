@@ -1,6 +1,7 @@
 import { useNavigate, useParams } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeft } from 'lucide-react'
+import { useState } from 'react'
+import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react'
 import { fetchApi } from '@/lib/api'
 import type { ContentBlock, SessionDetail, SessionMetrics } from '../types'
 
@@ -36,7 +37,99 @@ function roleLabel(role: string | undefined): { text: string; color: string } {
   }
 }
 
-function ContentBlockView({ block }: { block: ContentBlock }) {
+function isDiffContent(content: string): boolean {
+  const lines = content.split('\n')
+  let diffLines = 0
+  for (const line of lines) {
+    if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('@@')) {
+      diffLines++
+    } else if (line.startsWith('+') || line.startsWith('-')) {
+      diffLines++
+    }
+  }
+  return diffLines > 3 && diffLines / lines.length > 0.3
+}
+
+function DiffView({ content, defaultExpanded = false }: { content: string; defaultExpanded?: boolean }) {
+  const [expanded, setExpanded] = useState(defaultExpanded)
+  const lines = content.split('\n')
+  const MAX_COLLAPSED = 8
+
+  const renderLine = (line: string, i: number) => {
+    let bgColor = ''
+    let textColor = 'text-text-primary'
+    let prefix = ' '
+
+    if (line.startsWith('+++') || line.startsWith('---')) {
+      bgColor = 'bg-accent/10'
+      textColor = 'text-accent'
+      prefix = ' '
+    } else if (line.startsWith('@@')) {
+      bgColor = 'bg-accent/5'
+      textColor = 'text-text-muted'
+      prefix = ' '
+    } else if (line.startsWith('+')) {
+      bgColor = 'bg-green-500/10'
+      textColor = 'text-green-400'
+      prefix = '+'
+    } else if (line.startsWith('-')) {
+      bgColor = 'bg-red-500/10'
+      textColor = 'text-red-400'
+      prefix = '-'
+    }
+
+    return (
+      <div key={i} className={`flex font-mono text-xs ${bgColor}`}>
+        <span className="w-5 shrink-0 select-none text-right text-text-muted/50">{prefix}</span>
+        <span className={`break-all ${textColor}`}>{line}</span>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded border border-border-subtle bg-hover/30">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full cursor-pointer items-center gap-1.5 px-3 py-2 text-xs text-text-secondary transition-colors hover:text-text-primary"
+      >
+        {expanded ? (
+          <ChevronDown className="h-3 w-3" />
+        ) : (
+          <ChevronRight className="h-3 w-3" />
+        )}
+        <span>diff</span>
+        <span className="text-text-muted">
+          ({lines.filter((l) => l.startsWith('+') && !l.startsWith('++')).length} added,{' '}
+          {lines.filter((l) => l.startsWith('-') && !l.startsWith('--')).length} removed)
+        </span>
+      </button>
+      {expanded && (
+        <div className="max-h-96 overflow-auto border-t border-border-subtle px-2 py-1">
+          {lines.map((line, i) => renderLine(line, i))}
+        </div>
+      )}
+      {!expanded && (
+        <div className="border-t border-border-subtle px-2 py-1">
+          {lines.slice(0, MAX_COLLAPSED).map((line, i) => renderLine(line, i))}
+          {lines.length > MAX_COLLAPSED && (
+            <div className="text-center text-xs text-text-muted">
+              ... {lines.length - MAX_COLLAPSED} more lines
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ContentBlockView({
+  block,
+  prevBlock,
+}: {
+  block: ContentBlock
+  prevBlock?: ContentBlock
+}) {
   switch (block.type) {
     case 'text':
       return (
@@ -52,22 +145,46 @@ function ContentBlockView({ block }: { block: ContentBlock }) {
           </p>
         </div>
       )
-    case 'tool_call':
+    case 'tool_call': {
+      const isWriteEdit = block.name === 'write' || block.name === 'edit'
+      const filePath =
+        typeof block.arguments.path === 'string'
+          ? block.arguments.path
+          : undefined
       return (
-        <div className="rounded border border-accent/30 bg-accent/5 px-3 py-2">
+        <div className={`rounded border px-3 py-2 ${
+          isWriteEdit
+            ? 'border-accent/30 bg-accent/5'
+            : 'border-border-subtle bg-hover/30'
+        }`}>
           <div className="flex items-center gap-2 text-sm">
-            <span className="text-accent">&#9881;</span>
-            <span className="font-medium text-accent">{block.name}</span>
-            <span className="text-text-muted">
-              ({Object.keys(block.arguments).join(', ')})
+            <span className={isWriteEdit ? 'text-accent' : 'text-text-muted'}>&#9881;</span>
+            <span className={`font-medium ${isWriteEdit ? 'text-accent' : 'text-text-secondary'}`}>
+              {block.name}
             </span>
+            {filePath && (
+              <span className="truncate font-mono text-xs text-text-secondary">{filePath}</span>
+            )}
+            {!filePath && (
+              <span className="text-text-muted">
+                ({Object.keys(block.arguments).join(', ')})
+              </span>
+            )}
           </div>
-          {typeof block.arguments.path === 'string' && (
-            <p className="mt-1 text-xs text-text-secondary">{block.arguments.path}</p>
-          )}
         </div>
       )
-    case 'tool_result':
+    }
+    case 'tool_result': {
+      const isFromWriteEdit =
+        prevBlock?.type === 'tool_call' &&
+        (prevBlock.name === 'write' || prevBlock.name === 'edit')
+      const content = block.content
+
+      if (isFromWriteEdit && isDiffContent(content)) {
+        return <DiffView content={content} />
+      }
+
+      const truncated = content.length > 300
       return (
         <div
           className={`rounded border px-3 py-2 ${
@@ -80,12 +197,11 @@ function ContentBlockView({ block }: { block: ContentBlock }) {
             {block.is_error ? '✗' : '✓'}
           </span>
           <span className="ml-1.5 text-xs text-text-secondary">
-            {block.content.length > 150
-              ? `${block.content.slice(0, 150)}...`
-              : block.content}
+            {truncated ? `${content.slice(0, 300)}...` : content}
           </span>
         </div>
       )
+    }
     case 'image':
       return <span className="text-xs text-text-muted">[image]</span>
   }
@@ -194,7 +310,11 @@ export function SessionDetailPage() {
                     </div>
                     <div className="space-y-1.5">
                       {entry.content.map((block, j) => (
-                        <ContentBlockView key={j} block={block} />
+                        <ContentBlockView
+                          key={j}
+                          block={block}
+                          prevBlock={j > 0 ? entry.content?.[j - 1] : undefined}
+                        />
                       ))}
                     </div>
                   </div>
