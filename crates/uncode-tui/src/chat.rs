@@ -402,7 +402,7 @@ fn render_message(
             } else if text.is_empty() {
                 vec![]
             } else {
-                crate::markdown::render_markdown(text)
+                crate::markdown::render_markdown_with_theme(text, theme)
             }
         }
         ChatMessage::Thinking { text, expanded } => {
@@ -413,7 +413,7 @@ fn render_message(
                         .fg(theme.markdown.heading)
                         .add_modifier(Modifier::BOLD),
                 ))];
-                let content_lines = crate::markdown::render_markdown(text);
+                let content_lines = crate::markdown::render_markdown_with_theme(text, theme);
                 lines.extend(
                     content_lines
                         .into_iter()
