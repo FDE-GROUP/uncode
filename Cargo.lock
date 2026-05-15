@@ -3112,6 +3112,7 @@ dependencies = [
  "uncode-agent",
  "uncode-core",
  "uncode-llm",
+ "uncode-rpc",
  "uncode-session",
  "uncode-tools",
  "uncode-tui",
@@ -3200,6 +3201,7 @@ name = "uncode-rpc"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "serde",
  "serde_json",
  "tokio",
@@ -3209,6 +3211,7 @@ dependencies = [
  "uncode-llm",
  "uncode-session",
  "uncode-tools",
+ "uuid",
 ]
 
 [[package]]

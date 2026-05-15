@@ -215,6 +215,11 @@ async fn main() -> anyhow::Result<()> {
         agent.set_session_id(session_id.clone());
     }
 
+    // --mode rpc: start JSON-RPC server on stdio
+    if cli.mode == "rpc" {
+        return run_rpc_mode(session_store, provider_registry, agent).await;
+    }
+
     // --issue：一次性执行后退出
     if let Some(issue_number) = cli.issue {
         let token = std::env::var("GITHUB_TOKEN").context("GITHUB_TOKEN not set")?;
@@ -374,6 +379,27 @@ async fn run_json_mode(agent: AgentLoop, prompt: String) -> anyhow::Result<()> {
 
     let _ = agent_handle.await?;
     Ok(())
+}
+
+async fn run_rpc_mode(
+    session_store: Arc<SessionStore>,
+    provider_registry: Arc<ProviderRegistry>,
+    agent: AgentLoop,
+) -> anyhow::Result<()> {
+    let server = Arc::new(uncode_rpc::RpcServer::new());
+
+    // Register core commands
+    uncode_rpc::register_core_commands(&server, session_store, provider_registry).await;
+
+    // Forward agent events as JSON-RPC notifications
+    let event_rx = agent.subscribe();
+    let server_clone = server.clone();
+    tokio::spawn(async move {
+        server_clone.forward_events(event_rx).await;
+    });
+
+    // Serve stdio
+    server.serve().await
 }
 
 fn run_templates() -> anyhow::Result<()> {
@@ -616,9 +642,7 @@ async fn resolve_prompt(cli: &Cli, prompt: String, cwd: &std::path::Path) -> Str
 
 fn run_platform(host: &str, port: u16) -> anyhow::Result<()> {
     let current_exe = std::env::current_exe()?;
-    let exe_dir = current_exe
-        .parent()
-        .context("无法确定可执行文件目录")?;
+    let exe_dir = current_exe.parent().context("无法确定可执行文件目录")?;
 
     let platform_bin = exe_dir.join("uncode-platform");
     if !platform_bin.exists() {
@@ -629,9 +653,7 @@ fn run_platform(host: &str, port: u16) -> anyhow::Result<()> {
 
     let frontend_dir = std::env::var("UNCODE_FRONTEND_DIR").unwrap_or_else(|_| {
         let cwd = std::env::current_dir().unwrap_or_default();
-        cwd.join("apps/platform/dist")
-            .to_string_lossy()
-            .to_string()
+        cwd.join("apps/platform/dist").to_string_lossy().to_string()
     });
 
     eprintln!("启动 Platform 服务器: http://{host}:{port}");

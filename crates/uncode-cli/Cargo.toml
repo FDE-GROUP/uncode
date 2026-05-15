@@ -20,6 +20,7 @@ uncode-session.workspace = true
 uncode-tools.workspace = true
 uncode-agent.workspace = true
 uncode-tui.workspace = true
+uncode-rpc.workspace = true
 
 tokio.workspace = true
 clap.workspace = true
