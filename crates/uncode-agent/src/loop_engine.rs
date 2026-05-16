@@ -187,17 +187,17 @@ impl AgentLoop {
             let request = CompletionRequest {
                 model: self.model.clone(),
                 messages: messages.clone(),
-                system: None,
+                system: Some(self.system_prompt.clone()),
                 max_tokens: Some(8192),
                 temperature: Some(0.7),
                 tools: tools.clone(),
             };
 
             let mut stream = self.driver.complete(request).await?;
-            let mut current_text = String::new();
-            let mut current_thinking = String::new();
-            let mut pending_tool_calls = Vec::new();
-            let mut tool_results = Vec::new();
+            let mut current_text = String::with_capacity(2048);
+            let mut current_thinking = String::with_capacity(1024);
+            let mut pending_tool_calls: Vec<(String, String, String)> = Vec::with_capacity(4);
+            let mut tool_results: Vec<ContentBlock> = Vec::with_capacity(4);
             let mut turn_input_tokens: u64 = 0;
             let mut turn_output_tokens: u64 = 0;
 
@@ -230,6 +230,10 @@ impl AgentLoop {
                     StreamEvent::ThinkingDelta(text) => {
                         if !text.is_empty() {
                             current_thinking.push_str(&text);
+                            self.emit(AgentEvent::ContentDelta {
+                                delta_type: uncode_core::event::DeltaType::Thinking,
+                                content: text,
+                            });
                         }
                     }
                     StreamEvent::TextDelta(text) => {
@@ -263,10 +267,17 @@ impl AgentLoop {
                         arguments,
                     } => {
                         info!("tool call end: {name} ({id})");
+                        // Push arguments summary to TUI immediately so the user
+                        // sees the file path / command BEFORE the tool executes.
+                        let args_detail = pending_tool_calls
+                            .iter()
+                            .find(|(tid, ..)| tid == &id)
+                            .map(|(_, _, a)| a.clone())
+                            .unwrap_or_else(|| arguments.to_string());
                         self.emit(AgentEvent::ToolCallProgress {
                             tool_id: id.clone(),
                             progress_type: uncode_core::event::ProgressType::Spinner,
-                            detail: format!("executing {name}"),
+                            detail: args_detail,
                         });
 
                         let tool = self.tool_registry.get(&name);
@@ -276,8 +287,15 @@ impl AgentLoop {
                                 match executor.execute(arguments.clone()).await {
                                     Ok(output) => {
                                         let duration = start.elapsed();
+                                        self.emit(AgentEvent::ToolCallProgress {
+                                            tool_id: id.clone(),
+                                            progress_type: uncode_core::event::ProgressType::Stdout,
+                                            detail: output.clone(),
+                                        });
                                         self.emit(AgentEvent::ToolCallEnd {
                                             tool_id: id.clone(),
+                                            tool_name: name.clone(),
+                                            arguments: arguments.to_string(),
                                             status: uncode_core::event::ToolCallStatus::Success,
                                             duration_ms: duration.as_millis() as u64,
                                             output_size: Some(output.len()),
@@ -289,6 +307,8 @@ impl AgentLoop {
                                         error!("tool {name} failed: {e}");
                                         self.emit(AgentEvent::ToolCallEnd {
                                             tool_id: id.clone(),
+                                            tool_name: name.clone(),
+                                            arguments: arguments.to_string(),
                                             status: uncode_core::event::ToolCallStatus::Failed,
                                             duration_ms: duration.as_millis() as u64,
                                             output_size: None,
@@ -301,6 +321,8 @@ impl AgentLoop {
                                 let msg = format!("tool '{name}' not found");
                                 self.emit(AgentEvent::ToolCallEnd {
                                     tool_id: id.clone(),
+                                    tool_name: name.clone(),
+                                    arguments: arguments.to_string(),
                                     status: uncode_core::event::ToolCallStatus::Failed,
                                     duration_ms: 0,
                                     output_size: None,
