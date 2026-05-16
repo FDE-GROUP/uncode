@@ -959,7 +959,9 @@ mod tests {
         });
 
         if let ChatMessage::ToolCall {
-            status, duration_ms, ..
+            status,
+            duration_ms,
+            ..
         } = &state.messages[1]
         {
             assert_eq!(*status, ToolCallRenderStatus::Success);
