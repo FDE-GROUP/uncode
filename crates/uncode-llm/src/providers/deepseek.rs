@@ -201,8 +201,16 @@ fn parse_deepseek_sse_chunk(text: &str, state: &mut DeepSeekStreamState) -> Vec<
                     if let Some(reason) = choice.get("finish_reason") {
                         if !reason.is_null() {
                             for (id, args) in state.pending_args.drain() {
-                                let parsed = serde_json::from_str::<serde_json::Value>(&args)
-                                    .unwrap_or(serde_json::Value::Object(Default::default()));
+                                let parsed = match serde_json::from_str::<serde_json::Value>(&args)
+                                {
+                                    Ok(v) => v,
+                                    Err(e) => {
+                                        events.push(StreamEvent::Error(format!(
+                                            "tool args JSON parse failed: {e}"
+                                        )));
+                                        serde_json::Value::Object(Default::default())
+                                    }
+                                };
                                 let name = state.tool_names.remove(&id).unwrap_or_default();
                                 events.push(StreamEvent::ToolCallEnd {
                                     id,

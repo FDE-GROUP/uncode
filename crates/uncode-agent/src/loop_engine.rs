@@ -334,7 +334,7 @@ impl AgentLoop {
                         }
 
                         let tool = self.tool_registry.get(&name);
-                        let result = match tool {
+                        let (result, is_error) = match tool {
                             Some(executor) => {
                                 let start = std::time::Instant::now();
                                 let exec_result = tokio::select! {
@@ -369,7 +369,7 @@ impl AgentLoop {
                                             duration_ms: duration.as_millis() as u64,
                                             output_size: Some(output.len()),
                                         });
-                                        output
+                                        (output, false)
                                     }
                                     Err(e) => {
                                         let duration = start.elapsed();
@@ -382,7 +382,7 @@ impl AgentLoop {
                                             duration_ms: duration.as_millis() as u64,
                                             output_size: None,
                                         });
-                                        format!("error: {e}")
+                                        (format!("error: {e}"), true)
                                     }
                                 }
                             }
@@ -396,7 +396,7 @@ impl AgentLoop {
                                     duration_ms: 0,
                                     output_size: None,
                                 });
-                                msg
+                                (msg, true)
                             }
                         };
 
@@ -404,7 +404,7 @@ impl AgentLoop {
                             uncode_core::message::ToolResult {
                                 tool_call_id: id,
                                 content: result,
-                                is_error: false,
+                                is_error,
                             },
                         ));
                     }

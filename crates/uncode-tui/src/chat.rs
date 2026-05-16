@@ -326,9 +326,10 @@ impl ChatState {
         theme: &Theme,
         tick: usize,
     ) -> Vec<Line<'static>> {
+        // Take ownership of old cached lines instead of cloning
         let old_lines = self.line_counts[idx]
             .cached_lines
-            .clone()
+            .take()
             .unwrap_or_default();
         let old_count = old_lines.len();
 
