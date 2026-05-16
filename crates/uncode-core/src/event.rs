@@ -1,7 +1,9 @@
 use chrono::{DateTime, Utc};
+use futures::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 
 use crate::message::{Role, UsageInfo};
+use crate::tool::ToolContent;
 
 /// Agent 向 TUI/Platform 广播的事件，驱动对话区更新
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -165,31 +167,70 @@ pub enum ErrorCategory {
     Config,
 }
 
-/// Type-erased handler for a specific AgentEvent variant.
-pub type EventHandler = Box<dyn Fn(&AgentEvent) + Send + Sync>;
+/// Hook 返回值 — 事件监听器可返回控制指令修改 Agent 行为
+#[derive(Debug, Clone, Default)]
+pub enum HookResult {
+    /// 无干预，继续正常流程
+    #[default]
+    Continue,
+    /// 阻止执行（如阻止工具调用）
+    Block { reason: String },
+    /// 替换上下文消息数组
+    PatchMessages {
+        messages: Vec<crate::message::Message>,
+    },
+    /// 修改工具执行结果
+    PatchToolResult {
+        content: Option<Vec<ToolContent>>,
+        terminate: Option<bool>,
+    },
+    /// 取消压缩操作
+    CancelCompaction,
+}
+
+/// 同步观察 handler（fire-and-forget，不返回值）
+pub type SyncEventHandler = Box<dyn Fn(&AgentEvent) + Send + Sync>;
+
+/// 异步 hook handler（可返回 HookResult 控制指令）
+pub type AsyncHookHandler =
+    Box<dyn for<'a> Fn(&'a AgentEvent) -> BoxFuture<'a, HookResult> + Send + Sync>;
 
 /// EventRouter dispatches AgentEvents to type-specific handlers,
 /// aligned with Pi's `on(type, handler)` subscription pattern.
+///
+/// 双通道设计：
+/// - sync_handlers：观察型，fire-and-forget
+/// - hook_handlers：控制型，异步返回 HookResult
 pub struct EventRouter {
-    handlers: std::collections::HashMap<String, Vec<EventHandler>>,
+    sync_handlers: std::collections::HashMap<String, Vec<SyncEventHandler>>,
+    hook_handlers: std::collections::HashMap<String, Vec<AsyncHookHandler>>,
 }
 
 impl EventRouter {
     pub fn new() -> Self {
         Self {
-            handlers: std::collections::HashMap::new(),
+            sync_handlers: std::collections::HashMap::new(),
+            hook_handlers: std::collections::HashMap::new(),
         }
     }
 
-    /// Register a handler for a specific event type (by serde tag name).
-    pub fn on(&mut self, event_type: &str, handler: EventHandler) {
-        self.handlers
+    /// Register a sync observation handler for a specific event type (by serde tag name).
+    pub fn on(&mut self, event_type: &str, handler: SyncEventHandler) {
+        self.sync_handlers
             .entry(event_type.to_string())
             .or_default()
             .push(handler);
     }
 
-    /// Dispatch an event to all registered handlers for its type.
+    /// Register an async hook handler that can return control instructions.
+    pub fn on_hook(&mut self, event_type: &str, handler: AsyncHookHandler) {
+        self.hook_handlers
+            .entry(event_type.to_string())
+            .or_default()
+            .push(handler);
+    }
+
+    /// Dispatch an event to all sync handlers (fire-and-forget).
     pub fn dispatch(&self, event: &AgentEvent) {
         let tag = match serde_json::to_value(event) {
             Ok(serde_json::Value::Object(map)) => map
@@ -199,11 +240,31 @@ impl EventRouter {
                 .to_string(),
             _ => return,
         };
-        if let Some(handlers) = self.handlers.get(&tag) {
+        if let Some(handlers) = self.sync_handlers.get(&tag) {
             for h in handlers {
                 h(event);
             }
         }
+    }
+
+    /// Dispatch an event to all hook handlers and collect results.
+    /// Returns Vec<HookResult> for the caller to aggregate.
+    pub async fn dispatch_hooks(&self, event: &AgentEvent) -> Vec<HookResult> {
+        let tag = match serde_json::to_value(event) {
+            Ok(serde_json::Value::Object(map)) => map
+                .get("type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            _ => return Vec::new(),
+        };
+        let mut results = Vec::new();
+        if let Some(handlers) = self.hook_handlers.get(&tag) {
+            for h in handlers {
+                results.push(h(event).await);
+            }
+        }
+        results
     }
 }
 

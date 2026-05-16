@@ -18,6 +18,17 @@ pub struct Context {
 
 // ── StreamOptions ──
 
+/// LLM 传输协议
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Transport {
+    #[default]
+    Sse,
+    WebSocket,
+    WebSocketCached,
+    Auto,
+}
+
 /// 请求参数，每次调用可独立设置
 #[derive(Clone, Default)]
 pub struct StreamOptions {
@@ -35,6 +46,8 @@ pub struct StreamOptions {
     pub cache_retention: Option<CacheRetention>,
     pub on_payload: Option<Arc<dyn Fn(&serde_json::Value) + Send + Sync>>,
     pub on_response: Option<Arc<dyn Fn(u16, &HashMap<String, String>) + Send + Sync>>,
+    pub transport: Option<Transport>,
+    pub metadata: Option<HashMap<String, String>>,
 }
 
 // ── Thinking ──

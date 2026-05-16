@@ -2,12 +2,14 @@ use futures::StreamExt;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
 use crate::steering::MessageQueue;
 use uncode_core::api_types::{Context, StreamOptions, ThinkingLevel};
+use uncode_core::error::HarnessError;
 use uncode_core::error::UncodeError;
 use uncode_core::event::AgentEvent;
 use uncode_core::event::ToolCallStatus;
@@ -40,6 +42,7 @@ pub struct AgentLoop {
     should_stop_after_turn: Option<Arc<dyn Fn(u64) -> bool + Send + Sync>>,
     prepare_next_turn: Option<Arc<dyn Fn() + Send + Sync>>,
     transform_context: Option<Arc<dyn Fn(&mut Vec<Message>) + Send + Sync>>,
+    active_run: Arc<AtomicBool>,
 }
 
 impl AgentLoop {
@@ -69,6 +72,7 @@ impl AgentLoop {
             should_stop_after_turn: None,
             prepare_next_turn: None,
             transform_context: None,
+            active_run: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -99,6 +103,7 @@ impl AgentLoop {
             should_stop_after_turn: None,
             prepare_next_turn: None,
             transform_context: None,
+            active_run: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -112,6 +117,14 @@ impl AgentLoop {
 
     pub fn set_session_id(&mut self, session_id: String) {
         self.session_id = Some(session_id);
+    }
+
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+
+    pub fn set_model_id(&mut self, model_id: String) {
+        self.model_id = model_id;
     }
 
     pub fn set_cancel_token(&mut self, token: CancellationToken) {
@@ -268,7 +281,43 @@ impl AgentLoop {
         tool_result
     }
 
+    /// Wait until no run is active (for external synchronization)
+    pub async fn wait_for_idle(&self) {
+        while self.active_run.load(Ordering::Acquire) {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+
+    /// Reset internal state: clear transcript, runtime state, and queues.
+    pub async fn reset(&self) {
+        self.cancel_token.cancel();
+        let mut mq = self.message_queue.lock().await;
+        mq.clear_all();
+        self.active_run.store(false, Ordering::Release);
+    }
+
     pub async fn run(&self, user_message: Message) -> Result<Vec<Message>, UncodeError> {
+        // ActiveRun guard: reject concurrent runs
+        if self
+            .active_run
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(UncodeError::Harness(HarnessError::Busy {
+                phase: "run".to_string(),
+                code: 5001,
+            }));
+        }
+
+        let result = self.run_inner(user_message).await;
+
+        // Always clear active_run flag
+        self.active_run.store(false, Ordering::Release);
+
+        result
+    }
+
+    async fn run_inner(&self, user_message: Message) -> Result<Vec<Message>, UncodeError> {
         let session_id = match &self.session_id {
             Some(id) => id.clone(),
             None => {
@@ -310,7 +359,12 @@ impl AgentLoop {
 
         // Build context from session store (picks up all previous messages for resume)
         let built = crate::context_builder::build_context(&self.session_store, &session_id)
-            .map_err(|e| UncodeError::Session(e.to_string()))?;
+            .map_err(|e| {
+                UncodeError::Harness(uncode_core::error::HarnessError::Other {
+                    message: e.to_string(),
+                    code: 5099,
+                })
+            })?;
         let mut messages = built.messages;
         let mut effective_thinking_level = built.effective_thinking_level;
         messages.insert(0, Message::system(self.system_prompt.clone()));
@@ -366,10 +420,10 @@ impl AgentLoop {
                 // Inject pending messages (steering/nextTurn/followUp unified)
                 if !pending_messages.is_empty() {
                     for msg in pending_messages.drain(..) {
-                        if let Err(e) = self.session_store.append_entry(
-                            &session_id,
-                            &SessionEntry::Message(msg.clone().into()),
-                        ) {
+                        if let Err(e) = self
+                            .session_store
+                            .append_entry(&session_id, &SessionEntry::Message(msg.clone().into()))
+                        {
                             debug!("persist pending message skipped: {e}");
                         }
                         messages.push(msg);
@@ -400,9 +454,16 @@ impl AgentLoop {
                     .await
                     {
                         Ok(Some(summary)) => {
-                            let rebuilt =
-                                crate::context_builder::build_context(&self.session_store, &session_id)
-                                    .map_err(|e| UncodeError::Session(e.to_string()))?;
+                            let rebuilt = crate::context_builder::build_context(
+                                &self.session_store,
+                                &session_id,
+                            )
+                            .map_err(|e| {
+                                UncodeError::Harness(uncode_core::error::HarnessError::Other {
+                                    message: e.to_string(),
+                                    code: 5099,
+                                })
+                            })?;
                             let tokens_before = summary.tokens_before;
                             let summary_text = summary.summary.clone();
                             let entries_before = {
@@ -576,7 +637,8 @@ impl AgentLoop {
                             pending_tool_calls.push((id, name, String::new()));
                         }
                         StreamEvent::ToolCallDelta { id, arguments } => {
-                            if let Some(tc) = pending_tool_calls.iter_mut().find(|(tid, ..)| tid == &id)
+                            if let Some(tc) =
+                                pending_tool_calls.iter_mut().find(|(tid, ..)| tid == &id)
                             {
                                 tc.2.push_str(&arguments);
 
@@ -696,29 +758,30 @@ impl AgentLoop {
                             if !executions.is_empty() {
                                 // Pi strategy: if ANY tool is sequential, run ALL sequentially
                                 let has_sequential = executions.iter().any(|(_, name, _)| {
-                                    self.tool_registry.execution_mode(name) == ExecutionMode::Sequential
+                                    self.tool_registry.execution_mode(name)
+                                        == ExecutionMode::Sequential
                                 });
 
-                                let all_outcomes: Vec<(String, String, ToolResult)> = if has_sequential
-                                {
-                                    let mut outcomes = Vec::with_capacity(executions.len());
-                                    for (id, name, args) in executions {
-                                        let outcome = self
-                                            .execute_single_tool(&session_id, &id, &name, args)
-                                            .await;
-                                        outcomes.push((id, name, outcome));
-                                        if self.cancel_token.is_cancelled() {
-                                            break;
+                                let all_outcomes: Vec<(String, String, ToolResult)> =
+                                    if has_sequential {
+                                        let mut outcomes = Vec::with_capacity(executions.len());
+                                        for (id, name, args) in executions {
+                                            let outcome = self
+                                                .execute_single_tool(&session_id, &id, &name, args)
+                                                .await;
+                                            outcomes.push((id, name, outcome));
+                                            if self.cancel_token.is_cancelled() {
+                                                break;
+                                            }
                                         }
-                                    }
-                                    outcomes
-                                } else {
-                                    let registry = Arc::clone(&self.tool_registry);
-                                    let cancel = self.cancel_token.clone();
-                                    let tx = self.event_tx.clone();
-                                    let hooks = self.tool_hooks.clone();
+                                        outcomes
+                                    } else {
+                                        let registry = Arc::clone(&self.tool_registry);
+                                        let cancel = self.cancel_token.clone();
+                                        let tx = self.event_tx.clone();
+                                        let hooks = self.tool_hooks.clone();
 
-                                    futures::future::join_all(executions.into_iter().map(
+                                        futures::future::join_all(executions.into_iter().map(
                                             move |(id, name, args)| {
                                                 let reg = registry.clone();
                                                 let ct = cancel.clone();
@@ -838,7 +901,7 @@ impl AgentLoop {
                                             },
                                         ))
                                         .await
-                                };
+                                    };
 
                                 // Persist results, emit events, check terminate
                                 let mut should_terminate = !all_outcomes.is_empty();
@@ -857,16 +920,19 @@ impl AgentLoop {
                                         },
                                         duration_ms: 0,
                                         output_size: Some(content_text.len()),
-                                        result_summary: Some(content_text.chars().take(200).collect()),
+                                        result_summary: Some(
+                                            content_text.chars().take(200).collect(),
+                                        ),
                                         is_error,
                                     });
 
-                                    let result_block =
-                                        ContentBlock::ToolResult(uncode_core::message::ToolResult {
+                                    let result_block = ContentBlock::ToolResult(
+                                        uncode_core::message::ToolResult {
                                             tool_call_id: id.clone(),
                                             content: content_text,
                                             is_error,
-                                        });
+                                        },
+                                    );
                                     let tool_msg = Message::new(Role::Tool, vec![result_block]);
                                     self.emit(AgentEvent::MessageStart {
                                         role: Role::Tool,

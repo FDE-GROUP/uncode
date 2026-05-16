@@ -156,6 +156,47 @@ pub struct ModelPricingPerMillion {
     pub cache_write: f64,
 }
 
+/// 将请求的 thinking level 降级到模型实际支持的最近级别。
+///
+/// 逻辑：查 `model.thinking_level_map`，如果请求的级别存在则直接返回；
+/// 否则按 Off < Minimal < Low < Medium < High < XHigh 顺序向下寻找最近的可用级别。
+/// 空 map 意味着模型不支持 thinking，返回 Off。
+pub fn clamp_thinking_level(requested: ThinkingLevel, model: &Model) -> ThinkingLevel {
+    const LEVELS: [ThinkingLevel; 6] = [
+        ThinkingLevel::Off,
+        ThinkingLevel::Minimal,
+        ThinkingLevel::Low,
+        ThinkingLevel::Medium,
+        ThinkingLevel::High,
+        ThinkingLevel::XHigh,
+    ];
+
+    // Off 始终可用
+    if requested == ThinkingLevel::Off {
+        return ThinkingLevel::Off;
+    }
+
+    // 空 map → 不支持 thinking
+    if model.thinking_level_map.is_empty() {
+        return ThinkingLevel::Off;
+    }
+
+    // 精确匹配
+    if model.thinking_level_map.contains_key(&requested) {
+        return requested;
+    }
+
+    // 向下降级：找到请求级别在 LEVELS 中的位置，向下搜索
+    let req_idx = LEVELS.iter().position(|&l| l == requested).unwrap_or(0);
+    for &level in LEVELS.iter().rev().skip(LEVELS.len() - req_idx) {
+        if model.thinking_level_map.contains_key(&level) {
+            return level;
+        }
+    }
+
+    ThinkingLevel::Off
+}
+
 fn default_context_window() -> u32 {
     128_000
 }

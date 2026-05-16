@@ -21,6 +21,10 @@ schemars.workspace = true
 reqwest.workspace = true
 dirs.workspace = true
 tokio-util.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

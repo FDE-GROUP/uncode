@@ -1,13 +1,14 @@
 //! uncode-agent — 代理循环引擎
 //!
 //! 编排 LLM 调用 → 工具执行 → 事件广播 → 循环的主流程。
-//! `AgentLoop` 是核心引擎，`GitHubClient` 提供 Issue/PR 集成能力。
+//! `AgentHarness` 是生产编排器，`AgentLoop` 是核心执行引擎，`GitHubClient` 提供 Issue/PR 集成能力。
 
 pub mod branch_summarization;
 pub mod compaction;
 pub mod context;
 pub mod context_builder;
 pub mod github;
+pub mod harness;
 pub mod loop_engine;
 pub mod model_switch;
 pub mod steering;
@@ -21,6 +22,7 @@ pub use compaction::{
 };
 pub use context::ContextLoader;
 pub use github::GitHubClient;
+pub use harness::{AgentHarness, AgentHarnessPhase, HarnessResources};
 pub use loop_engine::AgentLoop;
 pub use stop::{StopCondition, StopReason, step_count_is, text_contains};
 pub use system_prompt::SystemPromptBuilder;

@@ -5,14 +5,20 @@ use uncode_core::tool::{
     ExecutionMode, ToolContent, ToolContext, ToolDefinition, ToolExecutor, ToolProgress, ToolResult,
 };
 
+use crate::local_env::{clean_binary_output, truncate_output};
+
+const DEFAULT_MAX_OUTPUT_BYTES: usize = 50 * 1024; // 50KB
+
 pub struct BashTool {
     default_timeout_secs: u64,
+    max_output_bytes: usize,
 }
 
 impl BashTool {
     pub fn new() -> Self {
         Self {
             default_timeout_secs: 120,
+            max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
         }
     }
 }
@@ -65,15 +71,18 @@ impl ToolExecutor for BashTool {
         .map_err(|_| uncode_core::error::UncodeError::Tool("timeout".into()))?
         .map_err(|e| uncode_core::error::UncodeError::Tool(format!("bash: {e}")))?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = clean_binary_output(&output.stdout);
+        let stderr = clean_binary_output(&output.stderr);
 
         let mut parts: Vec<String> = Vec::new();
         if !stdout.is_empty() {
-            parts.push(stdout.into_owned());
+            parts.push(truncate_output(&stdout, self.max_output_bytes));
         }
         if !stderr.is_empty() {
-            parts.push(format!("stderr:\n{stderr}"));
+            parts.push(format!(
+                "stderr:\n{}",
+                truncate_output(&stderr, self.max_output_bytes)
+            ));
         }
         if !output.status.success() {
             parts.push(format!("exit code: {}", output.status.code().unwrap_or(-1)));
@@ -180,6 +189,7 @@ impl ToolExecutor for BashTool {
             output.push_str(&format!("exit code: {}\n", status.code().unwrap_or(-1)));
         }
 
+        let output = truncate_output(&output, self.max_output_bytes);
         let is_error = !status.success();
         Ok(ToolResult {
             content: vec![ToolContent::Text(output)],

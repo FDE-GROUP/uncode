@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 /// 工具定义，传递给 LLM 的 JSON Schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,4 +189,71 @@ pub trait ToolExecutor: Send + Sync {
         let output = self.execute(arguments).await?;
         Ok(ToolResult::ok(output))
     }
+}
+
+// ── ExecutionEnv ──
+
+/// 文件元信息
+#[derive(Debug, Clone)]
+pub struct FileInfo {
+    pub path: PathBuf,
+    pub size: u64,
+    pub is_dir: bool,
+    pub is_file: bool,
+    pub is_symlink: bool,
+    pub modified: Option<std::time::SystemTime>,
+}
+
+/// 目录条目
+#[derive(Debug, Clone)]
+pub struct DirEntry {
+    pub name: String,
+    pub is_dir: bool,
+    pub is_file: bool,
+    pub is_symlink: bool,
+}
+
+/// Shell 执行选项
+#[derive(Debug, Clone, Default)]
+pub struct ShellOptions {
+    pub workdir: Option<PathBuf>,
+    pub timeout_ms: Option<u64>,
+    pub env: Option<std::collections::HashMap<String, String>>,
+}
+
+/// Shell 执行结果
+#[derive(Debug, Clone)]
+pub struct ShellResult {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+    pub cancelled: bool,
+}
+
+/// 文件系统抽象
+#[async_trait]
+pub trait FileSystem: Send + Sync {
+    async fn read_text_file(&self, path: &Path) -> Result<String, crate::error::UncodeError>;
+    async fn write_file(&self, path: &Path, content: &str)
+    -> Result<(), crate::error::UncodeError>;
+    async fn file_info(&self, path: &Path) -> Result<FileInfo, crate::error::UncodeError>;
+    async fn list_dir(&self, path: &Path) -> Result<Vec<DirEntry>, crate::error::UncodeError>;
+    async fn exists(&self, path: &Path) -> Result<bool, crate::error::UncodeError>;
+    async fn canonical_path(&self, path: &Path) -> Result<PathBuf, crate::error::UncodeError>;
+}
+
+/// Shell 抽象
+#[async_trait]
+pub trait Shell: Send + Sync {
+    async fn exec(
+        &self,
+        cmd: &str,
+        opts: ShellOptions,
+    ) -> Result<ShellResult, crate::error::UncodeError>;
+}
+
+/// 执行环境 = FileSystem + Shell
+pub trait ExecutionEnv: Send + Sync {
+    fn fs(&self) -> &dyn FileSystem;
+    fn shell(&self) -> &dyn Shell;
 }

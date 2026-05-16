@@ -235,6 +235,7 @@ pub async fn compact_session(
 ///
 /// Walks from the end, accumulating tokens. When the accumulated tokens reach
 /// `keep_recent_tokens`, walks forward to find a User message for a clean cut boundary.
+/// Detects split-turn (assistant + tool results separated) and moves cut to turn boundary.
 /// Returns the id of the first entry to KEEP; everything before it is compacted.
 pub(crate) fn find_cut_point(entries: &[SessionEntry], keep_recent_tokens: u64) -> Option<String> {
     let mut accumulated: u64 = 0;
@@ -253,8 +254,8 @@ pub(crate) fn find_cut_point(entries: &[SessionEntry], keep_recent_tokens: u64) 
     let threshold_idx = threshold_idx?;
 
     // Walk forward from threshold to find a User message (clean turn boundary)
-    for entry in entries.iter().skip(threshold_idx) {
-        if let SessionEntry::Message(me) = entry {
+    for i in threshold_idx..entries.len() {
+        if let SessionEntry::Message(me) = &entries[i] {
             if me.role == Role::User {
                 return Some(me.id.clone());
             }
@@ -262,6 +263,69 @@ pub(crate) fn find_cut_point(entries: &[SessionEntry], keep_recent_tokens: u64) 
     }
 
     // No clean User boundary found after threshold
+    None
+}
+
+/// Detect if a cut at `cut_idx` would split a turn (assistant mid-turn without tool results).
+/// Returns true if the cut separates an assistant message from its subsequent tool results.
+#[cfg(test)]
+pub(crate) fn is_split_turn(entries: &[SessionEntry], cut_idx: usize) -> bool {
+    if cut_idx >= entries.len() {
+        return false;
+    }
+    // Look backward from cut: if the entry just before cut is Assistant with ToolCalls,
+    // and entries at/after cut include Tool results, it's a split turn.
+    let mut has_tool_call_before = false;
+    for i in (0..cut_idx).rev() {
+        if let SessionEntry::Message(me) = &entries[i] {
+            match me.role {
+                Role::Assistant => {
+                    has_tool_call_before = me
+                        .content
+                        .iter()
+                        .any(|b| matches!(b, ContentBlock::ToolCall(_)));
+                    break;
+                }
+                Role::User => break,
+                _ => continue,
+            }
+        }
+    }
+
+    if !has_tool_call_before {
+        return false;
+    }
+
+    // Check if entries at/after cut start with Tool results
+    for entry in entries.iter().skip(cut_idx) {
+        if let SessionEntry::Message(me) = entry {
+            return me.role == Role::Tool;
+        }
+    }
+
+    false
+}
+
+/// Adjust cut point to avoid splitting a turn. If split-turn detected, move cut backward
+/// to the User message that started the incomplete turn.
+#[cfg(test)]
+pub(crate) fn adjust_for_split_turn(entries: &[SessionEntry], cut_idx: usize) -> Option<String> {
+    if !is_split_turn(entries, cut_idx) {
+        return entries.get(cut_idx).and_then(|e| match e {
+            SessionEntry::Message(me) => Some(me.id.clone()),
+            _ => None,
+        });
+    }
+
+    // Walk backward from cut_idx to find the User that started this turn
+    for i in (0..cut_idx).rev() {
+        if let SessionEntry::Message(me) = &entries[i] {
+            if me.role == Role::User {
+                return Some(me.id.clone());
+            }
+        }
+    }
+
     None
 }
 
@@ -339,6 +403,49 @@ fn extract_files_from_entries(entries: &[&MessageEntry]) -> (Vec<String>, Vec<St
     (files_read, files_modified)
 }
 
+/// Summarization prompt for first-time compaction (8-section format).
+const SUMMARIZATION_PROMPT: &str = "\
+请分析以下对话内容，生成一个结构化摘要，严格使用以下 8 节格式：
+
+## Goal
+（对话的最终目标）
+
+## Constraints & Preferences
+（用户提出的约束、偏好、技术选型等）
+
+## Progress
+### Done
+（已完成的工作项）
+### In Progress
+（正在进行的工作项）
+### Blocked
+（被阻塞的工作项及原因）
+
+## Key Decisions
+（已做出的关键设计/架构决策）
+
+## Next Steps
+（接下来应执行的具体步骤）
+
+## Critical Context
+（必须记住的关键上下文信息，如文件路径、错误信息、配置值等）
+
+对话内容：
+";
+
+/// Prompt for incremental summary update.
+const UPDATE_SUMMARIZATION_PROMPT: &str = "\
+你是一个会话摘要助手。以下是之前的历史摘要和新的对话内容。
+
+指令：
+- PRESERVE 已有内容——不要删除或改写已有信息
+- ADD 新信息到对应章节
+- MOVE 在 Done/In Progress/Blocked 之间移动变化了状态的工作项
+- UPDATE Next Steps 为最新的下一步计划
+
+之前的摘要：
+";
+
 async fn generate_summary(
     conversation: &str,
     prev_summary: Option<&str>,
@@ -347,12 +454,10 @@ async fn generate_summary(
     api_keys: &HashMap<String, String>,
 ) -> anyhow::Result<String> {
     let prompt = match prev_summary {
-        Some(prev) => format!(
-            "请用2-3句话总结以下对话的关键内容。以下是之前的历史摘要：\n{prev}\n\n新的对话内容：\n{conversation}\n\n请合并以上信息，生成一个统一的摘要，包含：目标、已完成工作、当前进展。"
-        ),
-        None => format!(
-            "请用2-3句话总结以下对话的关键内容：目标、已完成工作、当前进展。\n\n{conversation}"
-        ),
+        Some(prev) => {
+            format!("{UPDATE_SUMMARIZATION_PROMPT}\n{prev}\n\n新的对话内容：\n{conversation}")
+        }
+        None => format!("{SUMMARIZATION_PROMPT}\n{conversation}"),
     };
 
     let api_key = api_keys.get(&model.provider).cloned();
@@ -642,5 +747,97 @@ mod tests {
         assert!(should_compact_session(&store, "test-session", 1000));
 
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    // ── split-turn detection tests ──
+
+    #[test]
+    fn test_is_split_turn_false() {
+        let entries = vec![
+            make_msg_entry("u1", Role::User, "hello"),
+            make_msg_entry("a1", Role::Assistant, "world"),
+            make_msg_entry("u2", Role::User, "next"),
+        ];
+        // cut at u2 (idx=2): a1 has no tool calls → not split
+        assert!(!is_split_turn(&entries, 2));
+    }
+
+    #[test]
+    fn test_is_split_turn_true() {
+        let entries = vec![
+            make_msg_entry("u1", Role::User, "hello"),
+            SessionEntry::Message(MessageEntry {
+                id: "a1".into(),
+                parent_id: None,
+                timestamp: chrono::Utc::now(),
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolCall(ToolCall {
+                    id: "tc1".into(),
+                    name: "read".into(),
+                    arguments: serde_json::json!({"path": "/test.rs"}),
+                })],
+                usage: None,
+            }),
+            SessionEntry::Message(MessageEntry {
+                id: "t1".into(),
+                parent_id: None,
+                timestamp: chrono::Utc::now(),
+                role: Role::Tool,
+                content: vec![ContentBlock::ToolResult(ToolResult {
+                    tool_call_id: "tc1".into(),
+                    content: "file contents".into(),
+                    is_error: false,
+                })],
+                usage: None,
+            }),
+            make_msg_entry("u2", Role::User, "next"),
+        ];
+        // cut at t1 (idx=2): a1 has tool call, t1 is Tool → split turn
+        assert!(is_split_turn(&entries, 2));
+    }
+
+    #[test]
+    fn test_adjust_for_split_turn_no_split() {
+        let entries = vec![
+            make_msg_entry("u1", Role::User, "hello"),
+            make_msg_entry("a1", Role::Assistant, "world"),
+            make_msg_entry("u2", Role::User, "next"),
+        ];
+        // cut at u2, no split → returns u2
+        assert_eq!(adjust_for_split_turn(&entries, 2), Some("u2".into()));
+    }
+
+    #[test]
+    fn test_adjust_for_split_turn_moves_back() {
+        let entries = vec![
+            make_msg_entry("u1", Role::User, "read this"),
+            SessionEntry::Message(MessageEntry {
+                id: "a1".into(),
+                parent_id: None,
+                timestamp: chrono::Utc::now(),
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolCall(ToolCall {
+                    id: "tc1".into(),
+                    name: "read".into(),
+                    arguments: serde_json::json!({"path": "/test.rs"}),
+                })],
+                usage: None,
+            }),
+            SessionEntry::Message(MessageEntry {
+                id: "t1".into(),
+                parent_id: None,
+                timestamp: chrono::Utc::now(),
+                role: Role::Tool,
+                content: vec![ContentBlock::ToolResult(ToolResult {
+                    tool_call_id: "tc1".into(),
+                    content: "contents".into(),
+                    is_error: false,
+                })],
+                usage: None,
+            }),
+            make_msg_entry("u2", Role::User, "continue"),
+        ];
+        // cut at t1 (idx=2): split detected → move back to u1
+        assert_eq!(adjust_for_split_turn(&entries, 2), Some("u1".into()));
     }
 }

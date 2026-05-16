@@ -69,6 +69,32 @@ impl TemplateStore {
         Some(result)
     }
 
+    /// 渲染模板，支持 Shell 风格位置参数：
+    /// - `$1`, `$2`, ... → 位置参数
+    /// - `$@` / `$ARGUMENTS` → 全部参数
+    /// - `${@:N}` → 从第 N 个参数开始
+    /// - `${@:N:L}` → 从第 N 个参数开始，取 L 个
+    pub fn render_with_positional_args(&self, name: &str, args: &[&str]) -> Option<String> {
+        let tpl = self.templates.get(name)?;
+        let mut result = tpl.prompt.clone();
+
+        // Replace $1, $2, ... positional args
+        for (i, arg) in args.iter().enumerate() {
+            let idx = i + 1; // 1-indexed
+            result = result.replace(&format!("${idx}"), arg);
+        }
+
+        // Replace $@ and $ARGUMENTS with all args joined
+        let all_args = args.join(" ");
+        result = result.replace("$@", &all_args);
+        result = result.replace("$ARGUMENTS", &all_args);
+
+        // Replace ${@:N} and ${@:N:L}
+        result = replace_positional_slices(&result, args);
+
+        Some(result)
+    }
+
     /// 返回模板的系统 prompt（如果有）
     pub fn system_prompt(&self, name: &str) -> Option<&str> {
         self.templates.get(name).map(|t| t.system.as_str())
@@ -126,6 +152,55 @@ fn builtins() -> Vec<Template> {
             prompt: "请为以下 {{language}} 代码生成文档。\n\n包含：\n1. 模块/函数概述\n2. 参数说明\n3. 返回值说明\n4. 使用示例\n\n请用中文回复。".into(),
         },
     ]
+}
+
+/// Replace `${@:N}` and `${@:N:L}` patterns with sliced args (1-indexed).
+fn replace_positional_slices(template: &str, args: &[&str]) -> String {
+    let mut result = String::with_capacity(template.len());
+    let mut i = 0;
+    let bytes = template.as_bytes();
+
+    while i < bytes.len() {
+        if template[i..].starts_with("${@:") {
+            let rest = &template[i + 4..];
+            if let Some(close) = rest.find('}') {
+                let inner = &rest[..close];
+                let slice = parse_slice_args(inner, args);
+                result.push_str(&slice);
+                i += 4 + close + 1; // skip ${@:...}
+                continue;
+            }
+        }
+        // Copy one char (handle multi-byte UTF-8)
+        let c = template[i..].chars().next().unwrap();
+        result.push(c);
+        i += c.len_utf8();
+    }
+
+    result
+}
+
+/// Parse `N` or `N:L` from slice pattern, return joined args.
+fn parse_slice_args(inner: &str, args: &[&str]) -> String {
+    let (start_str, limit_str) = if let Some((s, l)) = inner.split_once(':') {
+        (s, Some(l))
+    } else {
+        (inner, None)
+    };
+
+    let start: usize = start_str
+        .trim()
+        .parse::<usize>()
+        .unwrap_or(1)
+        .saturating_sub(1);
+    let limit: Option<usize> = limit_str.and_then(|l| l.trim().parse().ok());
+
+    let slice: Vec<&str> = if let Some(limit) = limit {
+        args.iter().skip(start).take(limit).copied().collect()
+    } else {
+        args.iter().skip(start).copied().collect()
+    };
+    slice.join(" ")
 }
 
 /// 解析 CLI 的 --var 参数 "key=value" 格式
@@ -220,5 +295,89 @@ mod tests {
     fn test_render_nonexistent() {
         let store = TemplateStore::load();
         assert!(store.render("nonexistent", &HashMap::new()).is_none());
+    }
+
+    // ── render_with_positional_args tests ──
+
+    #[test]
+    fn test_positional_args_dollar_1() {
+        let result = replace_positional_slices(
+            "file is $1, done",
+            &["src/main.rs".as_ref(), "yes".as_ref()],
+        );
+        // $1 replacement happens in render_with_positional_args, not in replace_positional_slices
+        // replace_positional_slices only handles ${@:N} patterns
+        assert_eq!(result, "file is $1, done");
+    }
+
+    #[test]
+    fn test_positional_args_slice_from() {
+        let args = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let result = replace_positional_slices(
+            "tail: ${@:2}",
+            &args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        );
+        assert_eq!(result, "tail: b c");
+    }
+
+    #[test]
+    fn test_positional_args_slice_with_limit() {
+        let args = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+        ];
+        let result = replace_positional_slices(
+            "mid: ${@:2:2}",
+            &args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        );
+        assert_eq!(result, "mid: b c");
+    }
+
+    #[test]
+    fn test_positional_args_all() {
+        let args = vec!["x".to_string(), "y".to_string()];
+        let result = replace_positional_slices(
+            "all: ${@:1}",
+            &args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        );
+        assert_eq!(result, "all: x y");
+    }
+
+    #[test]
+    fn test_positional_args_no_match() {
+        let result = replace_positional_slices("no patterns here", &[]);
+        assert_eq!(result, "no patterns here");
+    }
+
+    #[test]
+    fn test_render_with_positional_args_full() {
+        let store = TemplateStore::load();
+        // explain template has no $N/$@ placeholders, but the function should still return content
+        let result = store
+            .render_with_positional_args("explain", &["src/main.rs"])
+            .unwrap();
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_render_with_positional_args_dollar_at() {
+        let store = TemplateStore::load();
+        // explain template has no $@, function returns content as-is
+        let result = store
+            .render_with_positional_args("explain", &["arg1", "arg2", "arg3"])
+            .unwrap();
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_render_with_positional_args_nonexistent() {
+        let store = TemplateStore::load();
+        assert!(
+            store
+                .render_with_positional_args("nonexistent", &["a"])
+                .is_none()
+        );
     }
 }
