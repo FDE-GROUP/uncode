@@ -32,7 +32,8 @@ impl ToolExecutor for WriteTool {
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("content required".into()))?;
 
-        let resolved = crate::resolve_path(raw);
+        let resolved = crate::resolve_path(raw)
+            .map_err(uncode_core::error::UncodeError::Tool)?;
 
         if let Some(parent) = resolved.parent() {
             fs::create_dir_all(parent).map_err(|e| {

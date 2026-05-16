@@ -46,14 +46,8 @@ impl ToolExecutor for ReadTool {
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("path required".into()))?;
 
-        let path = std::path::Path::new(raw);
-        let resolved = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .unwrap_or_default()
-                .join(path)
-        };
+        let resolved = crate::resolve_path(raw)
+            .map_err(uncode_core::error::UncodeError::Tool)?;
 
         let meta = fs::metadata(&resolved).map_err(|e| {
             uncode_core::error::UncodeError::Tool(format!("read {}: {e}", resolved.display()))
@@ -85,16 +79,18 @@ impl ToolExecutor for ReadTool {
             ));
         }
 
+        // Check file size BEFORE reading into memory (#191)
+        if meta.len() as usize > self.max_size {
+            return Err(uncode_core::error::UncodeError::Tool(format!(
+                "file too large ({} bytes, max {})",
+                meta.len(),
+                self.max_size
+            )));
+        }
+
         let content = fs::read_to_string(&resolved).map_err(|e| {
             uncode_core::error::UncodeError::Tool(format!("read {}: {e}", resolved.display()))
         })?;
-
-        if content.len() > self.max_size {
-            return Err(uncode_core::error::UncodeError::Tool(format!(
-                "file too large ({})",
-                content.len()
-            )));
-        }
 
         let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
         let limit = arguments["limit"].as_u64().map(|l| l as usize);
