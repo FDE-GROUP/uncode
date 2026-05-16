@@ -277,27 +277,37 @@ impl TuiEngine {
     }
 
     fn render_chat(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let lines = self.chat.render_lines(
-            area,
+        let visible_height = area.height as usize;
+
+        // Step 1: Update line count cache (only re-renders stale messages)
+        self.chat.ensure_line_counts(
+            area.width,
             &self.renderers,
             &self.theme,
             self.tick,
             self.agent_busy,
         );
-        let total_lines = lines.len() as u16;
-        let visible_height = area.height;
 
-        // 滚到底部时恢复 auto_scroll
+        // Step 2: Compute total and auto_scroll
+        let total_lines = self.chat.total_lines();
         if self.chat.scroll_offset + visible_height >= total_lines {
             self.chat.auto_scroll = true;
         }
-
-        // auto_scroll 模式：offset 跟随底部
         if self.chat.auto_scroll && total_lines > visible_height {
             self.chat.scroll_offset = total_lines.saturating_sub(visible_height);
         }
 
-        let content = Paragraph::new(lines).scroll((self.chat.scroll_offset, 0));
+        // Step 3: Find visible message range via binary search
+        let (first, last) = self
+            .chat
+            .visible_range(self.chat.scroll_offset, visible_height);
+
+        // Step 4: Build viewport lines (only visible messages)
+        let lines = self
+            .chat
+            .render_viewport(first, last, self.chat.scroll_offset, visible_height);
+
+        let content = Paragraph::new(lines);
         f.render_widget(content, area);
     }
 
