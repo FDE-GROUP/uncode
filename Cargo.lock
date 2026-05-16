@@ -3032,6 +3032,9 @@ dependencies = [
  "chrono",
  "dirs",
  "futures",
+ "glob",
+ "parking_lot",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",
@@ -3039,10 +3042,29 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "uncode-ai",
  "uncode-core",
- "uncode-llm",
- "uncode-session",
- "uncode-tools",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
+name = "uncode-ai"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "eventsource-stream",
+ "futures",
+ "parking_lot",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uncode-shared",
  "uuid",
 ]
 
@@ -3062,11 +3084,9 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uncode-agent",
+ "uncode-ai",
  "uncode-core",
- "uncode-llm",
  "uncode-rpc",
- "uncode-session",
- "uncode-tools",
  "uncode-tui",
 ]
 
@@ -3086,6 +3106,8 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml",
+ "uncode-ai",
+ "uncode-shared",
  "uuid",
 ]
 
@@ -3096,25 +3118,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dashmap",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uncode-core",
- "uncode-tools",
-]
-
-[[package]]
-name = "uncode-llm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "eventsource-stream",
- "futures",
- "parking_lot",
- "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -3147,8 +3150,8 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "uncode-agent",
  "uncode-core",
- "uncode-session",
 ]
 
 [[package]]
@@ -3162,47 +3165,18 @@ dependencies = [
  "tokio",
  "tracing",
  "uncode-agent",
- "uncode-core",
- "uncode-llm",
- "uncode-session",
- "uncode-tools",
- "uuid",
-]
-
-[[package]]
-name = "uncode-session"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "dirs",
- "parking_lot",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
+ "uncode-ai",
  "uncode-core",
  "uuid",
 ]
 
 [[package]]
-name = "uncode-tools"
+name = "uncode-shared"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "async-trait",
- "glob",
- "parking_lot",
- "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uncode-core",
- "uuid",
- "walkdir",
 ]
 
 [[package]]
@@ -3224,9 +3198,6 @@ dependencies = [
  "tracing",
  "uncode-agent",
  "uncode-core",
- "uncode-llm",
- "uncode-session",
- "uncode-tools",
  "unicode-segmentation",
  "unicode-width",
  "uuid",

@@ -891,7 +891,7 @@ impl TuiEngine {
             });
             return;
         };
-        let session_dir = match uncode_session::store::SessionStore::default_dir() {
+        let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
             Ok(d) => d,
             Err(e) => {
                 self.chat.messages.push(chat::ChatMessage::Error {
@@ -901,7 +901,7 @@ impl TuiEngine {
                 return;
             }
         };
-        let store = uncode_session::store::SessionStore::new(session_dir);
+        let store = uncode_agent::session::store::SessionStore::new(session_dir);
         match uncode_agent::branch_summarization::branch_with_summary(
             &store,
             &self.session_id,
@@ -935,7 +935,7 @@ impl TuiEngine {
         }
         let parts: Vec<&str> = text.splitn(2, ' ').collect();
         let format = parts.get(1).map(|s| s.trim()).unwrap_or("jsonl");
-        let session_dir = match uncode_session::store::SessionStore::default_dir() {
+        let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
             Ok(d) => d,
             Err(e) => {
                 self.chat.messages.push(chat::ChatMessage::Error {
@@ -945,7 +945,7 @@ impl TuiEngine {
                 return;
             }
         };
-        let store = uncode_session::store::SessionStore::new(session_dir);
+        let store = uncode_agent::session::store::SessionStore::new(session_dir);
         let sid_short = &self.session_id[..8.min(self.session_id.len())];
         match format {
             "jsonl" => match store.load_entries(&self.session_id) {
@@ -1022,7 +1022,7 @@ impl TuiEngine {
     }
 
     fn handle_sessions_command(&mut self) {
-        let session_dir = match uncode_session::store::SessionStore::default_dir() {
+        let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
             Ok(d) => d,
             Err(e) => {
                 self.chat.messages.push(chat::ChatMessage::Error {
@@ -1032,7 +1032,7 @@ impl TuiEngine {
                 return;
             }
         };
-        let store = uncode_session::store::SessionStore::new(session_dir);
+        let store = uncode_agent::session::store::SessionStore::new(session_dir);
         match store.list_sessions() {
             Ok(mut sessions) => {
                 if sessions.is_empty() {
@@ -1086,7 +1086,7 @@ impl TuiEngine {
             });
             return;
         }
-        let session_dir = match uncode_session::store::SessionStore::default_dir() {
+        let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
             Ok(d) => d,
             Err(e) => {
                 self.chat.messages.push(chat::ChatMessage::Error {
@@ -1096,7 +1096,7 @@ impl TuiEngine {
                 return;
             }
         };
-        let store = uncode_session::store::SessionStore::new(session_dir);
+        let store = uncode_agent::session::store::SessionStore::new(session_dir);
         let sid_short = &self.session_id[..8.min(self.session_id.len())];
         match store.get_children(&self.session_id) {
             Ok(children) => {
@@ -1136,7 +1136,7 @@ impl TuiEngine {
         let parts: Vec<&str> = text.splitn(2, ' ').collect();
         let title = parts.get(1).map(|s| s.trim()).unwrap_or("");
         if title.is_empty() {
-            let session_dir = match uncode_session::store::SessionStore::default_dir() {
+            let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
                 Ok(d) => d,
                 Err(e) => {
                     self.chat.messages.push(chat::ChatMessage::Error {
@@ -1146,7 +1146,7 @@ impl TuiEngine {
                     return;
                 }
             };
-            let store = uncode_session::store::SessionStore::new(session_dir);
+            let store = uncode_agent::session::store::SessionStore::new(session_dir);
             match store.read_header(&self.session_id) {
                 Ok(header) => {
                     let current = header.title.as_deref().unwrap_or("(无标题)");
@@ -1164,11 +1164,11 @@ impl TuiEngine {
             }
             return;
         }
-        let session_dir = match uncode_session::store::SessionStore::default_dir() {
+        let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
             Ok(d) => d,
             Err(_) => return,
         };
-        let store = uncode_session::store::SessionStore::new(session_dir);
+        let store = uncode_agent::session::store::SessionStore::new(session_dir);
         if let Ok(mut header) = store.read_header(&self.session_id) {
             header.title = Some(title.to_string());
             let header_path = store.session_path(&self.session_id);
@@ -1413,7 +1413,7 @@ impl TuiEngine {
             return;
         }
 
-        let session_dir = match uncode_session::store::SessionStore::default_dir() {
+        let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
             Ok(d) => d,
             Err(e) => {
                 self.chat.messages.push(chat::ChatMessage::Error {
@@ -1423,7 +1423,7 @@ impl TuiEngine {
                 return;
             }
         };
-        let store = uncode_session::store::SessionStore::new(session_dir);
+        let store = uncode_agent::session::store::SessionStore::new(session_dir);
 
         match store.build_tree(&self.session_id) {
             Ok(tree) => {

@@ -1,11 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/uncode-shared",
+    "crates/uncode-ai",
     "crates/uncode-core",
     "crates/uncode-macros",
-    "crates/uncode-llm",
-    "crates/uncode-session",
-    "crates/uncode-tools",
     "crates/uncode-extensions",
     "crates/uncode-agent",
     "crates/uncode-tui",
@@ -106,11 +105,10 @@ quote = "1"
 proc-macro2 = "1"
 
 # ── Internal crates ──
+uncode-shared = { path = "crates/uncode-shared" }
+uncode-ai = { path = "crates/uncode-ai" }
 uncode-core = { path = "crates/uncode-core" }
 uncode-macros = { path = "crates/uncode-macros" }
-uncode-llm = { path = "crates/uncode-llm" }
-uncode-session = { path = "crates/uncode-session" }
-uncode-tools = { path = "crates/uncode-tools" }
 uncode-agent = { path = "crates/uncode-agent" }
 uncode-tui = { path = "crates/uncode-tui" }
 uncode-rpc = { path = "crates/uncode-rpc" }

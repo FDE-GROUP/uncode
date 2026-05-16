@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
+use crate::session::store::{SessionResult, SessionStore};
 use uncode_core::session::{ModelChangeEntry, SessionEntry, generate_entry_id};
-use uncode_session::store::{SessionResult, SessionStore};
 
 /// 运行时切换 LLM 模型并记录 ModelChange 到会话 JSONL
 pub fn switch_model(

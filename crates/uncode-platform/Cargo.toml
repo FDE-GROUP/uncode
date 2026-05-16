@@ -11,7 +11,7 @@ authors.workspace = true
 
 [dependencies]
 uncode-core.workspace = true
-uncode-session.workspace = true
+uncode-agent.workspace = true
 
 tokio.workspace = true
 axum.workspace = true

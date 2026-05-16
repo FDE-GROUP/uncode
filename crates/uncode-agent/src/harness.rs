@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use tracing::{debug, info};
 
+use crate::session::store::SessionStore;
 use uncode_core::api_types::ThinkingLevel;
 use uncode_core::error::{HarnessError, UncodeError};
 use uncode_core::event::AgentEvent;
@@ -18,7 +19,6 @@ use uncode_core::message::Message;
 use uncode_core::session::SessionEntry;
 use uncode_core::skill::SkillRegistry;
 use uncode_core::template::TemplateStore;
-use uncode_session::store::SessionStore;
 
 use crate::loop_engine::AgentLoop;
 use crate::model_switch;

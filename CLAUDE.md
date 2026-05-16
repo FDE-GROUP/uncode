@@ -12,9 +12,9 @@ uncode is a Rust-native AI Agent Coding system with two user-facing components: 
 cargo build --workspace          # Build all crates
 cargo build -p uncode-cli        # Build CLI only
 cargo test --workspace           # Run all tests
-cargo test -p uncode-core        # Run single crate tests
-cargo test -p uncode-core test_name  # Run single test
-cargo test --workspace -- --test-threads=1  # Run tests single-threaded (required for uncode-tools)
+cargo test -p uncode-agent        # Run single crate tests
+cargo test -p uncode-agent test_name  # Run single test
+cargo test --workspace -- --test-threads=1  # Run tests single-threaded (required for tools tests)
 cargo fmt --check --all          # Format check
 cargo clippy --all-targets --no-deps  # Lint
 cargo run -p uncode-cli -- --model deepseek-v3 "prompt"  # Run CLI
@@ -27,7 +27,7 @@ CI runs: `cargo fmt --check`, `cargo clippy --all-targets --no-deps`, `cargo bui
 
 ## Architecture
 
-Strict layered dependency graph — upper layers depend on lower, never the reverse:
+Three-layer dependency graph aligned with Pi architecture:
 
 ```
 uncode-cli (entry point, clap arg parsing)
@@ -35,13 +35,12 @@ uncode-cli (entry point, clap arg parsing)
 ├── uncode-platform (axum REST backend)
 └── uncode-rpc (JSON-RPC, planned)
         │
-    uncode-agent (agent loop engine, system prompts, token estimation, context compression)
-        ├── uncode-llm (LLM driver trait + 7 provider implementations + registry)
-        ├── uncode-session (JSONL session persistence)
-        ├── uncode-tools (7 built-in tools: read/write/edit/grep/bash/find/ls)
+    uncode-agent (full-stack engine: loop + harness + session + tools + compaction + skills)
+        ├── uncode-ai (LLM abstraction: Api trait + 4 providers + models + messages + streaming)
+        ├── uncode-core (shared agent types: events, tool traits, session types, skills, templates)
         └── uncode-extensions (WASM extension runtime)
                 │
-            uncode-core (shared types, traits, errors, events — leaf crate, no internal deps)
+            uncode-shared (error types + config — leaf crate)
             uncode-macros (proc macros: #[tool], #[derive(Event)] — compile-time only)
 ```
 
@@ -49,13 +48,11 @@ Cross-layer communication uses event streams. Upper layers subscribe to events, 
 
 ### LLM Provider Architecture
 
-All providers implement `LlmDriver` trait (`uncode-llm/src/driver.rs`). Implementations live in `uncode-llm/src/providers/`. Shared OpenAI-compatible logic is in `common.rs` — 5 providers (openai, deepseek, glm, openrouter, ollama) reuse `OpenAiStreamState`, `parse_openai_tool_calls()`, `flush_tool_calls()`. Anthropic has independent implementation due to its distinct SSE event types. Gemini lacks tool call support.
-
-Tool calls follow a three-stage protocol: `ToolCallStart` → `ToolCallDelta` (may repeat) → `ToolCallEnd`. Every stream must end with `StreamEvent::Done`.
+All providers implement `Api` trait (`uncode-ai/src/api.rs`). 4 API protocol implementations in `uncode-ai/src/providers/`: openai_completions (covers OpenAI/DeepSeek/GLM/OpenRouter/Ollama-compatible), anthropic_messages, gemini_generative, ollama_native. Tool calls follow a three-stage protocol: `ToolCallStart` → `ToolCallDelta` → `ToolCallEnd`. Every stream must end with `StreamEvent::Done`.
 
 ### Tool System
 
-7 tools in `uncode-tools/src/` (read, write, edit, grep, bash, find, ls). Each implements `ToolExecutor` trait. The `#[tool]` proc macro in `uncode-macros` derives JSON Schema from function signatures. All tools use `normalize_path()` + `resolve_path()` for sandbox enforcement — files must stay within CWD.
+7 tools in `uncode-agent/src/tools/` (read, write, edit, grep, bash, find, ls). Each implements `ToolExecutor` trait. All tools use `normalize_path()` + `resolve_path()` for sandbox enforcement — files must stay within CWD.
 
 ## Key Design Decisions
 
@@ -94,4 +91,4 @@ RUSTFLAGS="-D warnings" cargo test --workspace
 
 ## Test Caveats
 
-`uncode-tools` tests use `set_current_dir()` for sandbox isolation, which is process-global. These tests **must** run single-threaded: `cargo test -p uncode-tools -- --test-threads=1`. Running `cargo test --workspace` uses default parallelism and may cause intermittent failures in tools tests.
+`uncode-agent/src/tools/` tests use `set_current_dir()` for sandbox isolation, which is process-global. These tests **must** run single-threaded: `cargo test --workspace -- --test-threads=1`. Running `cargo test --workspace` with default parallelism may cause intermittent failures in tools tests.

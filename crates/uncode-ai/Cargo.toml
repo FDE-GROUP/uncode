@@ -1,6 +1,6 @@
 [package]
-description = "uncode AI Agent Coding System - uncode-tui"
-name = "uncode-tui"
+description = "uncode AI Agent Coding System - LLM abstraction layer"
+name = "uncode-ai"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,25 +10,21 @@ publish = false
 authors.workspace = true
 
 [dependencies]
-uncode-core.workspace = true
-uncode-agent.workspace = true
+uncode-shared.workspace = true
 
 tokio.workspace = true
-tokio-util.workspace = true
-ratatui.workspace = true
-crossterm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
-parking_lot.workspace = true
+async-trait.workspace = true
+futures.workspace = true
 anyhow.workspace = true
-dirs.workspace = true
-markdown.workspace = true
-syntect.workspace = true
-unicode-width.workspace = true
-unicode-segmentation.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+eventsource-stream.workspace = true
 uuid.workspace = true
+tokio-util.workspace = true
 
 [lints]
 workspace = true
