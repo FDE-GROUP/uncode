@@ -194,7 +194,14 @@ impl AgentLoop {
                 tools: tools.clone(),
             };
 
-            let mut stream = self.driver.complete(request).await?;
+            let mut stream = tokio::select! {
+                _ = self.cancel_token.cancelled() => {
+                    info!("agent interrupted before stream at turn {turn}");
+                    self.emit(AgentEvent::AgentInterrupted { turn, partial_response: false });
+                    break;
+                }
+                result = self.driver.complete(request) => result?,
+            };
             let mut current_text = String::with_capacity(2048);
             let mut current_thinking = String::with_capacity(1024);
             let mut pending_tool_calls: Vec<(String, String, String)> = Vec::with_capacity(4);
@@ -203,10 +210,10 @@ impl AgentLoop {
             let mut turn_input_tokens: u64 = 0;
             let mut turn_output_tokens: u64 = 0;
 
-            while let Some(event) = stream.next().await {
+            loop {
+                // Check cancellation before waiting for next stream event
                 if self.cancel_token.is_cancelled() {
                     info!("agent interrupted during streaming at turn {turn}");
-                    // Preserve partial response
                     if !current_text.is_empty() || !current_thinking.is_empty() {
                         let mut content: Vec<ContentBlock> = Vec::new();
                         if !current_thinking.is_empty() {
@@ -227,6 +234,37 @@ impl AgentLoop {
                     });
                     break;
                 }
+
+                let event = tokio::select! {
+                    _ = self.cancel_token.cancelled() => {
+                        info!("agent interrupted during streaming at turn {turn}");
+                        if !current_text.is_empty() || !current_thinking.is_empty() {
+                            let mut content: Vec<ContentBlock> = Vec::new();
+                            if !current_thinking.is_empty() {
+                                content.push(ContentBlock::Thinking {
+                                    text: std::mem::take(&mut current_thinking),
+                                });
+                            }
+                            if !current_text.is_empty() {
+                                content.push(ContentBlock::Text {
+                                    text: std::mem::take(&mut current_text),
+                                });
+                            }
+                            messages.push(Message::new(Role::Assistant, content));
+                        }
+                        self.emit(AgentEvent::AgentInterrupted {
+                            turn,
+                            partial_response: !current_text.is_empty(),
+                        });
+                        break;
+                    }
+                    event = stream.next() => {
+                        match event {
+                            Some(e) => e,
+                            None => break,
+                        }
+                    }
+                };
 
                 match event {
                     StreamEvent::ThinkingDelta(text) => {
@@ -299,7 +337,18 @@ impl AgentLoop {
                         let result = match tool {
                             Some(executor) => {
                                 let start = std::time::Instant::now();
-                                match executor.execute(arguments.clone()).await {
+                                let exec_result = tokio::select! {
+                                    _ = self.cancel_token.cancelled() => {
+                                        info!("agent interrupted during tool execution: {name}");
+                                        self.emit(AgentEvent::AgentInterrupted {
+                                            turn,
+                                            partial_response: !current_text.is_empty(),
+                                        });
+                                        break;
+                                    }
+                                    r = executor.execute(arguments.clone()) => r,
+                                };
+                                match exec_result {
                                     Ok(output) => {
                                         let duration = start.elapsed();
                                         self.emit(AgentEvent::ToolCallProgress {

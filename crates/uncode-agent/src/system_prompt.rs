@@ -42,6 +42,16 @@ impl SystemPromptBuilder {
         self
     }
 
+    pub fn add_working_dir(mut self, dir: &std::path::Path) -> Self {
+        let path = dir.to_string_lossy();
+        let mut s = String::with_capacity(64 + path.len());
+        s.push_str("## 工作目录\n\n");
+        s.push_str(&path);
+        s.push_str("\n\n所有文件路径应相对于此目录，或使用绝对路径。");
+        self.parts.push(s);
+        self
+    }
+
     pub fn add_skills(mut self, skills: &[(String, String)]) -> Self {
         if skills.is_empty() {
             return self;

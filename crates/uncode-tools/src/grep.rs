@@ -16,7 +16,7 @@ impl ToolExecutor for GrepTool {
                 "type": "object",
                 "properties": {
                     "pattern": {"type": "string", "description": "正则表达式"},
-                    "path": {"type": "string", "description": "搜索目录路径，默认当前目录"},
+                    "path": {"type": "string", "description": "搜索目录路径（相对或绝对），默认当前目录"},
                     "include": {"type": "string", "description": "文件匹配模式，如 *.rs"}
                 },
                 "required": ["pattern"]
@@ -32,14 +32,14 @@ impl ToolExecutor for GrepTool {
         let re = Regex::new(pattern)
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("invalid regex: {e}")))?;
 
-        let search_path = arguments["path"].as_str().unwrap_or(".");
+        let search_path = crate::resolve_path(arguments["path"].as_str().unwrap_or("."));
         let include = arguments["include"].as_str();
 
         let mut results = Vec::new();
         let mut count = 0;
         let max_results = 50;
 
-        for entry in walkdir::WalkDir::new(search_path)
+        for entry in walkdir::WalkDir::new(&search_path)
             .max_depth(20)
             .into_iter()
             .filter_map(|e| e.ok())
@@ -55,9 +55,6 @@ impl ToolExecutor for GrepTool {
                     let Some(pattern) = inc.strip_prefix("*.") else {
                         continue;
                     };
-                    if ext != pattern {
-                        continue;
-                    }
                     if ext != pattern {
                         continue;
                     }

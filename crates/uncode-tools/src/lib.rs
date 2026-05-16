@@ -21,5 +21,16 @@ pub use read::ReadTool;
 pub use registry::ToolRegistry;
 pub use write::WriteTool;
 
+/// Resolve a path argument: absolute paths are kept as-is,
+/// relative paths are resolved against the current working directory.
+fn resolve_path(raw: &str) -> std::path::PathBuf {
+    let p = std::path::Path::new(raw);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(p)
+    }
+}
+
 #[cfg(test)]
 mod tests;

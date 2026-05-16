@@ -26,9 +26,11 @@ impl ToolExecutor for FindTool {
         let pattern = arguments["pattern"]
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("pattern required".into()))?;
-        let root = arguments["path"].as_str().unwrap_or(".");
+        let root_raw = arguments["path"].as_str().unwrap_or(".");
+        let root = crate::resolve_path(root_raw);
 
-        let mut results: Vec<String> = glob::glob(&format!("{root}/{pattern}"))
+        let glob_pattern = format!("{}/{}", root.display(), pattern);
+        let mut results: Vec<String> = glob::glob(&glob_pattern)
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("glob: {e}")))?
             .flatten()
             .take(200)

@@ -15,7 +15,7 @@ impl ToolExecutor for WriteTool {
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "文件路径"},
+                    "path": {"type": "string", "description": "文件路径（相对或绝对）"},
                     "content": {"type": "string", "description": "写入的内容"}
                 },
                 "required": ["path", "content"]
@@ -24,7 +24,7 @@ impl ToolExecutor for WriteTool {
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
-        let path = arguments["path"]
+        let raw = arguments["path"]
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("path required".into()))?;
 
@@ -32,14 +32,25 @@ impl ToolExecutor for WriteTool {
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("content required".into()))?;
 
-        if let Some(parent) = std::path::Path::new(path).parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| uncode_core::error::UncodeError::Tool(format!("write {path}: {e}")))?;
+        let resolved = crate::resolve_path(raw);
+
+        if let Some(parent) = resolved.parent() {
+            fs::create_dir_all(parent).map_err(|e| {
+                uncode_core::error::UncodeError::Tool(format!(
+                    "write {}: {e}",
+                    resolved.display()
+                ))
+            })?;
         }
 
-        fs::write(path, content)
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("write {path}: {e}")))?;
+        fs::write(&resolved, content).map_err(|e| {
+            uncode_core::error::UncodeError::Tool(format!("write {}: {e}", resolved.display()))
+        })?;
 
-        Ok(format!("wrote {} bytes to {path}", content.len()))
+        Ok(format!(
+            "wrote {} bytes to {}",
+            content.len(),
+            resolved.display()
+        ))
     }
 }

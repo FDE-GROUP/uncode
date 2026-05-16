@@ -318,11 +318,7 @@ impl TuiEngine {
         line2_area: ratatui::layout::Rect,
     ) {
         let (status_icon, status_color) = if self.agent_busy {
-            let dot = if (self.tick / 4) % 2 == 0 {
-                "●"
-            } else {
-                "○"
-            };
+            let dot = if (self.tick / 4) % 2 == 0 { "●" } else { "○" };
             (dot, self.theme.tool_status.success)
         } else {
             ("●", self.theme.tool_status.success)
@@ -394,6 +390,31 @@ impl TuiEngine {
                 } => {
                     match ui_event {
                         Event::Key(key_event) => {
+                            // ESC: highest priority — interrupt agent or dismiss overlays
+                            if key_event.code == KeyCode::Esc {
+                                if self.agent_busy {
+                                    if let Some(ref token) = self.current_cancel {
+                                        token.cancel();
+                                    }
+                                    self.agent_busy = false;
+                                    self.current_cancel = None;
+                                    self.footer.end_turn();
+                                    self.chat.deactivate_thinking();
+                                    self.chat.invalidate_all();
+                                    self.chat.messages.push(chat::ChatMessage::Summary {
+                                        completed: vec!["[Interrupted] Agent stopped.".into()],
+                                        next_steps: vec![],
+                                    });
+                                }
+                                if self.welcome.is_visible() {
+                                    self.welcome.hide();
+                                }
+                                if self.selector.is_visible() {
+                                    self.selector.hide();
+                                }
+                                continue;
+                            }
+
                             if self.leader_pending {
                                 self.leader_pending = false;
                                 self.handle_leader_key(key_event);
@@ -404,11 +425,8 @@ impl TuiEngine {
 
                             // Welcome screen dismiss takes priority
                             if self.welcome.is_visible() {
-                                match key_event.code {
-                                    KeyCode::Enter | KeyCode::Esc => {
-                                        self.welcome.hide();
-                                    }
-                                    _ => {}
+                                if key_event.code == KeyCode::Enter {
+                                    self.welcome.hide();
                                 }
                                 continue;
                             }
@@ -553,7 +571,6 @@ impl TuiEngine {
                                 KeyCode::Char('k') if ctrl && self.selector.is_visible() => self.selector.prev(),
                                 KeyCode::Up if self.selector.is_visible() => self.selector.prev(),
                                 KeyCode::Down if self.selector.is_visible() => self.selector.next(),
-                                KeyCode::Esc if self.selector.is_visible() => self.selector.hide(),
                                 KeyCode::Enter if self.selector.is_visible() => {
                                     if let Some(selected) = self.selector.selected_item().map(|s| s.to_string()) {
                                         self.model = selected.clone();
@@ -578,23 +595,6 @@ impl TuiEngine {
                                         });
                                     } else {
                                         break;
-                                    }
-                                }
-                                // ESC: interrupt agent or pass to editor
-                                KeyCode::Esc => {
-                                    if self.agent_busy {
-                                        if let Some(ref token) = self.current_cancel {
-                                            token.cancel();
-                                        }
-                                        self.agent_busy = false;
-                                        self.current_cancel = None;
-                                        self.footer.end_turn();
-                                        self.chat.messages.push(chat::ChatMessage::Summary {
-                                            completed: vec!["[Interrupted] Agent stopped.".into()],
-                                            next_steps: vec![],
-                                        });
-                                    } else {
-                                        let _ = self.editor.handle_key(key_event);
                                     }
                                 }
                                 _ => {

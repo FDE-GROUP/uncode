@@ -183,7 +183,7 @@ impl ChatState {
     }
 
     /// Deactivate the last Thinking block (stop spinner)
-    fn deactivate_thinking(&mut self) {
+    pub fn deactivate_thinking(&mut self) {
         if let Some(ChatMessage::Thinking { active, .. }) = self.messages.last_mut() {
             *active = false;
         }
@@ -193,6 +193,15 @@ impl ChatState {
     fn invalidate(&mut self, idx: usize) {
         if let Some(entry) = self.line_counts.get_mut(idx) {
             entry.width = 0; // force recompute
+            entry.cached_lines = None;
+        }
+        self.prefix_dirty = true;
+    }
+
+    /// Invalidate all cached entries
+    pub fn invalidate_all(&mut self) {
+        for entry in &mut self.line_counts {
+            entry.width = 0;
             entry.cached_lines = None;
         }
         self.prefix_dirty = true;
@@ -596,6 +605,11 @@ impl ChatState {
                     self.prefix_dirty = true;
                 }
             }
+            AgentEvent::TurnEnd { .. }
+            | AgentEvent::SessionEnd { .. }
+            | AgentEvent::AgentInterrupted { .. } => {
+                self.deactivate_thinking();
+            }
             _ => {}
         }
     }
@@ -759,31 +773,26 @@ fn render_message(
         }
         ChatMessage::Thinking {
             text,
-            expanded,
+            expanded: _,
             active,
         } => {
-            let icon: String = if *active {
-                if (tick / 4) % 2 == 0 {
-                    "●".into()
-                } else {
-                    "○".into()
-                }
+            let icon = if *active {
+                if (tick / 4) % 2 == 0 { "●" } else { "○" }
             } else {
-                "●".into()
+                "●"
             };
             let icon_color = theme.tool_status.success;
-            // Show full content when: expanded by user, or thinking completed (not active)
-            let show_full = *expanded || (!*active && !text.is_empty());
             if text.is_empty() {
                 vec![Line::from(vec![
                     Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
                     Span::styled("Thinking...", Style::default().fg(theme.ui.footer_text)),
                 ])]
-            } else if show_full {
+            } else {
+                let label = if *active { "Thinking..." } else { "Thinking" };
                 let mut lines = vec![Line::from(vec![
                     Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
                     Span::styled(
-                        "Thinking",
+                        label,
                         Style::default()
                             .fg(theme.ui.footer_text)
                             .add_modifier(Modifier::BOLD),
@@ -791,7 +800,6 @@ fn render_message(
                 ])];
                 let mut content_lines =
                     crate::markdown::render_markdown_with_theme(text, theme, Some(w));
-                // Remove trailing blank lines from markdown rendering
                 while content_lines.last().is_some_and(|l| l.spans.is_empty()) {
                     content_lines.pop();
                 }
@@ -801,15 +809,6 @@ fn render_message(
                         .map(|l| l.style(Style::default().fg(theme.ui.footer_text))),
                 );
                 lines
-            } else {
-                let preview: String = text.chars().take(60).collect();
-                vec![Line::from(vec![
-                    Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
-                    Span::styled(
-                        format!("Thinking — {preview}..."),
-                        Style::default().fg(theme.ui.footer_text),
-                    ),
-                ])]
             }
         }
         ChatMessage::ToolCall {
@@ -1394,7 +1393,7 @@ mod tests {
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         // 验证自定义渲染器输出包含路径信息
         assert!(combined.contains("src/main.rs"));
-        // 验证状态图标
+        // 验证状态图标（完成后为空格，不显示●）
         assert!(combined.contains("●"));
         // 验证耗时
         assert!(combined.contains("150ms"));
