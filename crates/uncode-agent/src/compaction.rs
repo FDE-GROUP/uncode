@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
+use crate::session::store::SessionStore;
 use futures::StreamExt;
+use uncode_ai::{ApiRegistry, StreamEvent};
 use uncode_core::api_types::{Context, StreamOptions};
 use uncode_core::message::{ContentBlock, Message, Role};
 use uncode_core::model::Model;
 use uncode_core::session::{CompactionEntry, MessageEntry, SessionEntry, generate_entry_id};
-use uncode_llm::{ApiRegistry, StreamEvent};
-use uncode_session::store::SessionStore;
 
 const COMPACTION_THRESHOLD_NUM: u64 = 80;
 const COMPACTION_THRESHOLD_DEN: u64 = 100;
@@ -473,7 +473,7 @@ async fn generate_summary(
         ..StreamOptions::default()
     };
 
-    let mut stream = uncode_llm::stream(model, &context, &options, api_registry).await?;
+    let mut stream = uncode_ai::stream(model, &context, &options, api_registry).await?;
     let mut summary = String::new();
     while let Some(event) = stream.next().await {
         if let StreamEvent::TextDelta(text) = event {

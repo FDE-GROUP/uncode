@@ -246,8 +246,8 @@ fn event_name(event: &uncode_core::event::AgentEvent) -> &'static str {
 /// Register the 8 core JSON-RPC commands.
 pub async fn register_core_commands(
     server: &RpcServer,
-    session_store: Arc<uncode_session::store::SessionStore>,
-    model_registry: Arc<uncode_llm::ModelRegistry>,
+    session_store: Arc<uncode_agent::session::store::SessionStore>,
+    model_registry: Arc<uncode_ai::ModelRegistry>,
 ) {
     // session.create
     let ss = session_store.clone();

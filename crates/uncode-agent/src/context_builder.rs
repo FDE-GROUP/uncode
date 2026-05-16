@@ -7,10 +7,10 @@
 //! Currently uses insertion order (load_entries). Will switch to tree traversal
 //! (get_path_to_root) when in-place branching is implemented (Stage 5).
 
+use crate::session::store::{SessionResult, SessionStore};
 use uncode_core::api_types::ThinkingLevel;
 use uncode_core::message::{ContentBlock, Message, Role};
 use uncode_core::session::SessionEntry;
-use uncode_session::store::{SessionResult, SessionStore};
 
 /// Result of building context from the session tree.
 pub struct BuiltContext {

@@ -17,11 +17,11 @@ mod tests {
     use futures::stream::{self, BoxStream, StreamExt};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use uncode_ai::Api;
+    use uncode_ai::StreamEvent;
     use uncode_core::api_types::{Context, StreamOptions};
     use uncode_core::error::UncodeError;
     use uncode_core::model::Model;
-    use uncode_llm::Api;
-    use uncode_llm::StreamEvent;
 
     struct MockApi {
         responses: Mutex<Vec<Vec<StreamEvent>>>,
@@ -108,12 +108,12 @@ mod tests {
 
     // ── Test Helpers ─────────────────────────────────────────────────
 
+    use crate::session::store::SessionStore;
+    use crate::tools::registry::ToolRegistry;
     use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
-    use uncode_llm::{ApiRegistry, ModelRegistry};
-    use uncode_session::store::SessionStore;
-    use uncode_tools::registry::ToolRegistry;
+    use uncode_ai::{ApiRegistry, ModelRegistry};
 
     use crate::loop_engine::AgentLoop;
 
@@ -415,7 +415,7 @@ mod tests {
     async fn test_agent_loop_text_only() {
         let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
             StreamEvent::TextDelta("Hello!".into()),
-            StreamEvent::Usage(uncode_llm::UsageInfo {
+            StreamEvent::Usage(uncode_ai::LlmUsageInfo {
                 input_tokens: 10,
                 output_tokens: 5,
             }),
@@ -463,7 +463,7 @@ mod tests {
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "world"}),
                 },
-                StreamEvent::Usage(uncode_llm::UsageInfo {
+                StreamEvent::Usage(uncode_ai::LlmUsageInfo {
                     input_tokens: 20,
                     output_tokens: 10,
                 }),
@@ -473,7 +473,7 @@ mod tests {
             ],
             vec![
                 StreamEvent::TextDelta("Done!".into()),
-                StreamEvent::Usage(uncode_llm::UsageInfo {
+                StreamEvent::Usage(uncode_ai::LlmUsageInfo {
                     input_tokens: 30,
                     output_tokens: 8,
                 }),
@@ -1070,7 +1070,7 @@ mod tests {
     #[tokio::test]
     async fn test_harness_phase_guard() {
         use crate::harness::{AgentHarness, AgentHarnessPhase};
-        use uncode_session::store::SessionStore;
+        use crate::session::store::SessionStore;
 
         let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
             StreamEvent::TextDelta("ok".into()),
@@ -1078,7 +1078,7 @@ mod tests {
                 reason: StopReason::Stop,
             },
         ]]);
-        let tool_reg = Arc::new(uncode_tools::registry::ToolRegistry::new());
+        let tool_reg = Arc::new(crate::tools::registry::ToolRegistry::new());
         let session_store = Arc::new(SessionStore::new(test_session_dir()));
 
         let agent = AgentLoop::new(
@@ -1105,10 +1105,10 @@ mod tests {
     #[test]
     fn test_harness_pending_write_flush() {
         use crate::harness::AgentHarness;
-        use uncode_session::store::SessionStore;
+        use crate::session::store::SessionStore;
 
         let (api_reg, model_reg, _) = make_registries(vec![]);
-        let tool_reg = Arc::new(uncode_tools::registry::ToolRegistry::new());
+        let tool_reg = Arc::new(crate::tools::registry::ToolRegistry::new());
         let session_store = Arc::new(SessionStore::new(test_session_dir()));
 
         let agent = AgentLoop::new(
@@ -1146,7 +1146,7 @@ mod tests {
         use crate::harness::AgentHarness;
 
         let (api_reg, model_reg, _) = make_registries(vec![]);
-        let tool_reg = Arc::new(uncode_tools::registry::ToolRegistry::new());
+        let tool_reg = Arc::new(crate::tools::registry::ToolRegistry::new());
         let session_store = Arc::new(SessionStore::new(test_session_dir()));
 
         let agent = AgentLoop::new(
@@ -1175,7 +1175,7 @@ mod tests {
                 reason: StopReason::Stop,
             },
         ]]);
-        let tool_reg = Arc::new(uncode_tools::registry::ToolRegistry::new());
+        let tool_reg = Arc::new(crate::tools::registry::ToolRegistry::new());
         let session_store = Arc::new(SessionStore::new(test_session_dir()));
 
         let agent = Arc::new(tokio::sync::Mutex::new(AgentLoop::new(
@@ -1197,7 +1197,7 @@ mod tests {
     #[tokio::test]
     async fn test_reset_clears_state() {
         let (api_reg, model_reg, api_keys) = make_registries(vec![]);
-        let tool_reg = Arc::new(uncode_tools::registry::ToolRegistry::new());
+        let tool_reg = Arc::new(crate::tools::registry::ToolRegistry::new());
         let session_store = Arc::new(SessionStore::new(test_session_dir()));
 
         let agent = AgentLoop::new(

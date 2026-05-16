@@ -5,19 +5,19 @@ use anyhow::Context;
 use clap::{CommandFactory, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
+use uncode_agent::session::store::SessionStore;
+use uncode_agent::tools::registry::ToolRegistry;
+use uncode_agent::tools::{BashTool, EditTool, GrepTool, ReadTool, WriteTool};
 use uncode_agent::{AgentLoop, ContextLoader, GitHubClient, SystemPromptBuilder};
+use uncode_ai::{
+    AnthropicMessagesApi, GeminiGenerativeAiApi, OllamaNativeApi, OpenAiCompletionsApi,
+};
+use uncode_ai::{ApiRegistry, ModelRegistry};
 use uncode_core::config::AppConfig;
 use uncode_core::context::{expand_file_refs, expand_url_refs};
 use uncode_core::event::AgentEvent;
 use uncode_core::message::{ContentBlock, Message, Role};
 use uncode_core::template::{TemplateStore, parse_vars};
-use uncode_llm::{
-    AnthropicMessagesApi, GeminiGenerativeAiApi, OllamaNativeApi, OpenAiCompletionsApi,
-};
-use uncode_llm::{ApiRegistry, ModelRegistry};
-use uncode_session::store::SessionStore;
-use uncode_tools::registry::ToolRegistry;
-use uncode_tools::{BashTool, EditTool, GrepTool, ReadTool, WriteTool};
 
 #[derive(Parser)]
 #[command(name = "uncode", about = "AI Agent Coding System")]
@@ -492,7 +492,7 @@ fn run_models(json_output: bool) -> anyhow::Result<()> {
 }
 
 fn run_export(session_id: &str, output: Option<&str>, latest: bool) -> anyhow::Result<()> {
-    use uncode_session::export::export_html;
+    use uncode_agent::session::export::export_html;
 
     let session_dir = SessionStore::default_dir().context("session dir")?;
     let store = SessionStore::new(session_dir);

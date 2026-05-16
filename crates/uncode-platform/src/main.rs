@@ -9,9 +9,9 @@ use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tracing::info;
+use uncode_agent::session::store::{SessionError, SessionStore};
 use uncode_core::message::ContentBlock;
 use uncode_core::session::SessionEntry;
-use uncode_session::store::{SessionError, SessionStore};
 
 #[derive(Deserialize)]
 struct SessionQuery {

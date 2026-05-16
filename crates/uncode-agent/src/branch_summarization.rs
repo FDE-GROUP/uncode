@@ -5,9 +5,9 @@
 //! module generates a structured summary of that branch and appends a
 //! BranchSummaryEntry before moving the leaf.
 
+use crate::session::store::SessionStore;
 use uncode_core::message::{ContentBlock, Role};
 use uncode_core::session::{BranchSummaryEntry, SessionEntry, generate_entry_id};
-use uncode_session::store::SessionStore;
 
 /// Move the session leaf to a target entry, optionally summarizing the
 /// abandoned branch between the old leaf and the common ancestor.

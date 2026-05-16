@@ -7,7 +7,11 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
+use crate::session::store::SessionStore;
 use crate::steering::MessageQueue;
+use crate::tools::registry::ToolRegistry;
+use uncode_ai::StreamEvent;
+use uncode_ai::{ApiRegistry, ModelRegistry};
 use uncode_core::api_types::{Context, StreamOptions, ThinkingLevel};
 use uncode_core::error::HarnessError;
 use uncode_core::error::UncodeError;
@@ -19,10 +23,6 @@ use uncode_core::tool::{
     AfterToolCallContext, BeforeToolCallContext, ExecutionMode, ToolContext, ToolHooks,
     ToolProgress, ToolResult,
 };
-use uncode_llm::StreamEvent;
-use uncode_llm::{ApiRegistry, ModelRegistry};
-use uncode_session::store::SessionStore;
-use uncode_tools::registry::ToolRegistry;
 
 const MAX_TURNS: u64 = 50;
 
@@ -538,7 +538,7 @@ impl AgentLoop {
                         self.emit(AgentEvent::AgentInterrupted { turn, partial_response: false });
                         break 'outer;
                     }
-                    result = uncode_llm::stream(model, &context, &options, &self.api_registry) => result?,
+                    result = uncode_ai::stream(model, &context, &options, &self.api_registry) => result?,
                 };
 
                 let mut current_text = String::with_capacity(2048);
