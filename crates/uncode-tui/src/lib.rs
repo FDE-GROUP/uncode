@@ -15,6 +15,7 @@ pub mod selector;
 pub mod slash;
 pub mod theme;
 pub mod tool_renderer;
+pub mod welcome;
 
 use crate::chat::ChatState;
 use crate::complete::CompletionEngine;
@@ -25,6 +26,7 @@ use crate::selector::OverlaySelector;
 use crate::slash::SlashCommands;
 use crate::theme::Theme;
 use crate::tool_renderer::ToolRendererRegistry;
+use crate::welcome::WelcomeScreen;
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
 };
@@ -32,13 +34,13 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::Paragraph;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use uncode_core::event::AgentEvent;
 use uncode_core::message::UsageInfo;
 
-/// 页脚状态 — Token 统计、费用、上下文使用率
+/// 页脚状态 — Token 统计、费用、上下文使用率、耗时
 struct FooterState {
     workdir: String,
     git_branch: String,
@@ -46,6 +48,8 @@ struct FooterState {
     output_tokens: u64,
     cost: f64,
     context_percent: u8,
+    turn_start: Option<std::time::Instant>,
+    last_elapsed: String,
 }
 
 impl FooterState {
@@ -77,6 +81,8 @@ impl FooterState {
             output_tokens: 0,
             cost: 0.0,
             context_percent: 0,
+            turn_start: None,
+            last_elapsed: String::new(),
         }
     }
 
@@ -92,6 +98,24 @@ impl FooterState {
         self.context_percent = ((total as f64 / 128_000.0) * 100.0).min(100.0) as u8;
     }
 
+    fn start_turn(&mut self) {
+        self.turn_start = Some(std::time::Instant::now());
+    }
+
+    fn end_turn(&mut self) {
+        if let Some(start) = self.turn_start.take() {
+            self.last_elapsed = format_duration(start.elapsed());
+        }
+    }
+
+    fn current_elapsed(&self) -> String {
+        if let Some(start) = self.turn_start {
+            format_duration(start.elapsed())
+        } else {
+            self.last_elapsed.clone()
+        }
+    }
+
     fn render_line1(&self, session_id: &str) -> String {
         let sid = session_id
             .get(..8)
@@ -104,6 +128,7 @@ impl FooterState {
         let in_str = format_tokens(self.input_tokens);
         let out_str = format_tokens(self.output_tokens);
         let cost_str = format!("${:.4}", self.cost);
+        let elapsed = self.current_elapsed();
 
         // Three-level ctx% warning: <50% green, 50-80% yellow, >80% red
         let ctx_color = if self.context_percent > 80 {
@@ -128,9 +153,13 @@ impl FooterState {
                 format!("{}% ", self.context_percent),
                 Style::default().fg(ctx_color),
             ),
+            Span::styled("time:", dim),
+            Span::styled(format!("{elapsed} "), value_style),
             Span::styled(
-                model.to_string(),
-                Style::default().fg(theme.tool_status.running),
+                format!(" {} ", model),
+                Style::default()
+                    .fg(theme.ui.footer_bg)
+                    .bg(theme.tool_status.running),
             ),
             Span::styled(format!(" {level_icon}"), dim),
         ])
@@ -144,6 +173,23 @@ fn format_tokens(n: u64) -> String {
         format!("{:.1}k", n as f64 / 1000.0)
     } else {
         format!("{:.1}M", n as f64 / 1_000_000.0)
+    }
+}
+
+fn format_duration(d: std::time::Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else {
+        let m = secs / 60;
+        let s = secs % 60;
+        if m < 60 {
+            format!("{m}m{s}s")
+        } else {
+            let h = m / 60;
+            let rm = m % 60;
+            format!("{h}h{rm}m")
+        }
     }
 }
 
@@ -166,6 +212,8 @@ pub struct TuiEngine {
     footer: FooterState,
     theme: Theme,
     renderers: ToolRendererRegistry,
+    welcome: WelcomeScreen,
+    quit_requested: bool,
     tick: usize,
 }
 
@@ -177,17 +225,12 @@ impl TuiEngine {
     }
 
     pub fn new() -> Self {
-        let available_models = vec![
-            "deepseek-v3".to_string(),
-            "glm-5.1".to_string(),
-            "ollama".to_string(),
-        ];
         Self {
             chat: ChatState::new(),
             session_id: String::new(),
             model: String::new(),
             model_index: 0,
-            available_models,
+            available_models: Vec::new(),
             last_user_input: None,
             editor: InputEditor::new(),
             selector: OverlaySelector::new(),
@@ -201,8 +244,14 @@ impl TuiEngine {
             footer: FooterState::new(),
             theme: Theme::default(),
             renderers: ToolRendererRegistry::new(),
+            welcome: WelcomeScreen::new(),
+            quit_requested: false,
             tick: 0,
         }
+    }
+
+    pub fn set_available_models(&mut self, models: Vec<String>) {
+        self.available_models = models;
     }
 
     pub fn render(&mut self, f: &mut Frame) {
@@ -219,12 +268,12 @@ impl TuiEngine {
 
         self.render_chat(f, chunks[0]);
 
-        let border_color = self.chat.thinking_level.border_color();
-        self.editor.render(f, chunks[1], border_color);
+        self.editor.render(f, chunks[1], self.theme.ui.footer_text);
 
         self.render_footer(f, chunks[2], chunks[3]);
 
         self.selector.render(f, f.area());
+        self.welcome.render(f, f.area());
     }
 
     fn render_chat(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
@@ -248,9 +297,7 @@ impl TuiEngine {
             self.chat.scroll_offset = total_lines.saturating_sub(visible_height);
         }
 
-        let content = Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .scroll((self.chat.scroll_offset, 0));
+        let content = Paragraph::new(lines).scroll((self.chat.scroll_offset, 0));
         f.render_widget(content, area);
     }
 
@@ -260,12 +307,15 @@ impl TuiEngine {
         line1_area: ratatui::layout::Rect,
         line2_area: ratatui::layout::Rect,
     ) {
-        let spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
         let (status_icon, status_color) = if self.agent_busy {
-            let frame = spinner_frames[self.tick % spinner_frames.len()];
-            (frame, Color::Yellow)
+            let dot = if (self.tick / 4) % 2 == 0 {
+                "●"
+            } else {
+                "○"
+            };
+            (dot, self.theme.tool_status.success)
         } else {
-            ("●", Color::Green)
+            ("●", self.theme.tool_status.success)
         };
 
         f.render_widget(
@@ -296,7 +346,12 @@ impl TuiEngine {
         F: Fn(String, CancellationToken),
     {
         let mut terminal = ratatui::init();
-        let _ = crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture);
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::event::EnableMouseCapture,
+            crossterm::cursor::EnableBlinking,
+            crossterm::terminal::SetTitle("UnCode Now"),
+        );
         loop {
             if let Err(e) = terminal.draw(|f| self.render(f)) {
                 eprintln!("terminal draw failed: {e}");
@@ -314,14 +369,18 @@ impl TuiEngine {
                 Ok(ui_event) = async {
                     loop {
                         if event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
-                            match event::read().unwrap_or(Event::Key(
+                            let ev = event::read().unwrap_or(Event::Key(
                                 event::KeyEvent::new(KeyCode::Null, event::KeyModifiers::empty())
-                            )) {
+                            ));
+                            match ev {
                                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                                     return Ok::<Event, std::io::Error>(Event::Key(key));
                                 }
                                 Event::Mouse(mouse) => {
                                     return Ok::<Event, std::io::Error>(Event::Mouse(mouse));
+                                }
+                                Event::Resize(w, h) => {
+                                    return Ok::<Event, std::io::Error>(Event::Resize(w, h));
                                 }
                                 _ => {}
                             }
@@ -338,6 +397,17 @@ impl TuiEngine {
                             }
 
                             let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
+
+                            // Welcome screen dismiss takes priority
+                            if self.welcome.is_visible() {
+                                match key_event.code {
+                                    KeyCode::Enter | KeyCode::Esc => {
+                                        self.welcome.hide();
+                                    }
+                                    _ => {}
+                                }
+                                continue;
+                            }
 
                             // Permission confirmation keys take priority
                             if self.permission.has_pending() {
@@ -370,7 +440,7 @@ impl TuiEngine {
                                 }
                                 KeyCode::Char('l') if ctrl => {
                                     self.selector.show(
-                                        "切换模型",
+                                        "Switch model",
                                         self.available_models.iter().map(|s| s.as_str().into()).collect(),
                                     );
                                 }
@@ -390,7 +460,7 @@ impl TuiEngine {
                                         }
                                         self.model = self.available_models[self.model_index].clone();
                                         self.chat.messages.push(chat::ChatMessage::Summary {
-                                            completed: vec![format!("模型: {}", self.model)],
+                                            completed: vec![format!("model: {}", self.model)],
                                             next_steps: vec![],
                                         });
                                     }
@@ -401,7 +471,8 @@ impl TuiEngine {
                                         if let Some(ref input) = self.last_user_input {
                                             let text = input.clone();
                                             self.agent_busy = true;
-                                            self.chat.push_user_message(format!("[重试] {text}"));
+                                            self.footer.start_turn();
+                                            self.chat.push_user_message(format!("[Retry] {text}"));
                                             let expanded = uncode_core::context::expand_file_refs(
                                                 &text,
                                                 &std::env::current_dir().unwrap_or_default(),
@@ -410,7 +481,7 @@ impl TuiEngine {
                                             on_submit(expanded, token);
                                         } else {
                                             self.chat.messages.push(chat::ChatMessage::Summary {
-                                                completed: vec!["没有可重试的消息。".into()],
+                                                completed: vec!["No messages to retry.".into()],
                                                 next_steps: vec![],
                                             });
                                         }
@@ -430,7 +501,7 @@ impl TuiEngine {
                                         self.last_user_input = None;
                                         let sid = &self.session_id[..8];
                                         self.chat.messages.push(chat::ChatMessage::Summary {
-                                            completed: vec![format!("新会话已创建。session:{sid}")],
+                                            completed: vec![format!("New session created. session:{sid}")],
                                             next_steps: vec![],
                                         });
                                     }
@@ -450,7 +521,7 @@ impl TuiEngine {
                                             1
                                         };
                                         self.chat.messages.push(chat::ChatMessage::Summary {
-                                            completed: vec![format!("已撤销最近 {removed} 条消息。")],
+                                            completed: vec![format!("Undid {removed} messages.")],
                                             next_steps: vec![],
                                         });
                                     }
@@ -476,7 +547,19 @@ impl TuiEngine {
                                 // Selector navigation
                                 KeyCode::Char('j') if ctrl && self.selector.is_visible() => self.selector.next(),
                                 KeyCode::Char('k') if ctrl && self.selector.is_visible() => self.selector.prev(),
-                                KeyCode::Enter if self.selector.is_visible() => self.selector.hide(),
+                                KeyCode::Up if self.selector.is_visible() => self.selector.prev(),
+                                KeyCode::Down if self.selector.is_visible() => self.selector.next(),
+                                KeyCode::Esc if self.selector.is_visible() => self.selector.hide(),
+                                KeyCode::Enter if self.selector.is_visible() => {
+                                    if let Some(selected) = self.selector.selected_item().map(|s| s.to_string()) {
+                                        self.model = selected.clone();
+                                        self.chat.messages.push(chat::ChatMessage::Summary {
+                                            completed: vec![format!("Model switched to: {selected}")],
+                                            next_steps: vec![],
+                                        });
+                                    }
+                                    self.selector.hide();
+                                }
                                 // Quit / Interrupt
                                 KeyCode::Char('c') if ctrl => {
                                     if self.agent_busy {
@@ -486,16 +569,29 @@ impl TuiEngine {
                                         self.agent_busy = false;
                                         self.current_cancel = None;
                                         self.chat.messages.push(chat::ChatMessage::Summary {
-                                            completed: vec!["[中断] Agent 已停止".into()],
+                                            completed: vec!["[Interrupted] Agent stopped.".into()],
                                             next_steps: vec![],
                                         });
                                     } else {
                                         break;
                                     }
                                 }
-                                // Default: pass to input editor
+                                // ESC: interrupt agent or pass to editor
                                 KeyCode::Esc => {
-                                    let _ = self.editor.handle_key(key_event);
+                                    if self.agent_busy {
+                                        if let Some(ref token) = self.current_cancel {
+                                            token.cancel();
+                                        }
+                                        self.agent_busy = false;
+                                        self.current_cancel = None;
+                                        self.footer.end_turn();
+                                        self.chat.messages.push(chat::ChatMessage::Summary {
+                                            completed: vec!["[Interrupted] Agent stopped.".into()],
+                                            next_steps: vec![],
+                                        });
+                                    } else {
+                                        let _ = self.editor.handle_key(key_event);
+                                    }
                                 }
                                 _ => {
                                     let action = self.editor.handle_key(key_event);
@@ -525,9 +621,16 @@ impl TuiEngine {
                                 _ => {}
                             }
                         }
+                        Event::Resize(_, _) => {
+                            let _ = terminal.autoresize();
+                            let _ = terminal.clear();
+                        }
                         _ => {}
                     }
                 }
+            }
+            if self.quit_requested {
+                break;
             }
         }
         let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);
@@ -554,7 +657,7 @@ impl TuiEngine {
                 self.chat.tool_output_visible = !self.chat.tool_output_visible;
             }
             "/help" => {
-                let help = "快捷键: Ctrl+O 工具输出 | Ctrl+T 思考 | Ctrl+P 模型循环 | Ctrl+R 重试 | Ctrl+N 新会话 | Ctrl+/ 撤销 | Ctrl+G 编辑器\n命令: /clear | /compact | /model [name] | /new | /fork [id] | /export [fmt] | /sessions | /branch | /name [title] | /copy | /usage | /reload | /diff | /theme | /thinking | /details | /tree | /skills | /template";
+                let help = "Keys: Ctrl+O tool output | Ctrl+T thinking | Ctrl+P cycle model | Ctrl+R retry | Ctrl+N new session | Ctrl+/ undo | Ctrl+G editor\nCommands: /clear | /compact | /model [name] | /new | /fork [id] | /export [fmt] | /sessions | /branch | /name [title] | /copy | /usage | /reload | /diff | /theme | /thinking | /details | /tree | /skills | /template";
                 self.chat.messages.push(chat::ChatMessage::Summary {
                     completed: vec![help.into()],
                     next_steps: vec![],
@@ -611,6 +714,9 @@ impl TuiEngine {
             "/skills" => {
                 self.handle_skills_command();
             }
+            "/quit" => {
+                self.quit_requested = true;
+            }
             t if t.starts_with('/') && !t.contains(' ') && t.len() > 1 => {
                 let skill_name = &t[1..];
                 self.handle_skill_invoke(skill_name, "", on_submit);
@@ -645,6 +751,7 @@ impl TuiEngine {
         } else {
             self.last_user_input = Some(text.clone());
             self.agent_busy = true;
+            self.footer.start_turn();
             self.chat.push_user_message(text.clone());
             let file_expanded = uncode_core::context::expand_file_refs(
                 &text,
@@ -660,7 +767,7 @@ impl TuiEngine {
         self.chat.scroll_offset = 0;
         self.chat.auto_scroll = true;
         self.chat.messages.push(chat::ChatMessage::Summary {
-            completed: vec!["对话已清空。".into()],
+            completed: vec!["Chat cleared.".into()],
             next_steps: vec![],
         });
     }
@@ -672,16 +779,16 @@ impl TuiEngine {
         let msg_count = self.chat.messages.len();
 
         let mut lines = vec![
-            format!("上下文使用: {ctx_pct}% (in:{in_str} out:{out_str})"),
-            format!("对话消息数: {msg_count}"),
+            format!("Context: {ctx_pct}% (in:{in_str} out:{out_str})"),
+            format!("Messages: {msg_count}"),
         ];
 
         if ctx_pct >= 80 {
-            lines.push("已达压缩阈值，下轮对话将自动压缩。".into());
+            lines.push("Context threshold reached, auto-compaction next turn.".into());
         } else if ctx_pct >= 50 {
-            lines.push("上下文使用中等，建议在超过 80% 前主动压缩。".into());
+            lines.push("Context usage moderate, consider compacting before 80%.".into());
         } else {
-            lines.push("上下文使用率低，无需压缩。".into());
+            lines.push("Context usage low, no compaction needed.".into());
         }
 
         self.chat.messages.push(chat::ChatMessage::Summary {
@@ -692,7 +799,7 @@ impl TuiEngine {
 
     fn handle_new_command(&mut self) {
         let old_id = if self.session_id.is_empty() {
-            "无".to_string()
+            "none".to_string()
         } else {
             self.session_id[..8.min(self.session_id.len())].to_string()
         };
@@ -709,7 +816,7 @@ impl TuiEngine {
         let new_id = &self.session_id[..8];
         self.chat.messages.push(chat::ChatMessage::Summary {
             completed: vec![format!(
-                "新会话已创建。session:{} → session:{new_id}",
+                "New session. session:{} → session:{new_id}",
                 old_id
             )],
             next_steps: vec![],
@@ -721,17 +828,15 @@ impl TuiEngine {
         let name = parts.get(1).copied().unwrap_or("").trim();
 
         if name.is_empty() {
-            self.selector.show(
-                "切换模型",
-                vec!["deepseek-v3".into(), "glm-5.1".into(), "ollama".into()],
-            );
+            self.selector
+                .show("切换模型", self.available_models.clone());
             return;
         }
 
         let old = self.model.clone();
         self.model = name.to_string();
         self.chat.messages.push(chat::ChatMessage::Summary {
-            completed: vec![format!("模型切换: {old} → {name}")],
+            completed: vec![format!("Model switched: {old} -> {name}")],
             next_steps: vec![],
         });
     }
@@ -739,7 +844,7 @@ impl TuiEngine {
     fn handle_fork_command(&mut self, text: &str) {
         if self.session_id.is_empty() {
             self.chat.messages.push(chat::ChatMessage::Error {
-                message: "当前没有活跃会话，无法 fork。".into(),
+                message: "No active session to fork.".into(),
                 category: uncode_core::event::ErrorCategory::Config,
             });
             return;
@@ -784,7 +889,7 @@ impl TuiEngine {
     fn handle_export_command(&mut self, text: &str) {
         if self.session_id.is_empty() {
             self.chat.messages.push(chat::ChatMessage::Error {
-                message: "当前没有活跃会话，无法导出。".into(),
+                message: "No active session to export.".into(),
                 category: uncode_core::event::ErrorCategory::Config,
             });
             return;
@@ -826,7 +931,7 @@ impl TuiEngine {
                         }
                         Err(e) => {
                             self.chat.messages.push(chat::ChatMessage::Error {
-                                message: format!("写入文件失败: {e}"),
+                                message: format!("Failed to write file: {e}"),
                                 category: uncode_core::event::ErrorCategory::Config,
                             });
                         }
@@ -834,7 +939,7 @@ impl TuiEngine {
                 }
                 Err(e) => {
                     self.chat.messages.push(chat::ChatMessage::Error {
-                        message: format!("读取会话失败: {e}"),
+                        message: format!("Failed to read session: {e}"),
                         category: uncode_core::event::ErrorCategory::Config,
                     });
                 }
@@ -855,7 +960,7 @@ impl TuiEngine {
                         }
                         Err(e) => {
                             self.chat.messages.push(chat::ChatMessage::Error {
-                                message: format!("写入文件失败: {e}"),
+                                message: format!("Failed to write file: {e}"),
                                 category: uncode_core::event::ErrorCategory::Config,
                             });
                         }
@@ -863,7 +968,7 @@ impl TuiEngine {
                 }
                 Err(e) => {
                     self.chat.messages.push(chat::ChatMessage::Error {
-                        message: format!("读取会话失败: {e}"),
+                        message: format!("Failed to read session: {e}"),
                         category: uncode_core::event::ErrorCategory::Config,
                     });
                 }
@@ -893,12 +998,12 @@ impl TuiEngine {
             Ok(mut sessions) => {
                 if sessions.is_empty() {
                     self.chat.messages.push(chat::ChatMessage::Summary {
-                        completed: vec!["没有历史会话。".into()],
+                        completed: vec!["No session history.".into()],
                         next_steps: vec![],
                     });
                     return;
                 }
-                sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+                sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
                 let display: Vec<String> = sessions
                     .iter()
                     .take(20)
@@ -918,7 +1023,7 @@ impl TuiEngine {
                         )
                     })
                     .collect();
-                let mut completed = vec![format!("最近 {} 条会话:", display.len())];
+                let mut completed = vec![format!("Recent {} sessions:", display.len())];
                 completed.extend(display);
                 self.chat.messages.push(chat::ChatMessage::Summary {
                     completed,
@@ -927,7 +1032,7 @@ impl TuiEngine {
             }
             Err(e) => {
                 self.chat.messages.push(chat::ChatMessage::Error {
-                    message: format!("读取会话列表失败: {e}"),
+                    message: format!("Failed to list sessions: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
             }
@@ -937,7 +1042,7 @@ impl TuiEngine {
     fn handle_branch_command(&mut self) {
         if self.session_id.is_empty() {
             self.chat.messages.push(chat::ChatMessage::Summary {
-                completed: vec!["当前没有活跃会话。".into()],
+                completed: vec!["No active session.".into()],
                 next_steps: vec![],
             });
             return;
@@ -984,7 +1089,7 @@ impl TuiEngine {
     fn handle_name_command(&mut self, text: &str) {
         if self.session_id.is_empty() {
             self.chat.messages.push(chat::ChatMessage::Error {
-                message: "当前没有活跃会话。".into(),
+                message: "No active session.".into(),
                 category: uncode_core::event::ErrorCategory::Config,
             });
             return;
@@ -1007,13 +1112,13 @@ impl TuiEngine {
                 Ok(header) => {
                     let current = header.title.as_deref().unwrap_or("(无标题)");
                     self.chat.messages.push(chat::ChatMessage::Summary {
-                        completed: vec![format!("当前标题: {current}")],
+                        completed: vec![format!("Current title: {current}")],
                         next_steps: vec![],
                     });
                 }
                 Err(e) => {
                     self.chat.messages.push(chat::ChatMessage::Error {
-                        message: format!("读取会话失败: {e}"),
+                        message: format!("Failed to read session: {e}"),
                         category: uncode_core::event::ErrorCategory::Config,
                     });
                 }
@@ -1042,7 +1147,7 @@ impl TuiEngine {
             }
         }
         self.chat.messages.push(chat::ChatMessage::Summary {
-            completed: vec![format!("会话标题已设置: {title}")],
+            completed: vec![format!("Title set: {title}")],
             next_steps: vec![],
         });
     }
@@ -1058,13 +1163,13 @@ impl TuiEngine {
                 let osc = format!("\x1b]52;c;{encoded}\x07");
                 let _ = std::io::Write::write_all(&mut std::io::stdout(), osc.as_bytes());
                 self.chat.messages.push(chat::ChatMessage::Summary {
-                    completed: vec![format!("已复制到剪贴板 ({} 字符)", text.len())],
+                    completed: vec![format!("Copied to clipboard ({} chars)", text.len())],
                     next_steps: vec![],
                 });
             }
             None => {
                 self.chat.messages.push(chat::ChatMessage::Summary {
-                    completed: vec!["没有可复制的 Agent 回复。".into()],
+                    completed: vec!["No agent response to copy.".into()],
                     next_steps: vec![],
                 });
             }
@@ -1186,14 +1291,17 @@ impl TuiEngine {
             }
             AgentEvent::TurnEnd { usage, .. } => {
                 self.agent_busy = false;
+                self.footer.end_turn();
                 self.footer.update_usage(usage);
             }
             AgentEvent::SessionEnd { total_tokens, .. } => {
                 self.agent_busy = false;
+                self.footer.end_turn();
                 self.footer.update_usage(total_tokens);
             }
             AgentEvent::AgentInterrupted { .. } => {
                 self.agent_busy = false;
+                self.footer.end_turn();
             }
             _ => {}
         }
@@ -1260,7 +1368,7 @@ impl TuiEngine {
     fn handle_tree_command(&mut self) {
         if self.session_id.is_empty() {
             self.chat.messages.push(chat::ChatMessage::Summary {
-                completed: vec!["当前没有活跃会话。".into()],
+                completed: vec!["No active session.".into()],
                 next_steps: vec![],
             });
             return;
@@ -1470,7 +1578,7 @@ fn render_session_tree(
 fn base64_encode(input: &str) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let bytes = input.as_bytes();
-    let mut out = String::with_capacity((bytes.len() + 2) / 3 * 4);
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b0 = chunk[0] as u32;
         let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
@@ -1646,6 +1754,23 @@ mod tests {
     }
 
     #[test]
+    fn test_format_duration() {
+        assert_eq!(format_duration(std::time::Duration::from_secs(0)), "0s");
+        assert_eq!(format_duration(std::time::Duration::from_secs(5)), "5s");
+        assert_eq!(format_duration(std::time::Duration::from_secs(59)), "59s");
+        assert_eq!(format_duration(std::time::Duration::from_secs(60)), "1m0s");
+        assert_eq!(format_duration(std::time::Duration::from_secs(90)), "1m30s");
+        assert_eq!(
+            format_duration(std::time::Duration::from_secs(3600)),
+            "1h0m"
+        );
+        assert_eq!(
+            format_duration(std::time::Duration::from_secs(3661)),
+            "1h1m"
+        );
+    }
+
+    #[test]
     fn test_footer_render_line1() {
         let footer = FooterState::new();
         let line = footer.render_line1("abc12345xyz");
@@ -1668,6 +1793,7 @@ mod tests {
         assert!(line_str.contains("1.2k"));
         assert!(line_str.contains("$0.0500"));
         assert!(line_str.contains("ctx:30%"));
+        assert!(line_str.contains("time:"));
         assert!(line_str.contains("deepseek-v3"));
         assert!(line_str.contains("◕"));
     }
@@ -1731,18 +1857,17 @@ mod tests {
     fn test_render_lines_with_theme_and_renderers() {
         let engine = TuiEngine::new();
         let area = ratatui::layout::Rect::new(0, 0, 80, 24);
-        // 空消息 — 不 panic，返回提示文字
+        // 空消息 — 不 panic，无提示文字
         let lines = engine
             .chat
             .render_lines(area, &engine.renderers, &engine.theme, 0, false);
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].to_string().contains("描述你的需求"));
+        assert_eq!(lines.len(), 0);
 
         // 使用 light theme — 不 panic
         let light = Theme::light();
         let lines_light = engine
             .chat
             .render_lines(area, &engine.renderers, &light, 0, false);
-        assert_eq!(lines_light.len(), 1);
+        assert_eq!(lines_light.len(), 0);
     }
 }
