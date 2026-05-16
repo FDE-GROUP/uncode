@@ -232,10 +232,13 @@ impl ChatState {
                             // Show path immediately when arguments arrive
                             if arguments_summary.is_empty() && !detail.is_empty() {
                                 *arguments_summary = detail.clone();
+                                // Don't append args JSON to result —
+                                // the path is shown via render_call() in the header
+                            } else {
+                                let r = result.get_or_insert_with(String::new);
+                                r.push_str(&detail);
+                                r.push('\n');
                             }
-                            let r = result.get_or_insert_with(String::new);
-                            r.push_str(&detail);
-                            r.push('\n');
                         }
                         ChatMessage::BashExecution { stdout, .. } => {
                             stdout.push_str(&detail);
@@ -936,9 +939,10 @@ mod tests {
                 "summary should now contain the file path, got: {arguments_summary}"
             );
             assert_eq!(*status, ToolCallRenderStatus::Running);
+            // First progress sets summary but does NOT pollute result
             assert!(
-                result.as_ref().is_some_and(|r| r.contains("chat.rs")),
-                "result should also have the detail"
+                result.is_none() || result.as_ref().is_some_and(|r| r.is_empty()),
+                "result should not contain args JSON after first progress"
             );
         } else {
             panic!("Expected ToolCall message");

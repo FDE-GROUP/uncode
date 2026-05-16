@@ -1,4 +1,5 @@
 use futures::StreamExt;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
@@ -198,6 +199,7 @@ impl AgentLoop {
             let mut current_thinking = String::with_capacity(1024);
             let mut pending_tool_calls: Vec<(String, String, String)> = Vec::with_capacity(4);
             let mut tool_results: Vec<ContentBlock> = Vec::with_capacity(4);
+            let mut args_pushed: HashSet<String> = HashSet::new();
             let mut turn_input_tokens: u64 = 0;
             let mut turn_output_tokens: u64 = 0;
 
@@ -256,9 +258,24 @@ impl AgentLoop {
                         pending_tool_calls.push((id, name, String::new()));
                     }
                     StreamEvent::ToolCallDelta { id, arguments } => {
-                        if let Some(tc) = pending_tool_calls.iter_mut().find(|(tid, ..)| tid == &id)
+                        if let Some(tc) =
+                            pending_tool_calls.iter_mut().find(|(tid, ..)| tid == &id)
                         {
                             tc.2.push_str(&arguments);
+
+                            // Early path display: push accumulated args to TUI
+                            // as soon as we can extract a meaningful path/command.
+                            if !args_pushed.contains(&id)
+                                && has_identifiable_field(&tc.2)
+                            {
+                                self.emit(AgentEvent::ToolCallProgress {
+                                    tool_id: id.clone(),
+                                    progress_type:
+                                        uncode_core::event::ProgressType::Spinner,
+                                    detail: tc.2.clone(),
+                                });
+                                args_pushed.insert(id.clone());
+                            }
                         }
                     }
                     StreamEvent::ToolCallEnd {
@@ -267,18 +284,20 @@ impl AgentLoop {
                         arguments,
                     } => {
                         info!("tool call end: {name} ({id})");
-                        // Push arguments summary to TUI immediately so the user
-                        // sees the file path / command BEFORE the tool executes.
-                        let args_detail = pending_tool_calls
-                            .iter()
-                            .find(|(tid, ..)| tid == &id)
-                            .map(|(_, _, a)| a.clone())
-                            .unwrap_or_else(|| arguments.to_string());
-                        self.emit(AgentEvent::ToolCallProgress {
-                            tool_id: id.clone(),
-                            progress_type: uncode_core::event::ProgressType::Spinner,
-                            detail: args_detail,
-                        });
+                        // Fallback: push arguments if not already sent during deltas
+                        if !args_pushed.contains(&id) {
+                            let args_detail = pending_tool_calls
+                                .iter()
+                                .find(|(tid, ..)| tid == &id)
+                                .map(|(_, _, a)| a.clone())
+                                .unwrap_or_else(|| arguments.to_string());
+                            self.emit(AgentEvent::ToolCallProgress {
+                                tool_id: id.clone(),
+                                progress_type: uncode_core::event::ProgressType::Spinner,
+                                detail: args_detail,
+                            });
+                            args_pushed.insert(id.clone());
+                        }
 
                         let tool = self.tool_registry.get(&name);
                         let result = match tool {
@@ -457,4 +476,26 @@ impl AgentLoop {
 
         Ok(messages)
     }
+}
+
+/// Check if a partial JSON string contains a recognizable identifier field
+/// (path, file_path, or command) with a non-empty quoted value.
+fn has_identifiable_field(partial: &str) -> bool {
+    for key in ["\"path\"", "\"file_path\"", "\"command\""] {
+        if let Some(pos) = partial.find(key) {
+            let rest = &partial[pos + key.len()..];
+            if let Some(colon) = rest.find(':') {
+                let after_colon = rest.get(colon + 1..).unwrap_or("").trim_start();
+                if after_colon.starts_with('"') {
+                    let inner = after_colon.get(1..).unwrap_or("");
+                    if let Some(end) = inner.find('"') {
+                        if end > 0 {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
 }
