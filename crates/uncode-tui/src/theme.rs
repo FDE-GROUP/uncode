@@ -12,6 +12,8 @@ pub struct Theme {
     pub bash: BashColors,
     pub markdown: MarkdownColors,
     pub syntax: SyntaxColors,
+    /// Optional syntect theme name for code highlighting preference chain
+    pub syntax_theme_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -130,6 +132,7 @@ impl Theme {
                 type_name: Color::Cyan,
                 function_name: Color::Blue,
             },
+            syntax_theme_name: None,
         }
     }
 
@@ -190,6 +193,7 @@ impl Theme {
                 type_name: Color::Blue,
                 function_name: Color::Cyan,
             },
+            syntax_theme_name: None,
         }
     }
 
@@ -250,6 +254,7 @@ impl Theme {
                 type_name: Color::Rgb(102, 217, 239),
                 function_name: Color::Rgb(166, 226, 46),
             },
+            syntax_theme_name: None,
         }
     }
 
@@ -310,6 +315,7 @@ impl Theme {
                 type_name: Color::Rgb(181, 137, 0),
                 function_name: Color::Rgb(133, 153, 0),
             },
+            syntax_theme_name: None,
         }
     }
 
@@ -339,6 +345,9 @@ impl Theme {
         theme.syntax = parse_syntax(&raw, &theme.syntax);
         theme.diff = parse_diff(&raw, &theme.diff);
         theme.bash = parse_bash(&raw, &theme.bash);
+        if let Some(name) = raw.get("syntax_theme_name").and_then(|v| v.as_str()) {
+            theme.syntax_theme_name = Some(name.to_string());
+        }
 
         if let Some(borders) = raw.get("thinking_level_border").and_then(|v| v.as_array()) {
             for (i, c) in borders.iter().enumerate().take(6) {
