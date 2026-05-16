@@ -359,13 +359,7 @@ impl TuiEngine {
             }
 
             tokio::select! {
-                Ok(event) = event_rx.recv() => {
-                    let is_turn_end = matches!(event, AgentEvent::TurnEnd { .. } | AgentEvent::SessionEnd { .. } | AgentEvent::AgentInterrupted { .. });
-                    self.handle_event(event);
-                    if is_turn_end {
-                        self.flush_queue(&on_submit);
-                    }
-                }
+                biased;
                 Ok(ui_event) = async {
                     loop {
                         if event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
@@ -626,6 +620,13 @@ impl TuiEngine {
                             let _ = terminal.clear();
                         }
                         _ => {}
+                    }
+                }
+                Ok(event) = event_rx.recv() => {
+                    let is_turn_end = matches!(event, AgentEvent::TurnEnd { .. } | AgentEvent::SessionEnd { .. } | AgentEvent::AgentInterrupted { .. });
+                    self.handle_event(event);
+                    if is_turn_end {
+                        self.flush_queue(&on_submit);
                     }
                 }
             }
