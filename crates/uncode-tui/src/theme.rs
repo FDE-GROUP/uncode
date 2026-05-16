@@ -455,7 +455,7 @@ fn parse_color_str(s: &str) -> Option<Color> {
     None
 }
 
-fn get_color<'a>(obj: &serde_json::Value, key: &str, default: Color) -> Color {
+fn get_color(obj: &serde_json::Value, key: &str, default: Color) -> Color {
     obj.get(key).and_then(parse_color).unwrap_or(default)
 }
 

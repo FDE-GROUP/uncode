@@ -35,6 +35,12 @@ impl OverlaySelector {
         self.visible
     }
 
+    pub fn selected_item(&self) -> Option<&str> {
+        self.state
+            .selected()
+            .and_then(|i| self.items.get(i).map(|s| s.as_str()))
+    }
+
     pub fn next(&mut self) {
         if !self.items.is_empty() {
             let i = self.state.selected().unwrap_or(0);
