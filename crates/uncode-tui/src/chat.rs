@@ -142,14 +142,27 @@ impl Default for ThinkingLevel {
     }
 }
 
+/// Per-message cached line count + rendered output
+struct LineCountEntry {
+    line_count: usize,
+    width: u16,
+    cached_lines: Option<Vec<Line<'static>>>,
+}
+
 /// 对话状态容器
 pub struct ChatState {
     pub messages: Vec<ChatMessage>,
-    pub scroll_offset: u16,
+    pub scroll_offset: usize,
     pub auto_scroll: bool,
     pub tool_output_visible: bool,
     pub thinking_visible: bool,
     pub thinking_level: ThinkingLevel,
+
+    // --- Virtual scrolling cache ---
+    line_counts: Vec<LineCountEntry>,
+    prefix_sum: Vec<usize>,
+    prefix_dirty: bool,
+    cached_width: u16,
 }
 
 impl ChatState {
@@ -161,6 +174,10 @@ impl ChatState {
             tool_output_visible: true,
             thinking_visible: false,
             thinking_level: ThinkingLevel::default(),
+            line_counts: Vec::new(),
+            prefix_sum: vec![0],
+            prefix_dirty: false,
+            cached_width: 0,
         }
     }
 
@@ -169,6 +186,187 @@ impl ChatState {
         if let Some(ChatMessage::Thinking { active, .. }) = self.messages.last_mut() {
             *active = false;
         }
+    }
+
+    /// Invalidate cache entry for message at idx
+    fn invalidate(&mut self, idx: usize) {
+        if let Some(entry) = self.line_counts.get_mut(idx) {
+            entry.width = 0; // force recompute
+            entry.cached_lines = None;
+        }
+        self.prefix_dirty = true;
+    }
+
+    /// Push a new message, keeping cache vectors in sync
+    fn push_message(&mut self, msg: ChatMessage) {
+        self.messages.push(msg);
+        self.line_counts.push(LineCountEntry {
+            line_count: 0,
+            width: 0,
+            cached_lines: None,
+        });
+        self.prefix_dirty = true;
+    }
+
+    /// Rebuild prefix sum from line_counts
+    fn recompute_prefix_sum(&mut self) {
+        self.prefix_sum.clear();
+        self.prefix_sum.push(0);
+        let mut acc = 0usize;
+        // Each message adds a separator blank line (except the first)
+        for (i, entry) in self.line_counts.iter().enumerate() {
+            let sep = if i > 0 { 1 } else { 0 };
+            acc += sep + entry.line_count;
+            self.prefix_sum.push(acc);
+        }
+        self.prefix_dirty = false;
+    }
+
+    /// Total rendered lines across all messages
+    pub fn total_lines(&self) -> usize {
+        *self.prefix_sum.last().unwrap_or(&0)
+    }
+
+    /// Ensure all line counts are up to date for the given width.
+    /// Re-renders only stale messages and caches the results.
+    pub fn ensure_line_counts(
+        &mut self,
+        width: u16,
+        renderers: &ToolRendererRegistry,
+        theme: &Theme,
+        tick: usize,
+        agent_busy: bool,
+    ) {
+        let width_changed = width != self.cached_width;
+        if width_changed {
+            for entry in &mut self.line_counts {
+                entry.width = 0;
+                entry.cached_lines = None;
+            }
+            self.cached_width = width;
+            self.prefix_dirty = true;
+        }
+
+        for idx in 0..self.messages.len() {
+            let needs_recompute = self
+                .line_counts
+                .get(idx)
+                .map_or(true, |e| e.width != width || e.cached_lines.is_none());
+
+            if needs_recompute {
+                let is_last = idx == self.messages.len() - 1;
+                let mut msg_lines =
+                    render_message(&self.messages[idx], width, renderers, theme, tick);
+
+                // Streaming cursor for active assistant
+                if is_last && agent_busy {
+                    if let ChatMessage::Assistant { text } = &self.messages[idx] {
+                        if !text.is_empty() && !msg_lines.is_empty() {
+                            let show_cursor = tick % 4 < 2;
+                            let last = msg_lines.pop().unwrap();
+                            let mut spans = last.spans;
+                            if show_cursor {
+                                spans.push(Span::styled(
+                                    "█",
+                                    Style::default().fg(theme.tool_status.running),
+                                ));
+                            }
+                            msg_lines.push(Line::from(spans));
+                        }
+                    }
+                }
+
+                if let Some(entry) = self.line_counts.get_mut(idx) {
+                    entry.line_count = msg_lines.len();
+                    entry.width = width;
+                    entry.cached_lines = Some(msg_lines);
+                }
+                self.prefix_dirty = true;
+            }
+        }
+
+        if self.prefix_dirty {
+            self.recompute_prefix_sum();
+        }
+    }
+
+    /// Find the range of visible message indices [first, last] for the given viewport.
+    pub fn visible_range(&self, scroll_offset: usize, visible_height: usize) -> (usize, usize) {
+        if self.messages.is_empty() || self.prefix_sum.len() < 2 {
+            return (0, 0);
+        }
+        let start_line = scroll_offset;
+        let end_line = scroll_offset + visible_height;
+
+        // Binary search: find first message whose prefix_sum > start_line
+        let first = self
+            .prefix_sum
+            .partition_point(|&sum| sum <= start_line)
+            .saturating_sub(1)
+            .min(self.messages.len() - 1);
+
+        // Find last message whose prefix_sum <= end_line
+        let last = self
+            .prefix_sum
+            .partition_point(|&sum| sum < end_line)
+            .saturating_sub(1)
+            .min(self.messages.len() - 1);
+
+        (first, last)
+    }
+
+    /// Build viewport lines from cached renders for messages [first..=last].
+    pub fn render_viewport(
+        &mut self,
+        first: usize,
+        last: usize,
+        scroll_offset: usize,
+        visible_height: usize,
+    ) -> Vec<Line<'static>> {
+        let mut lines: Vec<Line<'static>> = Vec::with_capacity(visible_height + 4);
+        let skip_in_first = scroll_offset.saturating_sub(self.prefix_sum[first]);
+
+        for idx in first..=last {
+            // Add separator blank line (matching original render_lines behavior)
+            if idx > 0 && idx > first {
+                lines.push(Line::from(""));
+                if lines.len() >= visible_height {
+                    break;
+                }
+            } else if idx > first {
+                lines.push(Line::from(""));
+                if lines.len() >= visible_height {
+                    break;
+                }
+            }
+
+            let cached = self
+                .line_counts
+                .get(idx)
+                .and_then(|e| e.cached_lines.clone());
+
+            let msg_lines = cached.unwrap_or_default();
+
+            let iter: Box<dyn Iterator<Item = Line<'static>>> = if idx == first && skip_in_first > 0
+            {
+                Box::new(msg_lines.into_iter().skip(skip_in_first))
+            } else {
+                Box::new(msg_lines.into_iter())
+            };
+
+            for line in iter {
+                lines.push(line);
+                if lines.len() >= visible_height {
+                    break;
+                }
+            }
+
+            if lines.len() >= visible_height {
+                break;
+            }
+        }
+
+        lines
     }
 
     /// 处理 AgentEvent，更新对话消息列表
@@ -194,7 +392,7 @@ impl ChatState {
                 self.finalize_assistant();
                 if tool_name == "bash" {
                     let command = extract_bash_command(&arguments_summary);
-                    self.messages.push(ChatMessage::BashExecution {
+                    self.push_message(ChatMessage::BashExecution {
                         tool_id,
                         command,
                         exit_code: None,
@@ -204,7 +402,7 @@ impl ChatState {
                         with_agent: true,
                     });
                 } else {
-                    self.messages.push(ChatMessage::ToolCall {
+                    self.push_message(ChatMessage::ToolCall {
                         tool_id,
                         tool_name,
                         arguments_summary,
@@ -218,12 +416,16 @@ impl ChatState {
             AgentEvent::ToolCallProgress {
                 tool_id, detail, ..
             } => {
-                if let Some(msg) = self.messages.iter_mut().rev().find(|m| match m {
-                    ChatMessage::ToolCall { tool_id: tid, .. }
-                    | ChatMessage::BashExecution { tool_id: tid, .. } => tid == &tool_id,
-                    _ => false,
-                }) {
-                    match msg {
+                let idx = self.messages.iter().rposition(|m| {
+                    matches!(
+                        m,
+                        ChatMessage::ToolCall { tool_id: tid, .. }
+                        | ChatMessage::BashExecution { tool_id: tid, .. }
+                        if tid == &tool_id
+                    )
+                });
+                if let Some(idx) = idx {
+                    match &mut self.messages[idx] {
                         ChatMessage::ToolCall {
                             arguments_summary,
                             result,
@@ -232,8 +434,6 @@ impl ChatState {
                             // Show path immediately when arguments arrive
                             if arguments_summary.is_empty() && !detail.is_empty() {
                                 *arguments_summary = detail.clone();
-                                // Don't append args JSON to result —
-                                // the path is shown via render_call() in the header
                             } else {
                                 let r = result.get_or_insert_with(String::new);
                                 r.push_str(&detail);
@@ -246,6 +446,7 @@ impl ChatState {
                         }
                         _ => {}
                     }
+                    self.invalidate(idx);
                 }
             }
             AgentEvent::ToolCallEnd {
@@ -257,12 +458,16 @@ impl ChatState {
                 ..
             } => {
                 let render_status = ToolCallRenderStatus::from(status);
-                if let Some(msg) = self.messages.iter_mut().rev().find(|m| match m {
-                    ChatMessage::ToolCall { tool_id: tid, .. }
-                    | ChatMessage::BashExecution { tool_id: tid, .. } => tid == &tool_id,
-                    _ => false,
-                }) {
-                    match msg {
+                let idx = self.messages.iter().rposition(|m| {
+                    matches!(
+                        m,
+                        ChatMessage::ToolCall { tool_id: tid, .. }
+                        | ChatMessage::BashExecution { tool_id: tid, .. }
+                        if tid == &tool_id
+                    )
+                });
+                if let Some(idx) = idx {
+                    match &mut self.messages[idx] {
                         ChatMessage::ToolCall {
                             status: s,
                             duration_ms: d,
@@ -291,19 +496,20 @@ impl ChatState {
                         }
                         _ => {}
                     }
+                    self.invalidate(idx);
                 }
             }
             AgentEvent::Error {
                 message, category, ..
             } => {
-                self.messages.push(ChatMessage::Error { message, category });
+                self.push_message(ChatMessage::Error { message, category });
             }
             AgentEvent::PhaseSummary {
                 completed,
                 next_steps,
                 ..
             } => {
-                self.messages.push(ChatMessage::Summary {
+                self.push_message(ChatMessage::Summary {
                     completed,
                     next_steps,
                 });
@@ -314,7 +520,7 @@ impl ChatState {
                 tokens_after,
                 summary_text,
             } => {
-                self.messages.push(ChatMessage::CompactionSummary {
+                self.push_message(ChatMessage::CompactionSummary {
                     messages_replaced,
                     tokens_before,
                     tokens_after,
@@ -322,11 +528,25 @@ impl ChatState {
                 });
             }
             AgentEvent::MessageQueued { text } => {
-                self.messages.push(ChatMessage::QueuedMessage { text });
+                self.push_message(ChatMessage::QueuedMessage { text });
             }
             AgentEvent::MessageDelivered { text } => {
+                let before = self.messages.len();
                 self.messages
                     .retain(|m| !matches!(m, ChatMessage::QueuedMessage { text: t } if t == &text));
+                if self.messages.len() != before {
+                    // Rebuild line_counts to match new messages indices
+                    self.line_counts = self
+                        .messages
+                        .iter()
+                        .map(|_| LineCountEntry {
+                            line_count: 0,
+                            width: 0,
+                            cached_lines: None,
+                        })
+                        .collect();
+                    self.prefix_dirty = true;
+                }
             }
             _ => {}
         }
@@ -335,15 +555,16 @@ impl ChatState {
     /// 添加用户消息，解析 @file 引用
     pub fn push_user_message(&mut self, text: String) {
         let file_refs = extract_file_refs(&text);
-        self.messages.push(ChatMessage::User { text, file_refs });
+        self.push_message(ChatMessage::User { text, file_refs });
     }
 
     /// 追加 Assistant 文本
     fn append_assistant_text(&mut self, content: &str) {
         if let Some(ChatMessage::Assistant { text, .. }) = self.messages.last_mut() {
             text.push_str(content);
+            self.invalidate(self.messages.len() - 1);
         } else {
-            self.messages.push(ChatMessage::Assistant {
+            self.push_message(ChatMessage::Assistant {
                 text: content.to_string(),
             });
         }
@@ -354,20 +575,27 @@ impl ChatState {
         if let Some(ChatMessage::Thinking { text, active, .. }) = self.messages.last_mut() {
             text.push_str(content);
             *active = true;
+            let last = self.messages.len() - 1;
+            self.invalidate(last);
         } else {
             // Deactivate any prior Thinking blocks
-            for msg in self.messages.iter_mut().rev() {
+            let mut to_invalidate: Vec<usize> = Vec::new();
+            for (i, msg) in self.messages.iter_mut().enumerate().rev() {
                 if let ChatMessage::Thinking { active, .. } = msg {
                     *active = false;
+                    to_invalidate.push(i);
                 } else {
                     break;
                 }
             }
-            self.messages.push(ChatMessage::Thinking {
+            self.push_message(ChatMessage::Thinking {
                 text: content.to_string(),
                 expanded: self.thinking_visible,
                 active: true,
             });
+            for idx in to_invalidate {
+                self.invalidate(idx);
+            }
         }
     }
 
