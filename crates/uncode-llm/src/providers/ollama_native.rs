@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::api::Api;
 use crate::api::StreamEvent;
-use uncode_core::api_types::{Context, StreamOptions};
+use uncode_core::api_types::{Context, StopReason, StreamOptions};
 use uncode_core::error::UncodeError;
 use uncode_core::message::{ContentBlock, Role};
 use uncode_core::model::Model;
@@ -201,6 +201,13 @@ fn parse_ollama_chunk(text: &str, state: &mut OllamaToolState) -> Vec<StreamEven
             }
 
             if event["done"].as_bool() == Some(true) {
+                let reason = match event["done_reason"].as_str() {
+                    Some("length") => StopReason::Length,
+                    Some("load") | Some("unload") => StopReason::Stop,
+                    _ => StopReason::Stop,
+                };
+                events.push(StreamEvent::Done { reason });
+
                 if let Some(tool_calls) = event["message"]["tool_calls"].as_array() {
                     for (i, tc) in tool_calls.iter().enumerate() {
                         if state.active_tools.contains_key(&i) {
@@ -268,12 +275,19 @@ impl Api for OllamaNativeApi {
             .scan(state, |state, chunk| {
                 let events: Vec<StreamEvent> = match chunk {
                     Ok(c) => parse_ollama_chunk(&String::from_utf8_lossy(&c), state),
-                    Err(e) => vec![StreamEvent::Error(e.to_string())],
+                    Err(e) => vec![StreamEvent::Error {
+                        reason: uncode_core::api_types::StopReason::Error,
+                        message: e.to_string(),
+                    }],
                 };
                 std::future::ready(Some(stream::iter(events)))
             })
             .flatten()
-            .chain(stream::once(async { StreamEvent::Done }));
+            .chain(stream::once(async {
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                }
+            }));
 
         Ok(Box::pin(stream))
     }

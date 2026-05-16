@@ -158,4 +158,16 @@ pub struct UserCompatConfig {
     pub thinking_format: Option<String>,
     #[serde(default)]
     pub max_tokens_field: Option<String>,
+    #[serde(default)]
+    pub send_session_affinity_headers: Option<bool>,
+    #[serde(default)]
+    pub supports_long_cache_retention: Option<bool>,
+    #[serde(default)]
+    pub supports_store: Option<bool>,
+    #[serde(default)]
+    pub requires_reasoning_content_on_assistant_messages: Option<bool>,
+    #[serde(default)]
+    pub supports_eager_tool_input_streaming: Option<bool>,
+    #[serde(default)]
+    pub supports_cache_control_on_tools: Option<bool>,
 }

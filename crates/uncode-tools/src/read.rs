@@ -2,7 +2,7 @@ use std::fs;
 
 use async_trait::async_trait;
 use uncode_core::error::UncodeResult;
-use uncode_core::tool::{ToolDefinition, ToolExecutor};
+use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
 
 pub struct ReadTool {
     max_size: usize,
@@ -38,6 +38,8 @@ impl ToolExecutor for ReadTool {
                 },
                 "required": ["path"]
             }),
+            label: Some("Read File".into()),
+            execution_mode: ExecutionMode::default(),
         }
     }
 

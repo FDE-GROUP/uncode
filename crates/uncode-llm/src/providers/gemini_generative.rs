@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::api::Api;
 use crate::api::StreamEvent;
-use uncode_core::api_types::{Context, StreamOptions};
+use uncode_core::api_types::{Context, StopReason, StreamOptions};
 use uncode_core::error::UncodeError;
 use uncode_core::message::{ContentBlock, Role};
 use uncode_core::model::Model;
@@ -86,6 +86,17 @@ fn build_gemini_body(_model: &Model, context: &Context, options: &StreamOptions)
     body
 }
 
+pub(crate) fn map_gemini_finish_reason(reason: &str) -> StopReason {
+    match reason {
+        "STOP" | "FINISH_REASON_STOP" => StopReason::Stop,
+        "MAX_TOKENS" | "FINISH_REASON_MAX_TOKENS" => StopReason::Length,
+        "SAFETY" | "FINISH_REASON_SAFETY" | "RECITATION" | "FINISH_REASON_RECITATION" => {
+            StopReason::Error
+        }
+        _ => StopReason::Stop,
+    }
+}
+
 fn parse_gemini_chunk(text: &str) -> Vec<StreamEvent> {
     let mut events = Vec::new();
     for line in text.lines() {
@@ -115,6 +126,11 @@ fn parse_gemini_chunk(text: &str) -> Vec<StreamEvent> {
                             });
                         }
                     }
+                }
+                if let Some(reason) = event["candidates"][0]["finishReason"].as_str() {
+                    events.push(StreamEvent::Done {
+                        reason: map_gemini_finish_reason(reason),
+                    });
                 }
             }
         }
@@ -172,11 +188,18 @@ impl Api for GeminiGenerativeAiApi {
             .flat_map(|chunk| {
                 let events: Vec<StreamEvent> = match chunk {
                     Ok(c) => parse_gemini_chunk(&String::from_utf8_lossy(&c)),
-                    Err(e) => vec![StreamEvent::Error(e.to_string())],
+                    Err(e) => vec![StreamEvent::Error {
+                        reason: uncode_core::api_types::StopReason::Error,
+                        message: e.to_string(),
+                    }],
                 };
                 stream::iter(events)
             })
-            .chain(stream::once(async { StreamEvent::Done }));
+            .chain(stream::once(async {
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                }
+            }));
 
         Ok(Box::pin(stream))
     }

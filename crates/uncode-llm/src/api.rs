@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use futures::stream::{BoxStream, StreamExt};
-use uncode_core::api_types::{Context, StreamOptions};
+use uncode_core::api_types::{Context, StopReason, StreamOptions};
 use uncode_core::message::Message;
 use uncode_core::model::Model;
 
@@ -24,8 +24,13 @@ pub enum StreamEvent {
         arguments: serde_json::Value,
     },
     Usage(UsageInfo),
-    Error(String),
-    Done,
+    Error {
+        reason: StopReason,
+        message: String,
+    },
+    Done {
+        reason: StopReason,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -98,10 +103,10 @@ async fn collect_assistant_message(
                     cost: None,
                 });
             }
-            StreamEvent::Error(e) => {
-                return Err(uncode_core::error::UncodeError::Llm(e));
+            StreamEvent::Error { message, .. } => {
+                return Err(uncode_core::error::UncodeError::Llm(message));
             }
-            StreamEvent::Done => break,
+            StreamEvent::Done { .. } => break,
         }
     }
 

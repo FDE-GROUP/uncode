@@ -1,7 +1,11 @@
 #[cfg(test)]
 mod tests {
     use uncode_core::message::{ContentBlock, Message, Role, ToolCall, ToolResult};
-    use uncode_core::tool::ToolDefinition;
+    use uncode_core::tool::{
+        AfterToolCallContext, AfterToolCallResult, BeforeToolCallContext, ExecutionMode,
+        ToolDefinition, ToolHooks, ToolResult as ToolExecResult,
+    };
+    use uncode_core::api_types::StopReason;
 
     use crate::compaction::{estimate_context_tokens, extract_text, should_compact};
     use crate::system_prompt::SystemPromptBuilder;
@@ -72,12 +76,36 @@ mod tests {
                     "properties": { "text": {"type": "string"} },
                     "required": ["text"]
                 }),
+                label: None,
+                execution_mode: ExecutionMode::default(),
             }
         }
 
         async fn execute(&self, arguments: serde_json::Value) -> Result<String, UncodeError> {
             let text = arguments["text"].as_str().unwrap_or("");
             Ok(format!("echo: {text}"))
+        }
+    }
+
+    // Hook that sets terminate=true on every tool result
+    struct TerminateHook;
+
+    #[async_trait]
+    impl ToolHooks for TerminateHook {
+        async fn before_tool_call(
+            &self,
+            _ctx: &BeforeToolCallContext,
+        ) -> Option<String> {
+            None
+        }
+
+        async fn after_tool_call(
+            &self,
+            _ctx: &AfterToolCallContext,
+            result: &mut ToolExecResult,
+        ) -> AfterToolCallResult {
+            result.terminate = true;
+            AfterToolCallResult::default()
         }
     }
 
@@ -259,6 +287,8 @@ mod tests {
             name: "read".into(),
             description: "read files".into(),
             parameters: serde_json::json!({}),
+            label: None,
+            execution_mode: ExecutionMode::default(),
         }];
         let prompt = SystemPromptBuilder::new().add_tool_guide(&tools).build();
         assert!(prompt.contains("read"));
@@ -271,6 +301,8 @@ mod tests {
             name: "bash".into(),
             description: "run commands".into(),
             parameters: serde_json::json!({}),
+            label: None,
+            execution_mode: ExecutionMode::default(),
         }];
         let skills = vec![("git-release".into(), "create releases".into())];
         let prompt = SystemPromptBuilder::new()
@@ -390,7 +422,9 @@ mod tests {
                 input_tokens: 10,
                 output_tokens: 5,
             }),
-            StreamEvent::Done,
+            StreamEvent::Done {
+                reason: uncode_core::api_types::StopReason::Stop,
+            },
         ]]);
 
         let agent = AgentLoop::new(
@@ -436,7 +470,9 @@ mod tests {
                     input_tokens: 20,
                     output_tokens: 10,
                 }),
-                StreamEvent::Done,
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
             ],
             vec![
                 StreamEvent::TextDelta("Done!".into()),
@@ -444,7 +480,9 @@ mod tests {
                     input_tokens: 30,
                     output_tokens: 8,
                 }),
-                StreamEvent::Done,
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
             ],
         ]);
 
@@ -516,11 +554,15 @@ mod tests {
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "b"}),
                 },
-                StreamEvent::Done,
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
             ],
             vec![
                 StreamEvent::TextDelta("All done.".into()),
-                StreamEvent::Done,
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
             ],
         ]);
 
@@ -570,9 +612,16 @@ mod tests {
                     name: "nonexistent".into(),
                     arguments: serde_json::json!({}),
                 },
-                StreamEvent::Done,
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
             ],
-            vec![StreamEvent::TextDelta("OK".into()), StreamEvent::Done],
+            vec![
+                StreamEvent::TextDelta("OK".into()),
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
+            ],
         ]);
 
         let agent = AgentLoop::new(
@@ -609,9 +658,16 @@ mod tests {
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "x"}),
                 },
-                StreamEvent::Done,
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
             ],
-            vec![StreamEvent::TextDelta("result".into()), StreamEvent::Done],
+            vec![
+                StreamEvent::TextDelta("result".into()),
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
+            ],
         ]);
 
         let agent = AgentLoop::new(
@@ -640,5 +696,375 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── StopReason 填充测试 ──
+
+    #[tokio::test]
+    async fn test_agent_loop_stop_reason_populated() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
+            StreamEvent::TextDelta("response".into()),
+            StreamEvent::Done {
+                reason: uncode_core::api_types::StopReason::Stop,
+            },
+        ]]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+
+        let messages = agent.run(Message::user("hi")).await.unwrap();
+        let assistant_msg = &messages[2];
+        assert_eq!(
+            assistant_msg.stop_reason,
+            Some(uncode_core::api_types::StopReason::Stop)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_agent_loop_stop_reason_length() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
+            StreamEvent::TextDelta("truncated".into()),
+            StreamEvent::Done {
+                reason: uncode_core::api_types::StopReason::Length,
+            },
+        ]]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+
+        let messages = agent.run(Message::user("long prompt")).await.unwrap();
+        let assistant_msg = &messages[2];
+        assert_eq!(
+            assistant_msg.stop_reason,
+            Some(uncode_core::api_types::StopReason::Length)
+        );
+    }
+
+    // ── 双层循环架构 + 新功能测试 ──────────────────────────────────────
+
+    /// should_stop_after_turn: 回调返回 true 后 agent 立即终止，不执行下一轮 LLM 调用
+    #[tokio::test]
+    async fn test_should_stop_after_turn() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            // Turn 1: tool call
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "hello"}),
+                },
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            // Turn 2: 不应被调用
+            vec![
+                StreamEvent::TextDelta("SHOULD NOT REACH".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let mut agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+        agent.set_should_stop_after_turn(Arc::new(|turn| turn >= 1));
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+
+        // Agent 在 turn 1 后终止：System, User, Assistant(ToolCall), Tool(ToolResult)
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[3].role, Role::Tool);
+    }
+
+    /// prepare_next_turn: 每个 turn 后回调被调用
+    #[tokio::test]
+    async fn test_prepare_next_turn_called_per_turn() {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let count_clone = call_count.clone();
+
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "x"}),
+                },
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                StreamEvent::TextDelta("done".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let mut agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+        agent.set_prepare_next_turn(Arc::new(move || {
+            count_clone.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        agent.run(Message::user("go")).await.unwrap();
+
+        // 两轮 turn：tool call turn + text turn
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+    }
+
+    /// transform_context: 每次 LLM 调用前变换消息数组
+    #[tokio::test]
+    async fn test_transform_context_called_before_llm() {
+        let message_counts = Arc::new(Mutex::new(Vec::new()));
+        let counts_clone = message_counts.clone();
+
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "x"}),
+                },
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                StreamEvent::TextDelta("final".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let mut agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+        agent.set_transform_context(Arc::new(move |msgs| {
+            counts_clone.lock().unwrap().push(msgs.len());
+        }));
+
+        agent.run(Message::user("go")).await.unwrap();
+
+        let counts = message_counts.lock().unwrap().clone();
+        assert_eq!(counts.len(), 2); // 两次 LLM 调用前各调用一次
+        assert_eq!(counts[0], 2); // System + User
+        assert_eq!(counts[1], 4); // System + User + Assistant(ToolCall) + Tool(ToolResult)
+    }
+
+    /// steering 消息：内层循环 re-enter，steering 注入到 context 后再次调用 LLM
+    #[tokio::test]
+    async fn test_steering_message_re_enters_inner_loop() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            // Turn 1: text response
+            vec![
+                StreamEvent::TextDelta("First".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            // Turn 2: steering 注入后的 response
+            vec![
+                StreamEvent::TextDelta("AfterSteering".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+
+        // 预先排队 steering 消息
+        agent.steer(Message::user("steer this")).await;
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+
+        // System, User("go"), Assistant("First"), User("steer this"), Assistant("AfterSteering")
+        assert_eq!(messages.len(), 5);
+        assert_eq!(messages[3].role, Role::User);
+        assert!(
+            matches!(&messages[3].content[0], ContentBlock::Text { text } if text == "steer this")
+        );
+        assert_eq!(messages[4].role, Role::Assistant);
+    }
+
+    /// follow-up 消息：外层循环 re-enter，follow-up 注入后再次调用 LLM
+    #[tokio::test]
+    async fn test_follow_up_message_re_enters_outer_loop() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            // Turn 1: text response (内层循环退出)
+            vec![
+                StreamEvent::TextDelta("First".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            // Turn 2: follow-up 注入后的 response
+            vec![
+                StreamEvent::TextDelta("AfterFollowUp".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+
+        // 预先排队 follow-up 消息
+        agent.follow_up(Message::user("follow this")).await;
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+
+        // System, User("go"), Assistant("First"), User("follow this"), Assistant("AfterFollowUp")
+        assert_eq!(messages.len(), 5);
+        assert_eq!(messages[3].role, Role::User);
+        assert!(
+            matches!(&messages[3].content[0], ContentBlock::Text { text } if text == "follow this")
+        );
+        assert_eq!(messages[4].role, Role::Assistant);
+    }
+
+    /// nextTurn 消息：在首轮 turn 前注入到 pending_messages
+    #[tokio::test]
+    async fn test_next_turn_message_injected_before_first_turn() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
+            StreamEvent::TextDelta("Response".into()),
+            StreamEvent::Done {
+                reason: StopReason::Stop,
+            },
+        ]]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+
+        // 预先排队 nextTurn 消息
+        agent.next_turn(Message::user("next turn context")).await;
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+
+        // System, User("go"), User("next turn context"), Assistant("Response")
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[2].role, Role::User);
+        assert!(
+            matches!(&messages[2].content[0], ContentBlock::Text { text } if text == "next turn context")
+        );
+    }
+
+    /// terminate=true：所有工具请求终止时 agent 立即停止，不再发起额外 LLM 调用
+    #[tokio::test]
+    async fn test_tool_terminate_stops_without_extra_llm_call() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            // Turn 1: tool call → terminate=true
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "bye"}),
+                },
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            // Turn 2: 不应被调用
+            vec![
+                StreamEvent::TextDelta("SHOULD NOT REACH".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let mut agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+        agent.set_tool_hooks(Arc::new(TerminateHook));
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+
+        // terminate 后立即停止：System, User, Assistant(ToolCall), Tool(ToolResult)
+        // 不应有第 5 条消息（即第二论 LLM 的 Assistant 响应）
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[3].role, Role::Tool);
     }
 }

@@ -2,7 +2,7 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use uncode_core::tool::{ToolDefinition, ToolExecutor};
+use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
 
 pub struct ToolRegistry {
     tools: RwLock<HashMap<String, Arc<dyn ToolExecutor>>>,
@@ -29,6 +29,36 @@ impl ToolRegistry {
 
     pub fn list(&self) -> Vec<String> {
         self.tools.read().keys().cloned().collect()
+    }
+
+    /// Get the execution mode for a named tool (defaults to Parallel)
+    pub fn execution_mode(&self, name: &str) -> ExecutionMode {
+        self.tools
+            .read()
+            .get(name)
+            .map(|t| t.definition().execution_mode)
+            .unwrap_or_default()
+    }
+
+    /// Get a tool's display label (falls back to name)
+    pub fn label_for(&self, name: &str) -> String {
+        self.tools
+            .read()
+            .get(name)
+            .map(|t| {
+                t.definition()
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| t.definition().name.clone())
+            })
+            .unwrap_or_else(|| name.to_string())
+    }
+
+    /// Check if all named tools can run in parallel
+    pub fn can_run_parallel(&self, tool_names: &[String]) -> bool {
+        tool_names
+            .iter()
+            .all(|name| self.execution_mode(name) == ExecutionMode::Parallel)
     }
 }
 

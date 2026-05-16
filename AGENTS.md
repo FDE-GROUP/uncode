@@ -1,42 +1,10 @@
 # uncode — Rust-native Agent Coding System
 
-**重要约定**
-- 文档及Issues优先原则：没有文档和Issues不能开发，设计决策先写入 @docs/ 目录下的对应文档，确认后需要检查github issues 是否有对应的issues，如果没有应当及时创建，然后再开始编码
-
-**（文档及Issues优先原则不适用于测试、错误修复）**
-- 提交审查合并前应请用户确认
-
- 
-
-## 开发工作流
-
-遵循 GitHub Flow 分支策略：
-
-```
-main ← PR(审查) ← feature-branch ← 编码
-```
-
-1. **创建 Issue** — GitHub 创建 Issue 描述任务需求，关联对应 Phase 路线图
-2. **创建分支** — `git checkout -b feat/issue-N-description`（如 `feat/12-llm-driver`）
-3. **编码 + 测试** — 在分支上开发，确保 `cargo build --workspace` 和 `cargo test --workspace` 通过
-4. **创建 PR** — 提交 Pull Request，描述中写 `closes #N` 关联 Issue
-5. **审查合并** — 审查通过后合并到 main，关闭 Issue
-6. **保持 main 干净** — main 分支始终可构建、测试全部通过
-
-**分支命名规范：**
-
-- `feat/N-description` — 新功能
-- `fix/N-description` — 错误修复
-- `refactor/N-description` — 重构
-- `docs/N-description` — 文档
-- `test/N-description` — 测试
-- `perf/N-description` — 性能优化
-
 ## 项目概述
 
 uncode 是一个使用 Rust 开发的终端 AI Agent Coding 系统。参考 [earendil-works/pi](https://github.com/earendil-works/pi) 的设计理念和框架，使用 Rust 重构，不涉及 Pi 的 web-ui 部分。
 
-详细愿景和设计决策见 @docs/VISION.md，后续设计文档见 @docs/ 目录。
+**架构对齐策略**：核心模块的设计对齐 Pi 的架构哲学。LLM 驱动层采用 **API-first 架构**（参考 `@docs/technologies/LLM_DRIVER_UPGRADE_FEASIBILITY.md`），以 API 协议为核心组织供应商，而非为每个供应商编写独立驱动实现。
 
 ## 项目结构
 
@@ -45,26 +13,31 @@ uncode/
 ├── Cargo.toml              # Rust workspace 根
 ├── AGENTS.md               # 本文档（opencode 协作指引）
 ├── docs/                   # 设计文档
-│   ├── VISION.md           #   项目愿景与设计蓝图
+│   ├── VISION.md           #   项目愿景与设计蓝图（顶层设计指引）
+│   ├── ARCHITECTURE.md     #   架构详细设计
 │   ├── TUI_DESIGN.md       #   TUI 交互设计详案
 │   ├── PLATFORM_DESIGN.md  #   Platform 设计详案
-│   ├── ARCHITECTURE.md     #   架构详细设计
 │   ├── SESSION_SCHEMA.md   #   会话数据 JSONL Schema
-│   └── FDE_INSIGHT.md      #   FDE 角色深度解读
+│   ├── FDE_INSIGHT.md      #   FDE 角色深度解读
+│   └── technologies/       #   技术分析与方案文档
+│       ├── AGENT_CODING_FUNDAMENTALS.md  #   Agent Coding 基本功能分析
+│       ├── LLM_DRIVER_DESIGN.md          #   LLM 驱动层技术方案
+│       ├── LLM_DRIVER_COMPARISON_PI.md   #   LLM 驱动层与 Pi 技术比对
+│       └── LLM_DRIVER_UPGRADE_FEASIBILITY.md  #  LLM 驱动层对齐 Pi 可行性分析
 ├── crates/                 # Rust workspace 成员
 │   ├── uncode-core/        #   共享类型、trait、错误、事件
 │   ├── uncode-macros/      #   过程宏（#[tool] 等）
-│   ├── uncode-llm/         #   LLM 驱动抽象 + 供应商实现
+│   ├── uncode-llm/         #   LLM 驱动层（API-first 架构：Api trait + 4 个协议实现）
 │   ├── uncode-session/     #   会话持久化（JSONL）
 │   ├── uncode-tools/       #   内置工具集
-│   ├── uncode-extensions/  #   扩展系统（规划中）
+│   ├── uncode-extensions/  #   扩展系统（WASM 运行时 + 生命周期钩子）
 │   ├── uncode-agent/       #   代理循环引擎
-│   ├── uncode-tui/         #   终端 UI（4 大展示模块）
+│   ├── uncode-tui/         #   终端 UI
 │   ├── uncode-rpc/         #   JSON-RPC 外部接口（规划中）
-│   ├── uncode-platform/    #   Platform 服务端（规划中）
+│   ├── uncode-platform/    #   Platform 服务端
 │   └── uncode-cli/         #   命令行入口
-├── apps/                    # 前端应用
-│   └── platform/            #   Platform 前端（TypeScript + React 19 + TanStack）
+├── apps/                   # 前端应用
+│   └── platform/           #   Platform 前端（TypeScript + React 19 + TanStack）
 ├── tests/                  # 集成测试
 └── .github/workflows/      # CI/CD
 ```
@@ -73,7 +46,11 @@ uncode/
 
 - **语言**：Rust（edition 2024，MSRV 1.85）
 - **框架/库**：tokio（异步）、ratatui + crossterm（TUI）、clap（CLI）、reqwest（HTTP）、serde（序列化）
-- **LLM 供应商**：GLM、DeepSeek、OpenRouter、Ollama、OpenAI、Anthropic、Gemini
+- **LLM 协议**（API-first）：
+  - `openai-completions` — OpenAI、DeepSeek、GLM、Groq、Cerebras、xAI、Mistral 等所有 OpenAI Chat Completions 兼容供应商
+  - `anthropic-messages` — Anthropic、Fireworks、Kimi 等
+  - `google-generative-ai` — Gemini
+  - `ollama-native` — Ollama 原生 API
 - **Platform 前端**：TypeScript（React 19 + TanStack 全家桶）
 
 ## 构建与验证
@@ -93,7 +70,17 @@ cargo clippy             # lint 检查
 - 文档使用中文书写
 - 架构分层严格遵守：core → llm/session/tools/extensions → agent → tui/platform → cli
 - 跨层通信通过事件流，上层不直接依赖下层实现
+- LLM 驱动层以 API 协议为组织单位，新增供应商通过 Model 声明接入，不新增驱动实现
+- 技术对标 Pi 时，架构哲学优先对齐（API-first），工程细节次之（具体字段/选项）
 
 ## 外部规则引用
 
-当需要了解项目定位、目标用户、TUI 设计理念、Platform 功能、Issues 同步策略等详细设计时，请读取 @docs/VISION.md。 后续设计文档编写时，请读取 @docs/VISION.md 确保一致性，参考 opencode 的 AGENTS.md 规范格式。
+当需要了解项目定位、目标用户、TUI 设计理念、Platform 功能、Issues 同步策略等详细设计时，请读取 @docs/VISION.md。
+
+技术方案文档位于 @docs/technologies/：
+- 基本功能模块分析 → `AGENT_CODING_FUNDAMENTALS.md`
+- LLM 驱动层技术方案 → `LLM_DRIVER_DESIGN.md`
+- 与 Pi 的技术比对 → `LLM_DRIVER_COMPARISON_PI.md`
+- 对齐 Pi 的升级方案 → `LLM_DRIVER_UPGRADE_FEASIBILITY.md`
+
+后续设计文档编写时，请读取 @docs/VISION.md 确保一致性，参考 opencode 的 AGENTS.md 规范格式。

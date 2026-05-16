@@ -31,19 +31,23 @@ pub struct StreamOptions {
     pub headers: Option<HashMap<String, String>>,
     pub thinking_level: Option<ThinkingLevel>,
     pub thinking_budget_tokens: Option<u32>,
+    pub session_id: Option<String>,
+    pub cache_retention: Option<CacheRetention>,
     pub on_payload: Option<Arc<dyn Fn(&serde_json::Value) + Send + Sync>>,
     pub on_response: Option<Arc<dyn Fn(u16, &HashMap<String, String>) + Send + Sync>>,
 }
 
 // ── Thinking ──
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingLevel {
     Off,
+    Minimal,
     Low,
     Medium,
     High,
+    XHigh,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +86,22 @@ pub enum InputModality {
     Audio,
 }
 
+// ── CacheRetention ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheRetention {
+    None,
+    Short,
+    Long,
+}
+
+impl Default for CacheRetention {
+    fn default() -> Self {
+        Self::Short
+    }
+}
+
 // ── CompatConfig ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +116,18 @@ pub struct CompatConfig {
     pub requires_thinking_as_text: bool,
     pub done_breaks_stream: bool,
     pub thinking_format: Option<ThinkingFormat>,
+    #[serde(default)]
+    pub send_session_affinity_headers: bool,
+    #[serde(default)]
+    pub supports_long_cache_retention: bool,
+    #[serde(default)]
+    pub supports_store: bool,
+    #[serde(default)]
+    pub requires_reasoning_content_on_assistant_messages: bool,
+    #[serde(default)]
+    pub supports_eager_tool_input_streaming: bool,
+    #[serde(default)]
+    pub supports_cache_control_on_tools: bool,
 }
 
 impl Default for CompatConfig {
@@ -111,6 +143,12 @@ impl Default for CompatConfig {
             requires_thinking_as_text: false,
             done_breaks_stream: false,
             thinking_format: None,
+            send_session_affinity_headers: false,
+            supports_long_cache_retention: false,
+            supports_store: false,
+            requires_reasoning_content_on_assistant_messages: false,
+            supports_eager_tool_input_streaming: false,
+            supports_cache_control_on_tools: false,
         }
     }
 }

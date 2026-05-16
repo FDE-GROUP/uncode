@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use std::fs;
 use uncode_core::error::UncodeResult;
-use uncode_core::tool::{ToolDefinition, ToolExecutor};
+use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
 
 #[derive(Default)]
 pub struct LsTool;
@@ -18,6 +18,8 @@ impl ToolExecutor for LsTool {
                     "path": {"type": "string", "description": "目录路径（相对或绝对），默认当前目录"}
                 }
             }),
+            label: Some("List Directory".into()),
+            execution_mode: ExecutionMode::default(),
         }
     }
 

@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::api_types::{CompatConfig, InputModality, MaxTokensField, ThinkingFormat};
+use crate::api_types::{
+    CompatConfig, InputModality, MaxTokensField, ThinkingFormat, ThinkingLevel,
+};
 use crate::config::UserModelConfig;
 
 // ── 旧类型（Stage 7 清理前保留） ──
@@ -51,6 +53,8 @@ pub struct Model {
     pub headers: HashMap<String, String>,
     #[serde(default)]
     pub compat: CompatConfig,
+    #[serde(default)]
+    pub thinking_level_map: HashMap<ThinkingLevel, Option<String>>,
 }
 
 impl Default for Model {
@@ -69,6 +73,7 @@ impl Default for Model {
             pricing: ModelPricingPerMillion::default(),
             headers: HashMap::new(),
             compat: CompatConfig::default(),
+            thinking_level_map: HashMap::new(),
         }
     }
 }
@@ -107,6 +112,24 @@ impl Model {
                     MaxTokensField::MaxTokens
                 };
             }
+            if let Some(v) = uc_compat.send_session_affinity_headers {
+                compat.send_session_affinity_headers = v;
+            }
+            if let Some(v) = uc_compat.supports_long_cache_retention {
+                compat.supports_long_cache_retention = v;
+            }
+            if let Some(v) = uc_compat.supports_store {
+                compat.supports_store = v;
+            }
+            if let Some(v) = uc_compat.requires_reasoning_content_on_assistant_messages {
+                compat.requires_reasoning_content_on_assistant_messages = v;
+            }
+            if let Some(v) = uc_compat.supports_eager_tool_input_streaming {
+                compat.supports_eager_tool_input_streaming = v;
+            }
+            if let Some(v) = uc_compat.supports_cache_control_on_tools {
+                compat.supports_cache_control_on_tools = v;
+            }
         }
         Self {
             id: uc.id.clone(),
@@ -127,6 +150,10 @@ impl Model {
 pub struct ModelPricingPerMillion {
     pub input: f64,
     pub output: f64,
+    #[serde(default)]
+    pub cache_read: f64,
+    #[serde(default)]
+    pub cache_write: f64,
 }
 
 fn default_context_window() -> u32 {
@@ -155,11 +182,20 @@ pub fn builtin_models() -> Vec<Model> {
             pricing: ModelPricingPerMillion {
                 input: 0.27,
                 output: 1.10,
+                cache_read: 0.07,
+                cache_write: 0.27,
             },
             compat: CompatConfig {
                 supports_developer_role: false,
                 ..CompatConfig::default()
             },
+            thinking_level_map: HashMap::from([
+                (ThinkingLevel::Minimal, None),
+                (ThinkingLevel::Low, None),
+                (ThinkingLevel::Medium, None),
+                (ThinkingLevel::High, Some("high".into())),
+                (ThinkingLevel::XHigh, Some("max".into())),
+            ]),
             ..Model::default()
         },
         Model {
@@ -176,11 +212,20 @@ pub fn builtin_models() -> Vec<Model> {
             pricing: ModelPricingPerMillion {
                 input: 0.55,
                 output: 2.19,
+                cache_read: 0.14,
+                cache_write: 0.55,
             },
             compat: CompatConfig {
                 supports_developer_role: false,
                 ..CompatConfig::default()
             },
+            thinking_level_map: HashMap::from([
+                (ThinkingLevel::Minimal, None),
+                (ThinkingLevel::Low, None),
+                (ThinkingLevel::Medium, None),
+                (ThinkingLevel::High, Some("high".into())),
+                (ThinkingLevel::XHigh, Some("max".into())),
+            ]),
             ..Model::default()
         },
         // ── GLM (智谱) ──
@@ -212,6 +257,12 @@ pub fn builtin_models() -> Vec<Model> {
             pricing: ModelPricingPerMillion {
                 input: 0.15,
                 output: 0.60,
+                ..Default::default()
+            },
+            compat: CompatConfig {
+                send_session_affinity_headers: true,
+                supports_long_cache_retention: true,
+                ..CompatConfig::default()
             },
             ..Model::default()
         },
@@ -227,6 +278,12 @@ pub fn builtin_models() -> Vec<Model> {
             pricing: ModelPricingPerMillion {
                 input: 2.50,
                 output: 10.00,
+                ..Default::default()
+            },
+            compat: CompatConfig {
+                send_session_affinity_headers: true,
+                supports_long_cache_retention: true,
+                ..CompatConfig::default()
             },
             ..Model::default()
         },
@@ -245,6 +302,14 @@ pub fn builtin_models() -> Vec<Model> {
             pricing: ModelPricingPerMillion {
                 input: 3.00,
                 output: 15.00,
+                cache_read: 0.30,
+                cache_write: 3.75,
+            },
+            compat: CompatConfig {
+                send_session_affinity_headers: true,
+                supports_long_cache_retention: true,
+                supports_cache_control_on_tools: true,
+                ..CompatConfig::default()
             },
             ..Model::default()
         },

@@ -96,15 +96,17 @@ mod tests {
             "/home/user/project".into(),
         );
         let json = serde_json::to_string(&header).unwrap();
-        assert!(json.contains(r#""type":"header""#));
+        assert!(json.contains(r#""type":"session""#));
         assert!(json.contains("abc123"));
+        assert!(json.contains(r#""version":2"#));
     }
 
     #[test]
     fn test_session_entry_message_json() {
         let msg = Message::user("hello");
         let entry = SessionEntry::Message(MessageEntry {
-            id: None,
+            id: generate_entry_id(),
+            parent_id: None,
             timestamp: chrono::Utc::now(),
             role: msg.role,
             content: msg.content,
@@ -122,6 +124,8 @@ mod tests {
             name: "test".into(),
             description: "a test tool".into(),
             parameters: serde_json::json!({"type": "object"}),
+            label: None,
+            execution_mode: ExecutionMode::default(),
         };
         assert_eq!(def.name, "test");
     }
@@ -168,8 +172,10 @@ mod tests {
     #[test]
     fn test_session_entry_branch_json() {
         let entry = SessionEntry::Branch(BranchEntry {
+            id: generate_entry_id(),
+            parent_id: None,
             timestamp: chrono::Utc::now(),
-            parent_id: "parent123".into(),
+            parent_session_id: "parent123".into(),
             reason: "explore alternative".into(),
         });
         let json = serde_json::to_string(&entry).unwrap();

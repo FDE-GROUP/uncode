@@ -882,10 +882,14 @@ impl TuiEngine {
             return;
         }
         let parts: Vec<&str> = text.splitn(2, ' ').collect();
-        let parent_id = if parts.len() > 1 && !parts[1].trim().is_empty() {
+        let target_entry = if parts.len() > 1 && !parts[1].trim().is_empty() {
             parts[1].trim().to_string()
         } else {
-            self.session_id.clone()
+            self.chat.messages.push(chat::ChatMessage::Error {
+                message: "用法: /fork <entry_id> — 指定要回退到的条目 ID".into(),
+                category: uncode_core::event::ErrorCategory::Config,
+            });
+            return;
         };
         let session_dir = match uncode_session::store::SessionStore::default_dir() {
             Ok(d) => d,
@@ -898,12 +902,15 @@ impl TuiEngine {
             }
         };
         let store = uncode_session::store::SessionStore::new(session_dir);
-        match store.fork_session(&parent_id, "用户 fork") {
-            Ok(new_id) => {
-                let old_short = &parent_id[..8.min(parent_id.len())];
-                let new_short = &new_id[..8.min(new_id.len())];
-                let msg = format!("会话已 fork: session:{old_short} → session:{new_short}");
-                self.session_id = new_id;
+        match uncode_agent::branch_summarization::branch_with_summary(
+            &store,
+            &self.session_id,
+            &target_entry,
+            "用户 fork",
+        ) {
+            Ok(()) => {
+                let short = &target_entry[..8.min(target_entry.len())];
+                let msg = format!("已分支到条目: {short}");
                 self.chat.messages.push(chat::ChatMessage::Summary {
                     completed: vec![msg],
                     next_steps: vec![],
@@ -911,7 +918,7 @@ impl TuiEngine {
             }
             Err(e) => {
                 self.chat.messages.push(chat::ChatMessage::Error {
-                    message: format!("Fork 失败: {e}"),
+                    message: format!("分支失败: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
             }
@@ -1556,7 +1563,7 @@ impl TuiEngine {
     where
         F: Fn(String, CancellationToken),
     {
-        if let Some(text) = self.queue.drain_follow_up() {
+        if let Some(text) = self.queue.drain_follow_up().into_iter().next() {
             self.agent_busy = true;
             self.chat.push_user_message(text.clone());
             let token = self.new_cancel_token();

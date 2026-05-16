@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::api::Api;
 use crate::api::{StreamEvent, UsageInfo};
-use uncode_core::api_types::{Context, StreamOptions};
+use uncode_core::api_types::{Context, StopReason, StreamOptions, ThinkingLevel};
 use uncode_core::error::UncodeError;
 use uncode_core::message::{ContentBlock, Role};
 use uncode_core::model::Model;
@@ -140,6 +140,33 @@ fn build_anthropic_body(model: &Model, context: &Context, options: &StreamOption
             .collect();
         body["tools"] = serde_json::json!(tools);
     }
+
+    // Thinking parameters for Anthropic extended thinking
+    if model.reasoning {
+        let level = options.thinking_level.unwrap_or(ThinkingLevel::Off);
+        if level != ThinkingLevel::Off {
+            let mapped = model
+                .thinking_level_map
+                .get(&level)
+                .and_then(|v| v.as_deref());
+
+            let effort = mapped.unwrap_or(match level {
+                ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
+                ThinkingLevel::Medium => "medium",
+                ThinkingLevel::High | ThinkingLevel::XHigh => "high",
+                _ => "high",
+            });
+
+            let budget = options.thinking_budget_tokens.unwrap_or(10000);
+            body["thinking"] = serde_json::json!({
+                "type": "enabled",
+                "budget_tokens": budget
+            });
+            // effort is only used by models that support adaptive thinking
+            let _ = effort;
+        }
+    }
+
     body
 }
 
@@ -212,9 +239,10 @@ fn parse_anthropic_chunk(text: &str, state: &mut AnthropicToolState) -> Vec<Stre
                             let parsed = match serde_json::from_str::<Value>(&args_str) {
                                 Ok(v) => v,
                                 Err(e) => {
-                                    events.push(StreamEvent::Error(format!(
-                                        "tool args JSON parse failed: {e}"
-                                    )));
+                                    events.push(StreamEvent::Error {
+                                        reason: uncode_core::api_types::StopReason::Error,
+                                        message: format!("tool args JSON parse failed: {e}"),
+                                    });
                                     Value::Object(Default::default())
                                 }
                             };
@@ -231,6 +259,15 @@ fn parse_anthropic_chunk(text: &str, state: &mut AnthropicToolState) -> Vec<Stre
                                 input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
                                 output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
                             }));
+                        }
+                        if let Some(stop) = event["delta"]["stop_reason"].as_str() {
+                            let reason = match stop {
+                                "end_turn" | "stop_sequence" => StopReason::Stop,
+                                "tool_use" => StopReason::ToolUse,
+                                "max_tokens" => StopReason::Length,
+                                _ => StopReason::Stop,
+                            };
+                            events.push(StreamEvent::Done { reason });
                         }
                     }
                     Some("message_start") => {
@@ -300,12 +337,19 @@ impl Api for AnthropicMessagesApi {
             .scan(state, |state, chunk| {
                 let events: Vec<StreamEvent> = match chunk {
                     Ok(c) => parse_anthropic_chunk(&String::from_utf8_lossy(&c), state),
-                    Err(e) => vec![StreamEvent::Error(e.to_string())],
+                    Err(e) => vec![StreamEvent::Error {
+                        reason: uncode_core::api_types::StopReason::Error,
+                        message: e.to_string(),
+                    }],
                 };
                 std::future::ready(Some(stream::iter(events)))
             })
             .flatten()
-            .chain(stream::once(async { StreamEvent::Done }));
+            .chain(stream::once(async {
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                }
+            }));
 
         Ok(Box::pin(stream))
     }

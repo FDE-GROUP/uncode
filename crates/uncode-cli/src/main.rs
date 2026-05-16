@@ -287,12 +287,24 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // --fork：从指定会话 fork
+    // --fork：从指定会话原地分支
     if let Some(fork_id) = &cli.fork {
         let reason = cli.prompt.as_deref().unwrap_or("fork from CLI");
-        let new_id = session_store.fork_session(fork_id, reason)?;
-        eprintln!("Fork 会话: {fork_id} -> {new_id}");
-        agent.set_session_id(new_id);
+        let leaf_id = session_store.get_leaf_id(fork_id)?;
+        let target_entry = match &leaf_id {
+            Some(id) => id.clone(),
+            None => {
+                anyhow::bail!("会话 {fork_id} 无叶节点，无法分支");
+            }
+        };
+        uncode_agent::branch_summarization::branch_with_summary(
+            &session_store,
+            fork_id,
+            &target_entry,
+            reason,
+        )?;
+        eprintln!("原地分支: session:{fork_id} -> entry:{target_entry}");
+        agent.set_session_id(fork_id.clone());
 
         let prompt_text = cli
             .prompt
@@ -480,8 +492,6 @@ fn run_models(json_output: bool) -> anyhow::Result<()> {
 }
 
 fn run_export(session_id: &str, output: Option<&str>, latest: bool) -> anyhow::Result<()> {
-    use uncode_core::message::{ContentBlock, Role};
-    use uncode_core::session::SessionEntry;
     use uncode_session::export::export_html;
 
     let session_dir = SessionStore::default_dir().context("session dir")?;
@@ -505,15 +515,7 @@ fn run_export(session_id: &str, output: Option<&str>, latest: bool) -> anyhow::R
     let header = store.read_header(&sid).context("读取会话头")?;
     let entries = store.load_entries(&sid).context("读取会话内容")?;
 
-    // Extract messages from entries
-    let mut messages: Vec<(Role, Vec<ContentBlock>)> = Vec::new();
-    for entry in &entries {
-        if let SessionEntry::Message(me) = entry {
-            messages.push((me.role.clone(), me.content.clone()));
-        }
-    }
-
-    let html = export_html(&header, &entries, &messages);
+    let html = export_html(&header, &entries, &[]);
 
     if let Some(path) = output {
         std::fs::write(path, &html)?;

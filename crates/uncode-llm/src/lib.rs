@@ -8,6 +8,9 @@ pub mod api_registry;
 pub mod model_registry;
 pub mod providers;
 
+#[cfg(test)]
+mod tests;
+
 pub use api::Api;
 pub use api_registry::ApiRegistry;
 pub use model_registry::ModelRegistry;

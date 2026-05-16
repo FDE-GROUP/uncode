@@ -14,8 +14,9 @@ cargo build -p uncode-cli        # Build CLI only
 cargo test --workspace           # Run all tests
 cargo test -p uncode-core        # Run single crate tests
 cargo test -p uncode-core test_name  # Run single test
-cargo fmt --check                # Format check
-cargo clippy --all-targets       # Lint
+cargo test --workspace -- --test-threads=1  # Run tests single-threaded (required for uncode-tools)
+cargo fmt --check --all          # Format check
+cargo clippy --all-targets --no-deps  # Lint
 cargo run -p uncode-cli -- --model deepseek-v3 "prompt"  # Run CLI
 cd apps/platform && bun install && bun dev   # Platform frontend dev server
 cd apps/platform && bun run build           # Platform frontend build
@@ -37,7 +38,7 @@ uncode-cli (entry point, clap arg parsing)
     uncode-agent (agent loop engine, system prompts, token estimation, context compression)
         ├── uncode-llm (LLM driver trait + 7 provider implementations + registry)
         ├── uncode-session (JSONL session persistence)
-        ├── uncode-tools (8 built-in tools: read/write/edit/grep/bash/find/ls + GitHub API)
+        ├── uncode-tools (7 built-in tools: read/write/edit/grep/bash/find/ls)
         └── uncode-extensions (WASM extension runtime)
                 │
             uncode-core (shared types, traits, errors, events — leaf crate, no internal deps)
@@ -45,6 +46,16 @@ uncode-cli (entry point, clap arg parsing)
 ```
 
 Cross-layer communication uses event streams. Upper layers subscribe to events, not direct calls.
+
+### LLM Provider Architecture
+
+All providers implement `LlmDriver` trait (`uncode-llm/src/driver.rs`). Implementations live in `uncode-llm/src/providers/`. Shared OpenAI-compatible logic is in `common.rs` — 5 providers (openai, deepseek, glm, openrouter, ollama) reuse `OpenAiStreamState`, `parse_openai_tool_calls()`, `flush_tool_calls()`. Anthropic has independent implementation due to its distinct SSE event types. Gemini lacks tool call support.
+
+Tool calls follow a three-stage protocol: `ToolCallStart` → `ToolCallDelta` (may repeat) → `ToolCallEnd`. Every stream must end with `StreamEvent::Done`.
+
+### Tool System
+
+7 tools in `uncode-tools/src/` (read, write, edit, grep, bash, find, ls). Each implements `ToolExecutor` trait. The `#[tool]` proc macro in `uncode-macros` derives JSON Schema from function signatures. All tools use `normalize_path()` + `resolve_path()` for sandbox enforcement — files must stay within CWD.
 
 ## Key Design Decisions
 
@@ -54,8 +65,8 @@ Cross-layer communication uses event streams. Upper layers subscribe to events, 
 - **Async runtime**: tokio (full features)
 - **Config**: TOML at `~/.uncode/config.toml`
 - **Session format**: JSONL with branch support
-- **Code parsing**: tree-sitter (10 languages)
 - **Platform frontend**: React 19 + TanStack Router/Query + Vite, TypeScript strict mode
+- **Cargo profiles**: dev uses `opt-level = 1` + `line-tables-only` for fast incremental builds; release uses LTO + strip
 
 ## 重要约定（文档及 Issues 优先原则）
 
@@ -81,6 +92,6 @@ RUSTFLAGS="-D warnings" cargo build --workspace
 RUSTFLAGS="-D warnings" cargo test --workspace
 ```
 
-## LLM Provider Implementations
+## Test Caveats
 
-All providers implement a common trait in `uncode-llm`. Provider implementations live in `uncode-llm/src/providers/`. The registry pattern allows runtime model switching.
+`uncode-tools` tests use `set_current_dir()` for sandbox isolation, which is process-global. These tests **must** run single-threaded: `cargo test -p uncode-tools -- --test-threads=1`. Running `cargo test --workspace` uses default parallelism and may cause intermittent failures in tools tests.

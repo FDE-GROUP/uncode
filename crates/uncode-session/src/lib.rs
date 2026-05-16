@@ -5,6 +5,7 @@
 
 pub mod export;
 pub mod manager;
+pub mod migration;
 pub mod store;
 
 pub use manager::SessionManager;

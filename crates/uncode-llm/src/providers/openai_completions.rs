@@ -6,7 +6,7 @@ use std::collections::HashMap;
 
 use crate::api::{Api, StreamEvent, UsageInfo};
 use uncode_core::api_types::{
-    CompatConfig, Context, MaxTokensField, StreamOptions, ThinkingFormat,
+    CompatConfig, Context, MaxTokensField, StopReason, StreamOptions, ThinkingFormat, ThinkingLevel,
 };
 use uncode_core::error::UncodeError;
 use uncode_core::message::{ContentBlock, Role};
@@ -169,6 +169,55 @@ fn build_request_body(model: &Model, context: &Context, options: &StreamOptions)
     if let Some(tools) = build_tools_json(&context.tools) {
         body["tools"] = tools;
     }
+    if model.compat.supports_store {
+        body["store"] = serde_json::json!(true);
+    }
+    if let Some(ref sid) = options.session_id {
+        if model.compat.send_session_affinity_headers || model.compat.supports_long_cache_retention
+        {
+            body["prompt_cache_key"] = serde_json::json!(sid);
+        }
+        if model.compat.supports_long_cache_retention
+            && options.cache_retention == Some(uncode_core::api_types::CacheRetention::Long)
+        {
+            body["prompt_cache_retention"] = serde_json::json!("24h");
+        }
+    }
+
+    // Thinking / reasoning parameters
+    if let Some(level) = options.thinking_level {
+        if level != ThinkingLevel::Off && model.reasoning {
+            let mapped = model
+                .thinking_level_map
+                .get(&level)
+                .and_then(|v| v.as_deref());
+
+            match model.compat.thinking_format {
+                Some(ThinkingFormat::DeepSeek) => {
+                    if let Some(effort) = mapped {
+                        body["thinking"] = serde_json::json!({"type": "enabled"});
+                        body["reasoning_effort"] = serde_json::json!(effort);
+                    }
+                }
+                Some(ThinkingFormat::OpenRouter) => {
+                    let effort = mapped.unwrap_or("high");
+                    body["reasoning"] = serde_json::json!({"effort": effort});
+                }
+                _ => {
+                    if model.compat.supports_reasoning_effort {
+                        let effort = mapped.unwrap_or(match level {
+                            ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
+                            ThinkingLevel::Medium => "medium",
+                            ThinkingLevel::High | ThinkingLevel::XHigh => "high",
+                            _ => "medium",
+                        });
+                        body["reasoning_effort"] = serde_json::json!(effort);
+                    }
+                }
+            }
+        }
+    }
+
     body
 }
 
@@ -191,6 +240,16 @@ impl StreamState {
 }
 
 // ── SSE 解析 ──
+
+pub(crate) fn map_finish_reason(reason: &str) -> StopReason {
+    match reason {
+        "stop" | "end" => StopReason::Stop,
+        "length" | "max_tokens" => StopReason::Length,
+        "tool_calls" | "function_call" => StopReason::ToolUse,
+        "content_filter" => StopReason::Error,
+        _ => StopReason::Stop,
+    }
+}
 
 fn parse_sse_chunk(text: &str, state: &mut StreamState, compat: &CompatConfig) -> Vec<StreamEvent> {
     let mut events = Vec::new();
@@ -227,6 +286,11 @@ fn parse_sse_chunk(text: &str, state: &mut StreamState, compat: &CompatConfig) -
                     if let Some(reason) = choice.get("finish_reason") {
                         if !reason.is_null() {
                             events.extend(flush_tool_calls(state));
+                            let stop = reason
+                                .as_str()
+                                .map(map_finish_reason)
+                                .unwrap_or(StopReason::Stop);
+                            events.push(StreamEvent::Done { reason: stop });
                         }
                     }
                 }
@@ -287,9 +351,10 @@ fn flush_tool_calls(state: &mut StreamState) -> Vec<StreamEvent> {
         let parsed = match serde_json::from_str::<Value>(&args) {
             Ok(v) => v,
             Err(e) => {
-                events.push(StreamEvent::Error(format!(
-                    "tool args JSON parse failed: {e}"
-                )));
+                events.push(StreamEvent::Error {
+                    reason: uncode_core::api_types::StopReason::Error,
+                    message: format!("tool args JSON parse failed: {e}"),
+                });
                 Value::Object(Default::default())
             }
         };
@@ -348,6 +413,13 @@ impl Api for OpenAiCompletionsApi {
             req = req.header(k.as_str(), v.as_str());
         }
 
+        if model.compat.send_session_affinity_headers {
+            if let Some(ref sid) = options.session_id {
+                req = req.header("session_id", sid.as_str());
+                req = req.header("x-client-request-id", sid.as_str());
+            }
+        }
+
         let send_future = req.send();
         let response = match options.timeout_ms {
             Some(ms) => tokio::time::timeout(std::time::Duration::from_millis(ms), send_future)
@@ -373,12 +445,19 @@ impl Api for OpenAiCompletionsApi {
             .scan(state, move |state, chunk| {
                 let events: Vec<StreamEvent> = match chunk {
                     Ok(c) => parse_sse_chunk(&String::from_utf8_lossy(&c), state, &compat),
-                    Err(e) => vec![StreamEvent::Error(e.to_string())],
+                    Err(e) => vec![StreamEvent::Error {
+                        reason: uncode_core::api_types::StopReason::Error,
+                        message: e.to_string(),
+                    }],
                 };
                 std::future::ready(Some(stream::iter(events)))
             })
             .flatten()
-            .chain(stream::once(async { StreamEvent::Done }));
+            .chain(stream::once(async {
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                }
+            }));
 
         Ok(Box::pin(stream))
     }

@@ -289,9 +289,38 @@ pub async fn register_core_commands(
                 .ok_or("missing session_id")?;
             let header = ss.read_header(id).map_err(|e| e.to_string())?;
             let entries = ss.load_entries(id).map_err(|e| e.to_string())?;
+            let leaf_id = ss.get_leaf_id(id).map_err(|e| e.to_string())?;
             Ok(serde_json::json!({
                 "header": header,
                 "entries": entries,
+                "leaf_id": leaf_id,
+            }))
+        })
+        .await;
+
+    // session.branch — in-place branching with summary
+    let ss = session_store.clone();
+    server
+        .register("session.branch", move |params| {
+            let session_id = params
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .ok_or("missing session_id")?;
+            let target_id = params
+                .get("target_id")
+                .and_then(|v| v.as_str())
+                .ok_or("missing target_id")?;
+            let reason = params
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("RPC branch");
+            uncode_agent::branch_summarization::branch_with_summary(
+                &ss, session_id, target_id, reason,
+            )
+            .map_err(|e| e.to_string())?;
+            let leaf_id = ss.get_leaf_id(session_id).map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({
+                "leaf_id": leaf_id,
             }))
         })
         .await;
