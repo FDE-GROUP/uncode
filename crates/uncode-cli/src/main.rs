@@ -637,6 +637,17 @@ fn build_registries(config: &AppConfig) -> (ApiRegistry, ModelRegistry) {
         }
     }
 
+    // Merge user-defined models from config
+    if !config.user_models.is_empty() {
+        use uncode_core::model::Model;
+        let user_models: Vec<Model> = config
+            .user_models
+            .iter()
+            .map(Model::from_user_config)
+            .collect();
+        model_registry.merge_user_models(user_models);
+    }
+
     (api_registry, model_registry)
 }
 
@@ -660,6 +671,14 @@ fn build_api_keys(config: &AppConfig) -> HashMap<String, String> {
     if let Some(ref pc) = config.providers.openrouter {
         keys.insert("openrouter".into(), pc.api_key.clone());
     }
+
+    // Extract api_keys from user-defined models
+    for um in &config.user_models {
+        if let Some(ref key) = um.api_key {
+            keys.insert(um.provider.clone(), key.clone());
+        }
+    }
+
     keys
 }
 

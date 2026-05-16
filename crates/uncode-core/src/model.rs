@@ -2,7 +2,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::api_types::{CompatConfig, InputModality, ThinkingFormat};
+use crate::api_types::{CompatConfig, InputModality, MaxTokensField, ThinkingFormat};
+use crate::config::UserModelConfig;
 
 // ── 旧类型（Stage 7 清理前保留） ──
 
@@ -68,6 +69,55 @@ impl Default for Model {
             pricing: ModelPricingPerMillion::default(),
             headers: HashMap::new(),
             compat: CompatConfig::default(),
+        }
+    }
+}
+
+impl Model {
+    pub fn from_user_config(uc: &UserModelConfig) -> Self {
+        let mut compat = CompatConfig::default();
+        if let Some(ref uc_compat) = uc.compat {
+            if let Some(v) = uc_compat.supports_developer_role {
+                compat.supports_developer_role = v;
+            }
+            if let Some(v) = uc_compat.supports_usage_in_streaming {
+                compat.supports_usage_in_streaming = v;
+            }
+            if let Some(v) = uc_compat.done_breaks_stream {
+                compat.done_breaks_stream = v;
+            }
+            if let Some(ref tf) = uc_compat.thinking_format {
+                compat.thinking_format = match tf.as_str() {
+                    "deepseek" => Some(ThinkingFormat::DeepSeek),
+                    "anthropic" => Some(ThinkingFormat::Anthropic),
+                    "openai" => Some(ThinkingFormat::OpenAi),
+                    "gemini" => Some(ThinkingFormat::Gemini),
+                    "openrouter" => Some(ThinkingFormat::OpenRouter),
+                    "together" => Some(ThinkingFormat::Together),
+                    "zai" => Some(ThinkingFormat::ZAi),
+                    "qwen" => Some(ThinkingFormat::Qwen),
+                    "qwen_chat_template" => Some(ThinkingFormat::QwenChatTemplate),
+                    _ => None,
+                };
+            }
+            if let Some(ref mf) = uc_compat.max_tokens_field {
+                compat.max_tokens_field = if mf == "max_completion_tokens" {
+                    MaxTokensField::MaxCompletionTokens
+                } else {
+                    MaxTokensField::MaxTokens
+                };
+            }
+        }
+        Self {
+            id: uc.id.clone(),
+            name: uc.id.clone(),
+            api: uc.api.clone(),
+            provider: uc.provider.clone(),
+            base_url: uc.base_url.clone().unwrap_or_default(),
+            context_window: uc.context_window.unwrap_or(128_000),
+            max_output_tokens: uc.max_output_tokens.unwrap_or(8192),
+            compat,
+            ..Model::default()
         }
     }
 }

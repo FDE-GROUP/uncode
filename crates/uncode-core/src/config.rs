@@ -11,6 +11,8 @@ pub struct AppConfig {
     pub providers: ProviderConfigs,
     #[serde(default = "default_models")]
     pub models: Vec<ModelConfig>,
+    #[serde(default)]
+    pub user_models: Vec<UserModelConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,6 +60,7 @@ impl Default for AppConfig {
             temperature: 0.7,
             providers: ProviderConfigs::default(),
             models: default_models(),
+            user_models: vec![],
         }
     }
 }
@@ -117,4 +120,42 @@ fn default_models() -> Vec<ModelConfig> {
 
 fn default_model_max_tokens() -> u32 {
     128_000
+}
+
+// ── 用户自定义模型配置（Stage 6） ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserModelConfig {
+    pub id: String,
+    #[serde(default = "default_user_api")]
+    pub api: String,
+    pub provider: String,
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub context_window: Option<u32>,
+    #[serde(default)]
+    pub max_output_tokens: Option<u32>,
+    #[serde(default)]
+    pub compat: Option<UserCompatConfig>,
+}
+
+fn default_user_api() -> String {
+    "openai-completions".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UserCompatConfig {
+    #[serde(default)]
+    pub supports_developer_role: Option<bool>,
+    #[serde(default)]
+    pub supports_usage_in_streaming: Option<bool>,
+    #[serde(default)]
+    pub done_breaks_stream: Option<bool>,
+    #[serde(default)]
+    pub thinking_format: Option<String>,
+    #[serde(default)]
+    pub max_tokens_field: Option<String>,
 }
