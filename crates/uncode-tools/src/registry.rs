@@ -11,7 +11,7 @@ pub struct ToolRegistry {
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
-            tools: RwLock::new(HashMap::new()),
+            tools: RwLock::new(HashMap::with_capacity(8)),
         }
     }
 

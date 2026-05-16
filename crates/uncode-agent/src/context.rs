@@ -16,7 +16,7 @@ impl ContextLoader {
 
     pub fn load(&self) -> LoadedContext {
         let agents = Self::walk_up(&self.cwd, "AGENTS.md")
-            .or_else(|| Self::walk_up(&self.cwd, "CLAUDE.md"))
+            .or_else(|| Self::walk_up(&self.cwd, "UNCODE.md"))
             .unwrap_or_default();
 
         let skills = Self::load_skills();

@@ -27,7 +27,8 @@ impl ToolExecutor for ReadTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "read".into(),
-            description: "读取文件内容，支持 offset/limit 控制范围".into(),
+            description: "读取文件内容或列出目录。文件时支持 offset/limit，目录时自动列出内容。"
+                .into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -44,6 +45,31 @@ impl ToolExecutor for ReadTool {
         let path = arguments["path"]
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("path required".into()))?;
+
+        let meta = fs::metadata(path)
+            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("read {}: {e}", path)))?;
+
+        if meta.is_dir() {
+            let mut entries: Vec<String> = fs::read_dir(path)
+                .map_err(|e| {
+                    uncode_core::error::UncodeError::Tool(format!("read dir {}: {e}", path))
+                })?
+                .filter_map(|e| e.ok())
+                .map(|e| {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    if e.path().is_dir() {
+                        format!("{name}/")
+                    } else {
+                        name
+                    }
+                })
+                .collect();
+            entries.sort();
+            return Ok(format!(
+                "Directory listing for {path}:\n{}",
+                entries.join("\n")
+            ));
+        }
 
         let content = fs::read_to_string(path)
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("read {}: {e}", path)))?;

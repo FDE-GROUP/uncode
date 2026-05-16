@@ -44,11 +44,12 @@ impl SessionStore {
     }
 
     pub fn list_sessions(&self) -> std::io::Result<Vec<SessionMetadata>> {
-        let mut sessions = Vec::new();
         if !self.base_dir.exists() {
-            return Ok(sessions);
+            return Ok(Vec::new());
         }
-        for entry in std::fs::read_dir(&self.base_dir)? {
+        let dir_entries = std::fs::read_dir(&self.base_dir)?.collect::<Vec<_>>();
+        let mut sessions = Vec::with_capacity(dir_entries.len());
+        for entry in dir_entries {
             let entry = entry?;
             let path = entry.path();
             if path.extension().is_some_and(|e| e == "jsonl") {
@@ -145,11 +146,11 @@ impl SessionStore {
         let file = std::fs::File::open(&path)?;
         let reader = std::io::BufReader::new(file);
 
-        let mut entries = Vec::new();
-        for (i, line) in reader.lines().enumerate() {
-            let line = line?;
+        let lines: Vec<_> = reader.lines().collect::<Result<_, _>>()?;
+        let mut entries = Vec::with_capacity(lines.len().saturating_sub(1));
+        for (i, line) in lines.into_iter().enumerate() {
             if i == 0 || line.trim().is_empty() {
-                continue; // skip header line
+                continue;
             }
             let entry: SessionEntry = serde_json::from_str(&line)?;
             entries.push(entry);

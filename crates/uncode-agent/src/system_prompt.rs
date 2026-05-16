@@ -19,17 +19,25 @@ impl SystemPromptBuilder {
         if tools.is_empty() {
             return self;
         }
-        let guide = tools
-            .iter()
-            .map(|t| format!("### {}\n{}\n\n", t.name, t.description))
-            .collect::<String>();
-        self.parts.push(format!("## 可用工具\n\n{guide}"));
+        let mut guide = String::with_capacity(tools.len() * 128);
+        guide.push_str("## 可用工具\n\n");
+        for t in tools {
+            guide.push_str("### ");
+            guide.push_str(&t.name);
+            guide.push('\n');
+            guide.push_str(&t.description);
+            guide.push_str("\n\n");
+        }
+        self.parts.push(guide);
         self
     }
 
     pub fn add_context(mut self, text: &str) -> Self {
         if !text.is_empty() {
-            self.parts.push(format!("## 项目上下文\n\n{text}"));
+            let mut s = String::with_capacity(16 + text.len());
+            s.push_str("## 项目上下文\n\n");
+            s.push_str(text);
+            self.parts.push(s);
         }
         self
     }
@@ -38,17 +46,25 @@ impl SystemPromptBuilder {
         if skills.is_empty() {
             return self;
         }
-        let section = skills
-            .iter()
-            .map(|(name, desc)| format!("- **{name}**: {desc}\n"))
-            .collect::<String>();
-        self.parts.push(format!("## 可用技能\n\n{section}"));
+        let mut section = String::with_capacity(skills.len() * 64);
+        section.push_str("## 可用技能\n\n");
+        for (name, desc) in skills {
+            section.push_str("- **");
+            section.push_str(name);
+            section.push_str("**: ");
+            section.push_str(desc);
+            section.push('\n');
+        }
+        self.parts.push(section);
         self
     }
 
     pub fn add_rules(mut self, rules: &str) -> Self {
         if !rules.is_empty() {
-            self.parts.push(format!("## 开发规则\n\n{rules}"));
+            let mut s = String::with_capacity(16 + rules.len());
+            s.push_str("## 开发规则\n\n");
+            s.push_str(rules);
+            self.parts.push(s);
         }
         self
     }
