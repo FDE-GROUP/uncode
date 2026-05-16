@@ -461,6 +461,7 @@ impl AgentLoop {
                             msg.usage = Some(UsageInfo {
                                 input_tokens: turn_input_tokens,
                                 output_tokens: turn_output_tokens,
+                                cost: None,
                             });
 
                             // Persist assistant message
@@ -496,6 +497,7 @@ impl AgentLoop {
                     usage: UsageInfo {
                         input_tokens: turn_input_tokens,
                         output_tokens: turn_output_tokens,
+                        cost: None,
                     },
                 });
             }
@@ -508,6 +510,7 @@ impl AgentLoop {
         let total_usage = UsageInfo {
             input_tokens: total_input_tokens,
             output_tokens: total_output_tokens,
+            cost: None,
         };
 
         self.emit(AgentEvent::SessionEnd {

@@ -9,6 +9,12 @@ pub struct Message {
     pub content: Vec<ContentBlock>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage: Option<UsageInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<crate::api_types::StopReason>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<i64>,
 }
 
 /// 消息发送者角色
@@ -71,6 +77,15 @@ pub struct ToolResult {
 pub struct UsageInfo {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cost: Option<CostInfo>,
+}
+
+/// 费用信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostInfo {
+    pub input_cost: f64,
+    pub output_cost: f64,
 }
 
 impl Message {
@@ -80,6 +95,9 @@ impl Message {
             role,
             content,
             usage: None,
+            stop_reason: None,
+            error_message: None,
+            timestamp: None,
         }
     }
 
@@ -102,6 +120,7 @@ impl Message {
         self.usage = Some(UsageInfo {
             input_tokens,
             output_tokens,
+            cost: None,
         });
         self
     }

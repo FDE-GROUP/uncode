@@ -397,6 +397,7 @@ mod tests {
             usage: uncode_core::message::UsageInfo {
                 input_tokens: 100,
                 output_tokens: 50,
+                cost: None,
             },
         };
         assert_eq!(event_name(&event), "turn_end");

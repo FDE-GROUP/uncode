@@ -20,6 +20,7 @@ async-trait.workspace = true
 schemars.workspace = true
 reqwest.workspace = true
 dirs.workspace = true
+tokio-util.workspace = true
 
 [lints]
 workspace = true

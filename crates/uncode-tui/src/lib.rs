@@ -1751,6 +1751,7 @@ mod tests {
         footer.update_usage(&UsageInfo {
             input_tokens: 50_000,
             output_tokens: 10_000,
+            cost: None,
         });
         assert_eq!(footer.input_tokens, 50_000);
         assert_eq!(footer.output_tokens, 10_000);
@@ -1766,11 +1767,13 @@ mod tests {
         footer.update_usage(&UsageInfo {
             input_tokens: 1_000_000,
             output_tokens: 0,
+            cost: None,
         });
         let cost1 = footer.cost;
         footer.update_usage(&UsageInfo {
             input_tokens: 1_000_000,
             output_tokens: 0,
+            cost: None,
         });
         assert!((footer.cost - cost1 * 2.0).abs() < 0.001);
     }
@@ -1781,6 +1784,7 @@ mod tests {
         footer.update_usage(&UsageInfo {
             input_tokens: 200_000,
             output_tokens: 0,
+            cost: None,
         });
         assert_eq!(footer.context_percent, 100);
     }
@@ -1860,6 +1864,7 @@ mod tests {
             usage: UsageInfo {
                 input_tokens: 10_000,
                 output_tokens: 5_000,
+                cost: None,
             },
         });
         assert!(!engine.agent_busy);
@@ -1877,6 +1882,7 @@ mod tests {
             total_tokens: UsageInfo {
                 input_tokens: 100_000,
                 output_tokens: 50_000,
+                cost: None,
             },
             exit_reason: "done".into(),
         });
