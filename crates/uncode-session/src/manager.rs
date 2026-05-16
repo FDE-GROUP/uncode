@@ -49,8 +49,10 @@ impl SessionManager {
             .init_session(&new_id, &parent.model, &parent.working_dir)?;
 
         let branch = uncode_core::session::BranchEntry {
+            id: uncode_core::session::generate_entry_id(),
+            parent_id: None,
             timestamp: chrono::Utc::now(),
-            parent_id: parent_id.to_string(),
+            parent_session_id: parent_id.to_string(),
             reason: reason.to_string(),
         };
 

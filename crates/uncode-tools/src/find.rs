@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use uncode_core::error::UncodeResult;
-use uncode_core::tool::{ToolDefinition, ToolExecutor};
+use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
 
 #[derive(Default)]
 pub struct FindTool;
@@ -19,6 +19,8 @@ impl ToolExecutor for FindTool {
                 },
                 "required": ["pattern"]
             }),
+            label: Some("Find Files".into()),
+            execution_mode: ExecutionMode::default(),
         }
     }
 

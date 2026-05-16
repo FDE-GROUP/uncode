@@ -4,7 +4,7 @@ use uncode_core::session::{SessionEntry, SessionHeader};
 /// 将会话数据导出为自包含 HTML
 pub fn export_html(
     header: &SessionHeader,
-    _entries: &[SessionEntry],
+    entries: &[SessionEntry],
     messages: &[(Role, Vec<ContentBlock>)],
 ) -> String {
     let title = header.title.as_deref().unwrap_or("uncode 会话");
@@ -27,61 +27,82 @@ pub fn export_html(
         id = html_escape(&header.id),
     ));
 
-    for (role, blocks) in messages {
-        let class = match role {
-            Role::User => "user",
-            Role::Assistant => "assistant",
-            Role::Tool => "tool",
-            Role::System => "system",
-            _ => "other",
-        };
-        body.push_str(&format!(r#"<div class="msg {class}">"#));
-        body.push_str(&format!(
-            r#"<div class="msg-header">{}</div>"#,
-            match role {
-                Role::User => "用户",
-                Role::Assistant => "助手",
-                Role::Tool => "工具",
-                Role::System => "系统",
-                _ => "其他",
-            }
-        ));
+    for entry in entries {
+        match entry {
+            SessionEntry::Message(me) => {
+                let class = match me.role {
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                    Role::Tool => "tool",
+                    Role::System => "system",
+                    _ => "other",
+                };
+                body.push_str(&format!(r#"<div class="msg {class}">"#));
+                body.push_str(&format!(
+                    r#"<div class="msg-header">{}</div>"#,
+                    match me.role {
+                        Role::User => "用户",
+                        Role::Assistant => "助手",
+                        Role::Tool => "工具",
+                        Role::System => "系统",
+                        _ => "其他",
+                    }
+                ));
 
-        for block in blocks {
-            match block {
-                ContentBlock::Text { text } => {
-                    body.push_str(&format!(
-                        r#"<div class="text">{}</div>"#,
-                        render_markdown_lite(text)
-                    ));
+                for block in &me.content {
+                    render_block(&mut body, block);
                 }
-                ContentBlock::Thinking { text } => {
-                    body.push_str(&format!(
-                        r#"<details><summary>思考过程</summary><div class="thinking">{}</div></details>"#,
-                        html_escape(text)
-                    ));
-                }
-                ContentBlock::ToolCall(tc) => {
-                    body.push_str(&format!(
-                        r#"<details><summary>工具调用: {}</summary><div class="tool-call"><pre><code>{}</code></pre></div></details>"#,
-                        html_escape(&tc.name),
-                        html_escape(&serde_json::to_string_pretty(&tc.arguments).unwrap_or_default()),
-                    ));
-                }
-                ContentBlock::ToolResult(tr) => {
-                    let status = if tr.is_error { "error" } else { "result" };
-                    body.push_str(&format!(
-                        r#"<details><summary>工具结果 ({status})</summary><div class="tool-result"><pre><code>{}</code></pre></div></details>"#,
-                        html_escape(&tr.content),
-                    ));
-                }
-                ContentBlock::Image { .. } => {
-                    body.push_str(r#"<div class="text">[图片]</div>"#);
-                }
-                _ => {}
+                body.push_str("</div>\n");
             }
+            SessionEntry::Compaction(ce) => {
+                body.push_str(&format!(
+                    r#"<div class="msg system"><div class="msg-header">上下文压缩</div><div class="text"><em>{}</em></div></div>"#,
+                    html_escape(&ce.summary),
+                ));
+            }
+            SessionEntry::BranchSummary(bs) => {
+                body.push_str(&format!(
+                    r#"<div class="msg system"><div class="msg-header">分支摘要</div><div class="text"><em>{}</em></div></div>"#,
+                    html_escape(&bs.summary),
+                ));
+            }
+            SessionEntry::ModelChange(mc) => {
+                body.push_str(&format!(
+                    r#"<div class="msg system"><div class="msg-header">模型切换</div><div class="text">→ {}</div></div>"#,
+                    html_escape(&mc.model_id),
+                ));
+            }
+            _ => {} // Leaf, Label, etc. — skip in export
         }
-        body.push_str("</div>\n");
+    }
+
+    // Also support legacy messages format (for backward compat callers)
+    if entries.is_empty() && !messages.is_empty() {
+        for (role, blocks) in messages {
+            let class = match role {
+                Role::User => "user",
+                Role::Assistant => "assistant",
+                Role::Tool => "tool",
+                Role::System => "system",
+                _ => "other",
+            };
+            body.push_str(&format!(r#"<div class="msg {class}">"#));
+            body.push_str(&format!(
+                r#"<div class="msg-header">{}</div>"#,
+                match role {
+                    Role::User => "用户",
+                    Role::Assistant => "助手",
+                    Role::Tool => "工具",
+                    Role::System => "系统",
+                    _ => "其他",
+                }
+            ));
+
+            for block in blocks {
+                render_block(&mut body, block);
+            }
+            body.push_str("</div>\n");
+        }
     }
 
     format!(
@@ -119,6 +140,41 @@ summary:hover {{ background: #f6f8fa; }}
         title = html_escape(title),
         body = body,
     )
+}
+
+fn render_block(body: &mut String, block: &ContentBlock) {
+    match block {
+        ContentBlock::Text { text } => {
+            body.push_str(&format!(
+                r#"<div class="text">{}</div>"#,
+                render_markdown_lite(text)
+            ));
+        }
+        ContentBlock::Thinking { text } => {
+            body.push_str(&format!(
+                r#"<details><summary>思考过程</summary><div class="thinking">{}</div></details>"#,
+                html_escape(text)
+            ));
+        }
+        ContentBlock::ToolCall(tc) => {
+            body.push_str(&format!(
+                r#"<details><summary>工具调用: {}</summary><div class="tool-call"><pre><code>{}</code></pre></div></details>"#,
+                html_escape(&tc.name),
+                html_escape(&serde_json::to_string_pretty(&tc.arguments).unwrap_or_default()),
+            ));
+        }
+        ContentBlock::ToolResult(tr) => {
+            let status = if tr.is_error { "error" } else { "result" };
+            body.push_str(&format!(
+                r#"<details><summary>工具结果 ({status})</summary><div class="tool-result"><pre><code>{}</code></pre></div></details>"#,
+                html_escape(&tr.content),
+            ));
+        }
+        ContentBlock::Image { .. } => {
+            body.push_str(r#"<div class="text">[图片]</div>"#);
+        }
+        _ => {}
+    }
 }
 
 fn html_escape(s: &str) -> String {
@@ -217,5 +273,56 @@ mod tests {
         assert!(rendered.contains("<pre><code>"));
         assert!(rendered.contains("fn main()"));
         assert!(rendered.contains("</code></pre>"));
+    }
+
+    #[test]
+    fn test_export_html_with_compaction_entry() {
+        use uncode_core::session::{CompactionEntry, generate_entry_id};
+        let header = SessionHeader::new("test".into(), "model".into(), "/tmp".into());
+        let entries = vec![SessionEntry::Compaction(CompactionEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: chrono::Utc::now(),
+            summary: "Discussed authentication strategy".into(),
+            first_kept_entry_id: "abc".into(),
+            tokens_before: 5000,
+            files_read: None,
+            files_modified: None,
+        })];
+        let html = export_html(&header, &entries, &[]);
+        assert!(html.contains("上下文压缩"));
+        assert!(html.contains("authentication strategy"));
+    }
+
+    #[test]
+    fn test_export_html_with_branch_summary() {
+        use uncode_core::session::{BranchSummaryEntry, generate_entry_id};
+        let header = SessionHeader::new("test".into(), "model".into(), "/tmp".into());
+        let entries = vec![SessionEntry::BranchSummary(BranchSummaryEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: chrono::Utc::now(),
+            from_id: "old".into(),
+            summary: "Explored caching approach".into(),
+        })];
+        let html = export_html(&header, &entries, &[]);
+        assert!(html.contains("分支摘要"));
+        assert!(html.contains("caching approach"));
+    }
+
+    #[test]
+    fn test_export_html_with_model_change() {
+        use uncode_core::session::{ModelChangeEntry, generate_entry_id};
+        let header = SessionHeader::new("test".into(), "model".into(), "/tmp".into());
+        let entries = vec![SessionEntry::ModelChange(ModelChangeEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: chrono::Utc::now(),
+            provider: "openai".into(),
+            model_id: "gpt-4o".into(),
+        })];
+        let html = export_html(&header, &entries, &[]);
+        assert!(html.contains("模型切换"));
+        assert!(html.contains("gpt-4o"));
     }
 }

@@ -7,6 +7,7 @@ pub mod bash;
 pub mod edit;
 pub mod find;
 pub mod grep;
+pub mod local_env;
 pub mod ls;
 pub mod read;
 pub mod registry;
@@ -16,6 +17,9 @@ pub use bash::BashTool;
 pub use edit::EditTool;
 pub use find::FindTool;
 pub use grep::GrepTool;
+pub use local_env::{
+    LocalExecutionEnv, LocalFileSystem, LocalShell, clean_binary_output, truncate_output,
+};
 pub use ls::LsTool;
 pub use read::ReadTool;
 pub use registry::ToolRegistry;

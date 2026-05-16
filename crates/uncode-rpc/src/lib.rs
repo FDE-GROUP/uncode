@@ -247,7 +247,7 @@ fn event_name(event: &uncode_core::event::AgentEvent) -> &'static str {
 pub async fn register_core_commands(
     server: &RpcServer,
     session_store: Arc<uncode_session::store::SessionStore>,
-    provider_registry: Arc<uncode_llm::registry::ProviderRegistry>,
+    model_registry: Arc<uncode_llm::ModelRegistry>,
 ) {
     // session.create
     let ss = session_store.clone();
@@ -289,27 +289,56 @@ pub async fn register_core_commands(
                 .ok_or("missing session_id")?;
             let header = ss.read_header(id).map_err(|e| e.to_string())?;
             let entries = ss.load_entries(id).map_err(|e| e.to_string())?;
+            let leaf_id = ss.get_leaf_id(id).map_err(|e| e.to_string())?;
             Ok(serde_json::json!({
                 "header": header,
                 "entries": entries,
+                "leaf_id": leaf_id,
+            }))
+        })
+        .await;
+
+    // session.branch — in-place branching with summary
+    let ss = session_store.clone();
+    server
+        .register("session.branch", move |params| {
+            let session_id = params
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .ok_or("missing session_id")?;
+            let target_id = params
+                .get("target_id")
+                .and_then(|v| v.as_str())
+                .ok_or("missing target_id")?;
+            let reason = params
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("RPC branch");
+            uncode_agent::branch_summarization::branch_with_summary(
+                &ss, session_id, target_id, reason,
+            )
+            .map_err(|e| e.to_string())?;
+            let leaf_id = ss.get_leaf_id(session_id).map_err(|e| e.to_string())?;
+            Ok(serde_json::json!({
+                "leaf_id": leaf_id,
             }))
         })
         .await;
 
     // model.list
-    let pr = provider_registry.clone();
+    let mr = model_registry.clone();
     server
         .register("model.list", move |_| {
-            let models: Vec<serde_json::Value> = pr
+            let models: Vec<serde_json::Value> = mr
                 .all_models()
                 .into_iter()
-                .map(|(info, configured)| {
+                .map(|m| {
                     serde_json::json!({
-                        "id": info.id,
-                        "display_name": info.display_name,
-                        "provider": info.provider,
-                        "max_tokens": info.max_tokens,
-                        "configured": configured,
+                        "id": m.id,
+                        "name": m.name,
+                        "provider": m.provider,
+                        "context_window": m.context_window,
+                        "api": m.api,
                     })
                 })
                 .collect();
@@ -318,14 +347,14 @@ pub async fn register_core_commands(
         .await;
 
     // model.switch
-    let pr = provider_registry.clone();
+    let mr = model_registry.clone();
     server
         .register("model.switch", move |params| {
             let model = params
                 .get("model")
                 .and_then(|v| v.as_str())
                 .ok_or("missing model name")?;
-            if !pr.has(model) {
+            if !mr.has(model) {
                 return Err(format!("model not found: {model}"));
             }
             Ok(serde_json::json!({"switched": model}))
@@ -397,6 +426,7 @@ mod tests {
             usage: uncode_core::message::UsageInfo {
                 input_tokens: 100,
                 output_tokens: 50,
+                cost: None,
             },
         };
         assert_eq!(event_name(&event), "turn_end");

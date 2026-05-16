@@ -3,6 +3,7 @@
 //! 定义 uncode 项目所有 crate 共用的数据类型、trait 和错误类型。
 //! 位于依赖树的最底层，不依赖任何内部 crate。
 
+pub mod api_types;
 pub mod config;
 pub mod context;
 pub mod error;

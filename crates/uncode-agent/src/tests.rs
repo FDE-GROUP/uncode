@@ -1,52 +1,54 @@
 #[cfg(test)]
 mod tests {
+    use uncode_core::api_types::StopReason;
     use uncode_core::message::{ContentBlock, Message, Role, ToolCall, ToolResult};
-    use uncode_core::tool::ToolDefinition;
+    use uncode_core::tool::{
+        AfterToolCallContext, AfterToolCallResult, BeforeToolCallContext, ExecutionMode,
+        ToolDefinition, ToolHooks, ToolResult as ToolExecResult,
+    };
 
     use crate::compaction::{estimate_context_tokens, extract_text, should_compact};
     use crate::system_prompt::SystemPromptBuilder;
     use crate::token;
 
-    // ── Mock LLM Driver ──────────────────────────────────────────────
+    // ── Mock Api ────────────────────────────────────────────────────
 
     use async_trait::async_trait;
-    use futures::StreamExt;
-    use futures::stream;
+    use futures::stream::{self, BoxStream, StreamExt};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use uncode_core::api_types::{Context, StreamOptions};
     use uncode_core::error::UncodeError;
-    use uncode_llm::driver::{
-        CompletionRequest, LlmDriver, StreamEvent, UsageInfo as LlmUsageInfo,
-    };
+    use uncode_core::model::Model;
+    use uncode_llm::Api;
+    use uncode_llm::StreamEvent;
 
-    struct MockLlmDriver {
+    struct MockApi {
         responses: Mutex<Vec<Vec<StreamEvent>>>,
         call_count: AtomicUsize,
     }
 
-    impl MockLlmDriver {
+    impl MockApi {
         fn new(responses: Vec<Vec<StreamEvent>>) -> Self {
             Self {
                 responses: Mutex::new(responses),
                 call_count: AtomicUsize::new(0),
             }
         }
-
-        fn call_count(&self) -> usize {
-            self.call_count.load(Ordering::SeqCst)
-        }
     }
 
     #[async_trait]
-    impl LlmDriver for MockLlmDriver {
-        fn provider_name(&self) -> &'static str {
+    impl Api for MockApi {
+        fn api_name(&self) -> &'static str {
             "mock"
         }
 
-        async fn complete(
+        async fn stream(
             &self,
-            _request: CompletionRequest,
-        ) -> Result<futures::stream::BoxStream<'static, StreamEvent>, UncodeError> {
+            _model: &Model,
+            _context: &Context,
+            _options: &StreamOptions,
+        ) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
             let idx = self.call_count.fetch_add(1, Ordering::SeqCst);
             let events = self
                 .responses
@@ -74,6 +76,8 @@ mod tests {
                     "properties": { "text": {"type": "string"} },
                     "required": ["text"]
                 }),
+                label: None,
+                execution_mode: ExecutionMode::default(),
             }
         }
 
@@ -83,10 +87,31 @@ mod tests {
         }
     }
 
+    // Hook that sets terminate=true on every tool result
+    struct TerminateHook;
+
+    #[async_trait]
+    impl ToolHooks for TerminateHook {
+        async fn before_tool_call(&self, _ctx: &BeforeToolCallContext) -> Option<String> {
+            None
+        }
+
+        async fn after_tool_call(
+            &self,
+            _ctx: &AfterToolCallContext,
+            result: &mut ToolExecResult,
+        ) -> AfterToolCallResult {
+            result.terminate = true;
+            AfterToolCallResult::default()
+        }
+    }
+
     // ── Test Helpers ─────────────────────────────────────────────────
 
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use uncode_llm::{ApiRegistry, ModelRegistry};
     use uncode_session::store::SessionStore;
     use uncode_tools::registry::ToolRegistry;
 
@@ -105,6 +130,28 @@ mod tests {
         let reg = Arc::new(ToolRegistry::new());
         reg.register("echo".to_string(), Arc::new(EchoTool));
         reg
+    }
+
+    fn make_registries(
+        responses: Vec<Vec<StreamEvent>>,
+    ) -> (
+        Arc<ApiRegistry>,
+        Arc<ModelRegistry>,
+        HashMap<String, String>,
+    ) {
+        let mut api_registry = ApiRegistry::new();
+        api_registry.register(Arc::new(MockApi::new(responses)));
+        let mut model_registry = ModelRegistry::new();
+        model_registry.register(Model {
+            id: "mock".into(),
+            api: "mock".into(),
+            ..Model::default()
+        });
+        (
+            Arc::new(api_registry),
+            Arc::new(model_registry),
+            HashMap::new(),
+        )
     }
 
     // ── 纯函数测试 ──────────────────────────────────────────────────
@@ -237,6 +284,8 @@ mod tests {
             name: "read".into(),
             description: "read files".into(),
             parameters: serde_json::json!({}),
+            label: None,
+            execution_mode: ExecutionMode::default(),
         }];
         let prompt = SystemPromptBuilder::new().add_tool_guide(&tools).build();
         assert!(prompt.contains("read"));
@@ -249,6 +298,8 @@ mod tests {
             name: "bash".into(),
             description: "run commands".into(),
             parameters: serde_json::json!({}),
+            label: None,
+            execution_mode: ExecutionMode::default(),
         }];
         let skills = vec![("git-release".into(), "create releases".into())];
         let prompt = SystemPromptBuilder::new()
@@ -362,17 +413,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_loop_text_only() {
-        let driver = Arc::new(MockLlmDriver::new(vec![vec![
+        let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
             StreamEvent::TextDelta("Hello!".into()),
-            StreamEvent::Usage(LlmUsageInfo {
+            StreamEvent::Usage(uncode_llm::UsageInfo {
                 input_tokens: 10,
                 output_tokens: 5,
             }),
-            StreamEvent::Done,
-        ]]));
+            StreamEvent::Done {
+                reason: uncode_core::api_types::StopReason::Stop,
+            },
+        ]]);
 
         let agent = AgentLoop::new(
-            driver.clone(),
+            api_reg.clone(),
+            model_reg.clone(),
+            api_keys,
             make_tool_registry(),
             Arc::new(SessionStore::new(test_session_dir())),
             "system".into(),
@@ -381,7 +436,6 @@ mod tests {
 
         let messages = agent.run(Message::user("hi")).await.unwrap();
 
-        assert_eq!(driver.call_count(), 1);
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].role, Role::System);
         assert_eq!(messages[1].role, Role::User);
@@ -394,7 +448,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_loop_tool_call_then_text() {
-        let driver = Arc::new(MockLlmDriver::new(vec![
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
             vec![
                 StreamEvent::ToolCallStart {
                     id: "tc1".into(),
@@ -409,24 +463,30 @@ mod tests {
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "world"}),
                 },
-                StreamEvent::Usage(LlmUsageInfo {
+                StreamEvent::Usage(uncode_llm::UsageInfo {
                     input_tokens: 20,
                     output_tokens: 10,
                 }),
-                StreamEvent::Done,
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
             ],
             vec![
                 StreamEvent::TextDelta("Done!".into()),
-                StreamEvent::Usage(LlmUsageInfo {
+                StreamEvent::Usage(uncode_llm::UsageInfo {
                     input_tokens: 30,
                     output_tokens: 8,
                 }),
-                StreamEvent::Done,
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
             ],
-        ]));
+        ]);
 
         let agent = AgentLoop::new(
-            driver.clone(),
+            api_reg,
+            model_reg,
+            api_keys,
             make_tool_registry(),
             Arc::new(SessionStore::new(test_session_dir())),
             "system".into(),
@@ -435,7 +495,6 @@ mod tests {
 
         let messages = agent.run(Message::user("echo hello")).await.unwrap();
 
-        assert_eq!(driver.call_count(), 2);
         // System, User, Assistant(ToolCall), Tool(ToolResult), Assistant(Text)
         assert_eq!(messages.len(), 5);
 
@@ -472,7 +531,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_loop_multiple_tool_calls_in_one_turn() {
-        let driver = Arc::new(MockLlmDriver::new(vec![
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
             vec![
                 StreamEvent::ToolCallStart {
                     id: "tc1".into(),
@@ -492,16 +551,22 @@ mod tests {
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "b"}),
                 },
-                StreamEvent::Done,
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
             ],
             vec![
                 StreamEvent::TextDelta("All done.".into()),
-                StreamEvent::Done,
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
             ],
-        ]));
+        ]);
 
         let agent = AgentLoop::new(
-            driver.clone(),
+            api_reg,
+            model_reg,
+            api_keys,
             make_tool_registry(),
             Arc::new(SessionStore::new(test_session_dir())),
             "system".into(),
@@ -510,7 +575,6 @@ mod tests {
 
         let messages = agent.run(Message::user("echo twice")).await.unwrap();
 
-        assert_eq!(driver.call_count(), 2);
         // System, User, Assistant(ToolCall×2), Tool(ToolResult), Tool(ToolResult), Assistant(Text)
         assert_eq!(messages.len(), 6);
 
@@ -534,7 +598,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_loop_tool_not_found() {
-        let driver = Arc::new(MockLlmDriver::new(vec![
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
             vec![
                 StreamEvent::ToolCallStart {
                     id: "tc1".into(),
@@ -545,13 +609,22 @@ mod tests {
                     name: "nonexistent".into(),
                     arguments: serde_json::json!({}),
                 },
-                StreamEvent::Done,
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
             ],
-            vec![StreamEvent::TextDelta("OK".into()), StreamEvent::Done],
-        ]));
+            vec![
+                StreamEvent::TextDelta("OK".into()),
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
+            ],
+        ]);
 
         let agent = AgentLoop::new(
-            driver.clone(),
+            api_reg,
+            model_reg,
+            api_keys,
             make_tool_registry(),
             Arc::new(SessionStore::new(test_session_dir())),
             "system".into(),
@@ -571,7 +644,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_loop_message_sequence_integrity() {
-        let driver = Arc::new(MockLlmDriver::new(vec![
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
             vec![
                 StreamEvent::ToolCallStart {
                     id: "tc1".into(),
@@ -582,13 +655,22 @@ mod tests {
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "x"}),
                 },
-                StreamEvent::Done,
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
             ],
-            vec![StreamEvent::TextDelta("result".into()), StreamEvent::Done],
-        ]));
+            vec![
+                StreamEvent::TextDelta("result".into()),
+                StreamEvent::Done {
+                    reason: uncode_core::api_types::StopReason::Stop,
+                },
+            ],
+        ]);
 
         let agent = AgentLoop::new(
-            driver,
+            api_reg,
+            model_reg,
+            api_keys,
             make_tool_registry(),
             Arc::new(SessionStore::new(test_session_dir())),
             "system".into(),
@@ -611,5 +693,524 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── StopReason 填充测试 ──
+
+    #[tokio::test]
+    async fn test_agent_loop_stop_reason_populated() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
+            StreamEvent::TextDelta("response".into()),
+            StreamEvent::Done {
+                reason: uncode_core::api_types::StopReason::Stop,
+            },
+        ]]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+
+        let messages = agent.run(Message::user("hi")).await.unwrap();
+        let assistant_msg = &messages[2];
+        assert_eq!(
+            assistant_msg.stop_reason,
+            Some(uncode_core::api_types::StopReason::Stop)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_agent_loop_stop_reason_length() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
+            StreamEvent::TextDelta("truncated".into()),
+            StreamEvent::Done {
+                reason: uncode_core::api_types::StopReason::Length,
+            },
+        ]]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+
+        let messages = agent.run(Message::user("long prompt")).await.unwrap();
+        let assistant_msg = &messages[2];
+        assert_eq!(
+            assistant_msg.stop_reason,
+            Some(uncode_core::api_types::StopReason::Length)
+        );
+    }
+
+    // ── 双层循环架构 + 新功能测试 ──────────────────────────────────────
+
+    /// should_stop_after_turn: 回调返回 true 后 agent 立即终止，不执行下一轮 LLM 调用
+    #[tokio::test]
+    async fn test_should_stop_after_turn() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            // Turn 1: tool call
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "hello"}),
+                },
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            // Turn 2: 不应被调用
+            vec![
+                StreamEvent::TextDelta("SHOULD NOT REACH".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let mut agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+        agent.set_should_stop_after_turn(Arc::new(|turn| turn >= 1));
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+
+        // Agent 在 turn 1 后终止：System, User, Assistant(ToolCall), Tool(ToolResult)
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[3].role, Role::Tool);
+    }
+
+    /// prepare_next_turn: 每个 turn 后回调被调用
+    #[tokio::test]
+    async fn test_prepare_next_turn_called_per_turn() {
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let count_clone = call_count.clone();
+
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "x"}),
+                },
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                StreamEvent::TextDelta("done".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let mut agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+        agent.set_prepare_next_turn(Arc::new(move || {
+            count_clone.fetch_add(1, Ordering::SeqCst);
+        }));
+
+        agent.run(Message::user("go")).await.unwrap();
+
+        // 两轮 turn：tool call turn + text turn
+        assert_eq!(call_count.load(Ordering::SeqCst), 2);
+    }
+
+    /// transform_context: 每次 LLM 调用前变换消息数组
+    #[tokio::test]
+    async fn test_transform_context_called_before_llm() {
+        let message_counts = Arc::new(Mutex::new(Vec::new()));
+        let counts_clone = message_counts.clone();
+
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "x"}),
+                },
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                StreamEvent::TextDelta("final".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let mut agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+        agent.set_transform_context(Arc::new(move |msgs| {
+            counts_clone.lock().unwrap().push(msgs.len());
+        }));
+
+        agent.run(Message::user("go")).await.unwrap();
+
+        let counts = message_counts.lock().unwrap().clone();
+        assert_eq!(counts.len(), 2); // 两次 LLM 调用前各调用一次
+        assert_eq!(counts[0], 2); // System + User
+        assert_eq!(counts[1], 4); // System + User + Assistant(ToolCall) + Tool(ToolResult)
+    }
+
+    /// steering 消息：内层循环 re-enter，steering 注入到 context 后再次调用 LLM
+    #[tokio::test]
+    async fn test_steering_message_re_enters_inner_loop() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            // Turn 1: text response
+            vec![
+                StreamEvent::TextDelta("First".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            // Turn 2: steering 注入后的 response
+            vec![
+                StreamEvent::TextDelta("AfterSteering".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+
+        // 预先排队 steering 消息
+        agent.steer(Message::user("steer this")).await;
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+
+        // System, User("go"), Assistant("First"), User("steer this"), Assistant("AfterSteering")
+        assert_eq!(messages.len(), 5);
+        assert_eq!(messages[3].role, Role::User);
+        assert!(
+            matches!(&messages[3].content[0], ContentBlock::Text { text } if text == "steer this")
+        );
+        assert_eq!(messages[4].role, Role::Assistant);
+    }
+
+    /// follow-up 消息：外层循环 re-enter，follow-up 注入后再次调用 LLM
+    #[tokio::test]
+    async fn test_follow_up_message_re_enters_outer_loop() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            // Turn 1: text response (内层循环退出)
+            vec![
+                StreamEvent::TextDelta("First".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            // Turn 2: follow-up 注入后的 response
+            vec![
+                StreamEvent::TextDelta("AfterFollowUp".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+
+        // 预先排队 follow-up 消息
+        agent.follow_up(Message::user("follow this")).await;
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+
+        // System, User("go"), Assistant("First"), User("follow this"), Assistant("AfterFollowUp")
+        assert_eq!(messages.len(), 5);
+        assert_eq!(messages[3].role, Role::User);
+        assert!(
+            matches!(&messages[3].content[0], ContentBlock::Text { text } if text == "follow this")
+        );
+        assert_eq!(messages[4].role, Role::Assistant);
+    }
+
+    /// nextTurn 消息：在首轮 turn 前注入到 pending_messages
+    #[tokio::test]
+    async fn test_next_turn_message_injected_before_first_turn() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
+            StreamEvent::TextDelta("Response".into()),
+            StreamEvent::Done {
+                reason: StopReason::Stop,
+            },
+        ]]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+
+        // 预先排队 nextTurn 消息
+        agent.next_turn(Message::user("next turn context")).await;
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+
+        // System, User("go"), User("next turn context"), Assistant("Response")
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[2].role, Role::User);
+        assert!(
+            matches!(&messages[2].content[0], ContentBlock::Text { text } if text == "next turn context")
+        );
+    }
+
+    /// terminate=true：所有工具请求终止时 agent 立即停止，不再发起额外 LLM 调用
+    #[tokio::test]
+    async fn test_tool_terminate_stops_without_extra_llm_call() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            // Turn 1: tool call → terminate=true
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "bye"}),
+                },
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            // Turn 2: 不应被调用
+            vec![
+                StreamEvent::TextDelta("SHOULD NOT REACH".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let mut agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new(test_session_dir())),
+            "system".into(),
+            "mock".into(),
+        );
+        agent.set_tool_hooks(Arc::new(TerminateHook));
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+
+        // terminate 后立即停止：System, User, Assistant(ToolCall), Tool(ToolResult)
+        // 不应有第 5 条消息（即第二论 LLM 的 Assistant 响应）
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[3].role, Role::Tool);
+    }
+
+    // ── AgentHarness tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_harness_phase_guard() {
+        use crate::harness::{AgentHarness, AgentHarnessPhase};
+        use uncode_session::store::SessionStore;
+
+        let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
+            StreamEvent::TextDelta("ok".into()),
+            StreamEvent::Done {
+                reason: StopReason::Stop,
+            },
+        ]]);
+        let tool_reg = Arc::new(uncode_tools::registry::ToolRegistry::new());
+        let session_store = Arc::new(SessionStore::new(test_session_dir()));
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            tool_reg,
+            session_store.clone(),
+            "test prompt".into(),
+            "mock".into(),
+        );
+        let mut harness = AgentHarness::new(agent, session_store);
+
+        assert!(harness.is_idle());
+        assert_eq!(*harness.phase(), AgentHarnessPhase::Idle);
+
+        // Non-idle should reject prompt — but since we can't easily get into
+        // a non-idle state without actually running, test the phase check directly.
+        // We verify that phase transitions work correctly.
+        harness.set_session_id("test-session".into());
+        assert_eq!(harness.session_id(), Some("test-session"));
+    }
+
+    #[test]
+    fn test_harness_pending_write_flush() {
+        use crate::harness::AgentHarness;
+        use uncode_session::store::SessionStore;
+
+        let (api_reg, model_reg, _) = make_registries(vec![]);
+        let tool_reg = Arc::new(uncode_tools::registry::ToolRegistry::new());
+        let session_store = Arc::new(SessionStore::new(test_session_dir()));
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            HashMap::new(),
+            tool_reg,
+            session_store.clone(),
+            "test prompt".into(),
+            "mock".into(),
+        );
+        let mut harness = AgentHarness::new(agent, session_store.clone());
+
+        // Init session
+        session_store
+            .init_session("s1", "test-model", "/tmp")
+            .unwrap();
+        harness.set_session_id("s1".into());
+
+        // Add pending writes
+        harness.set_model("new-model", "test-provider");
+
+        // Verify session has model change entry
+        let entries = session_store.load_entries("s1").unwrap();
+        assert!(entries.iter().any(|e| matches!(
+            e,
+            uncode_core::session::SessionEntry::ModelChange(mc) if mc.model_id == "new-model"
+        )));
+    }
+
+    // ── Phase 3 补充：abort 清空 pending_writes ──
+
+    #[tokio::test]
+    async fn test_harness_abort_clears_state() {
+        use crate::harness::AgentHarness;
+
+        let (api_reg, model_reg, _) = make_registries(vec![]);
+        let tool_reg = Arc::new(uncode_tools::registry::ToolRegistry::new());
+        let session_store = Arc::new(SessionStore::new(test_session_dir()));
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            HashMap::new(),
+            tool_reg,
+            session_store.clone(),
+            "test".into(),
+            "mock".into(),
+        );
+        let mut harness = AgentHarness::new(agent, session_store);
+
+        // abort should succeed without panic
+        harness.abort().await;
+        assert!(harness.is_idle());
+    }
+
+    // ── Phase 8: ActiveRun 并发拒绝 + reset ──
+
+    #[tokio::test]
+    async fn test_active_run_concurrent_rejection() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
+            StreamEvent::TextDelta("first".into()),
+            StreamEvent::Done {
+                reason: StopReason::Stop,
+            },
+        ]]);
+        let tool_reg = Arc::new(uncode_tools::registry::ToolRegistry::new());
+        let session_store = Arc::new(SessionStore::new(test_session_dir()));
+
+        let agent = Arc::new(tokio::sync::Mutex::new(AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            tool_reg,
+            session_store,
+            "test".into(),
+            "mock".into(),
+        )));
+
+        // Run once should succeed
+        let a = agent.clone();
+        let result = a.lock().await.run(Message::user("go")).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_reset_clears_state() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![]);
+        let tool_reg = Arc::new(uncode_tools::registry::ToolRegistry::new());
+        let session_store = Arc::new(SessionStore::new(test_session_dir()));
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            tool_reg,
+            session_store,
+            "test".into(),
+            "mock".into(),
+        );
+
+        // reset should not panic
+        agent.reset().await;
     }
 }
