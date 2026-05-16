@@ -258,20 +258,16 @@ impl AgentLoop {
                         pending_tool_calls.push((id, name, String::new()));
                     }
                     StreamEvent::ToolCallDelta { id, arguments } => {
-                        if let Some(tc) =
-                            pending_tool_calls.iter_mut().find(|(tid, ..)| tid == &id)
+                        if let Some(tc) = pending_tool_calls.iter_mut().find(|(tid, ..)| tid == &id)
                         {
                             tc.2.push_str(&arguments);
 
                             // Early path display: push accumulated args to TUI
                             // as soon as we can extract a meaningful path/command.
-                            if !args_pushed.contains(&id)
-                                && has_identifiable_field(&tc.2)
-                            {
+                            if !args_pushed.contains(&id) && has_identifiable_field(&tc.2) {
                                 self.emit(AgentEvent::ToolCallProgress {
                                     tool_id: id.clone(),
-                                    progress_type:
-                                        uncode_core::event::ProgressType::Spinner,
+                                    progress_type: uncode_core::event::ProgressType::Spinner,
                                     detail: tc.2.clone(),
                                 });
                                 args_pushed.insert(id.clone());

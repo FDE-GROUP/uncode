@@ -186,8 +186,8 @@ struct GrepRenderer;
 
 impl ToolRenderer for GrepRenderer {
     fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
-        let pattern = extract_quoted_value(args, &["\"pattern\""])
-            .unwrap_or_else(|| args.to_string());
+        let pattern =
+            extract_quoted_value(args, &["\"pattern\""]).unwrap_or_else(|| args.to_string());
         vec![Line::from(vec![
             Span::styled("└ ", Style::default().fg(theme.ui.footer_text)),
             Span::styled(pattern, Style::default().fg(theme.tool_status.running)),
@@ -280,8 +280,7 @@ struct LsRenderer;
 
 impl ToolRenderer for LsRenderer {
     fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
-        let dir = extract_quoted_value(args, &["\"path\""])
-            .unwrap_or_else(|| args.to_string());
+        let dir = extract_quoted_value(args, &["\"path\""]).unwrap_or_else(|| args.to_string());
         vec![Line::from(vec![
             Span::styled("└ ", Style::default().fg(theme.ui.footer_text)),
             Span::styled(dir, Style::default().fg(theme.tool_status.running)),
@@ -342,8 +341,7 @@ fn extract_path(args: &str) -> String {
         }
     }
     // Fallback: extract from partial JSON (delta streaming)
-    extract_quoted_value(args, &["\"path\"", "\"file_path\""])
-        .unwrap_or_else(|| args.to_string())
+    extract_quoted_value(args, &["\"path\"", "\"file_path\""]).unwrap_or_else(|| args.to_string())
 }
 
 /// Extract the first non-empty quoted value following any of the given keys.

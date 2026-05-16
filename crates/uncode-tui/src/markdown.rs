@@ -7,6 +7,9 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
+const TRUNCATE_HEAD: usize = 50;
+const TRUNCATE_TAIL: usize = 50;
+
 pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     render_markdown_with_theme(text, &Theme::default(), None)
 }
@@ -27,7 +30,34 @@ pub fn render_markdown_with_theme(
 
     let mut ctx = RenderContext::new(theme, max_width);
     ctx.render_node(&ast);
-    ctx.finish()
+    let lines = ctx.finish();
+    truncate_lines(lines, TRUNCATE_HEAD, TRUNCATE_TAIL, theme)
+}
+
+fn truncate_lines(
+    mut lines: Vec<Line<'static>>,
+    head: usize,
+    tail: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let total = lines.len();
+    if total <= head + tail + 5 {
+        return lines;
+    }
+    let omitted = total - head - tail;
+    let tail_start = total - tail;
+
+    // Split off tail, then split off head (middle is dropped)
+    let tail_part = lines.split_off(tail_start);
+    let _middle = lines.split_off(head);
+
+    let mut out = lines;
+    out.push(Line::from(Span::styled(
+        format!("  ... ({omitted} lines omitted) ..."),
+        Style::default().fg(theme.ui.footer_text),
+    )));
+    out.extend(tail_part);
+    out
 }
 
 /// A prefix pushed onto the stack for continuation indentation after wrapping.
@@ -192,7 +222,7 @@ impl<'a> RenderContext<'a> {
 
             Node::ListItem(item) => {
                 let marker = if let Some(checked) = item.checked {
-                    let m = if checked { "x " } else { "o " };
+                    let m = if checked { "☑ " } else { "☐ " };
                     m.to_string()
                 } else if self.list_ordered {
                     let m = format!("{}. ", self.list_counter);
@@ -368,16 +398,7 @@ impl<'a> RenderContext<'a> {
                 let mut cells: Vec<CellContent> = Vec::new();
                 for cell_node in &tr.children {
                     if let Node::TableCell(cell) = cell_node {
-                        let mut spans = Vec::new();
-                        for inline in &cell.children {
-                            collect_inline_spans(
-                                inline,
-                                Style::default(),
-                                &mut spans,
-                                self.theme.markdown.code_text,
-                            );
-                        }
-                        let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
+                        let text = collect_inline_text(&cell.children);
                         let width = UnicodeWidthStr::width(text.as_str());
                         cells.push(CellContent { text, width });
                     }
@@ -516,47 +537,128 @@ fn wrap_spans(spans: &[Span<'static>], max: usize) -> Vec<Vec<Span<'static>>> {
     lines
 }
 
-/// Recursively collect inline node text into styled spans (for table cells)
-fn collect_inline_spans(
-    node: &Node,
-    style: Style,
-    out: &mut Vec<Span<'static>>,
-    code_color: ratatui::style::Color,
-) {
+/// Extract plain text from inline children (for table cell width calculation).
+fn collect_inline_text(children: &[Node]) -> String {
+    let mut out = String::new();
+    for child in children {
+        collect_text_recursive(child, &mut out);
+    }
+    out
+}
+
+fn collect_text_recursive(node: &Node, out: &mut String) {
     match node {
-        Node::Text(text) => {
-            out.push(Span::styled(text.value.clone(), style));
-        }
+        Node::Text(text) => out.push_str(&text.value),
         Node::InlineCode(code) => {
-            out.push(Span::styled(
-                format!(" {} ", code.value),
-                Style::default().fg(code_color),
-            ));
-        }
-        Node::Strong(strong) => {
-            let s = style.add_modifier(Modifier::BOLD);
-            for child in &strong.children {
-                collect_inline_spans(child, s, out, code_color);
-            }
-        }
-        Node::Emphasis(em) => {
-            let s = style.add_modifier(Modifier::ITALIC);
-            for child in &em.children {
-                collect_inline_spans(child, s, out, code_color);
-            }
-        }
-        Node::Delete(del) => {
-            let s = style.add_modifier(Modifier::CROSSED_OUT);
-            for child in &del.children {
-                collect_inline_spans(child, s, out, code_color);
-            }
+            out.push(' ');
+            out.push_str(&code.value);
+            out.push(' ');
         }
         _ => {
             if let Some(children) = node.children() {
                 for child in children {
-                    collect_inline_spans(child, style, out, code_color);
+                    collect_text_recursive(child, out);
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_theme() -> Theme {
+        Theme::default()
+    }
+
+    #[test]
+    fn test_task_list_symbols() {
+        let md = "- [x] done\n- [ ] pending\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains('☑'), "checked item should show ☑");
+        assert!(combined.contains('☐'), "unchecked item should show ☐");
+    }
+
+    #[test]
+    fn test_ordered_list() {
+        let md = "1. first\n2. second\n3. third\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains("1."), "should show 1.");
+        assert!(combined.contains("2."), "should show 2.");
+        assert!(combined.contains("3."), "should show 3.");
+    }
+
+    #[test]
+    fn test_link_text_and_url() {
+        let md = "[example](https://example.com)\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains("example"), "should show link text");
+        assert!(combined.contains("https://example.com"), "should show URL");
+    }
+
+    #[test]
+    fn test_truncation_long_output() {
+        let md: String = (0..200).map(|i| format!("line {i}\n\n")).collect();
+        let lines = render_markdown_with_theme(&md, &test_theme(), None);
+        assert!(
+            lines.len() < 250,
+            "should truncate long output, got {} lines",
+            lines.len()
+        );
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(
+            combined.contains("lines omitted"),
+            "should show truncation notice"
+        );
+        assert!(combined.contains("line 0"), "should keep first line");
+        assert!(combined.contains("line 199"), "should keep last line");
+    }
+
+    #[test]
+    fn test_no_truncation_short_output() {
+        let md = "short\ncontent\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        assert!(
+            !lines.iter().any(|l| l.to_string().contains("omitted")),
+            "short output should not be truncated"
+        );
+    }
+
+    #[test]
+    fn test_table_rendering() {
+        let md = "| A | B |\n| --- | --- |\n| 1 | 2 |\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains('A'), "table should contain header A");
+        assert!(combined.contains('B'), "table should contain header B");
+        assert!(combined.contains('│'), "table should have borders");
+    }
+
+    #[test]
+    fn test_code_block_with_tabs() {
+        let md = "```rust\nfn main() {\n\tprintln!(\"hello\");\n}\n```\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(
+            !combined.contains('\t'),
+            "tabs should be expanded to spaces"
+        );
+    }
+
+    #[test]
+    fn test_collect_inline_text() {
+        let md = "hello **world** `code`";
+        let ast = to_mdast(md, &markdown::ParseOptions::gfm()).unwrap();
+        let children = ast.children().unwrap();
+        let para = match &children[0] {
+            Node::Paragraph(p) => p,
+            _ => panic!("expected paragraph"),
+        };
+        let text = collect_inline_text(&para.children);
+        assert_eq!(text, "hello world  code ");
     }
 }
