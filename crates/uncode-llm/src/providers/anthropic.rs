@@ -38,6 +38,20 @@ fn build_body(request: &CompletionRequest) -> Value {
     if let Some(t) = request.temperature {
         body["temperature"] = serde_json::json!(t);
     }
+    if !request.tools.is_empty() {
+        let tools: Vec<Value> = request
+            .tools
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": t.parameters
+                })
+            })
+            .collect();
+        body["tools"] = serde_json::json!(tools);
+    }
     body
 }
 
@@ -67,21 +81,39 @@ impl LlmDriver for AnthropicDriver {
             ));
         }
 
+        let state = AnthropicToolState::new();
         let stream = response
             .bytes_stream()
-            .flat_map(|chunk| {
+            .scan(state, |state, chunk| {
                 let events: Vec<StreamEvent> = match chunk {
-                    Ok(c) => parse_anthropic_sse(&String::from_utf8_lossy(&c)),
+                    Ok(c) => parse_anthropic_chunk(&String::from_utf8_lossy(&c), state),
                     Err(e) => vec![StreamEvent::Error(e.to_string())],
                 };
-                stream::iter(events)
+                std::future::ready(Some(stream::iter(events)))
             })
+            .flatten()
             .chain(stream::once(async { StreamEvent::Done }));
         Ok(Box::pin(stream))
     }
 }
 
-fn parse_anthropic_sse(text: &str) -> Vec<StreamEvent> {
+struct AnthropicToolState {
+    /// tool_use block index → (id, name)
+    active_tools: std::collections::HashMap<usize, (String, String)>,
+    /// tool_use block index → accumulated input JSON
+    pending_args: std::collections::HashMap<usize, String>,
+}
+
+impl AnthropicToolState {
+    fn new() -> Self {
+        Self {
+            active_tools: std::collections::HashMap::new(),
+            pending_args: std::collections::HashMap::new(),
+        }
+    }
+}
+
+fn parse_anthropic_chunk(text: &str, state: &mut AnthropicToolState) -> Vec<StreamEvent> {
     let mut events = Vec::new();
     for line in text.lines() {
         let line = line.trim();
@@ -91,13 +123,74 @@ fn parse_anthropic_sse(text: &str) -> Vec<StreamEvent> {
         if let Some(json_str) = line.strip_prefix("data: ") {
             if let Ok(event) = serde_json::from_str::<Value>(json_str) {
                 match event["type"].as_str() {
+                    Some("content_block_start") => {
+                        let idx = event["index"].as_u64().unwrap_or(0) as usize;
+                        if event["content_block"]["type"].as_str() == Some("tool_use") {
+                            let id = event["content_block"]["id"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string();
+                            let name = event["content_block"]["name"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_string();
+                            state.active_tools.insert(idx, (id.clone(), name.clone()));
+                            events.push(StreamEvent::ToolCallStart { id, name });
+                        } else if let Some(text) = event["content_block"]["text"].as_str() {
+                            if !text.is_empty() {
+                                events.push(StreamEvent::TextDelta(text.to_string()));
+                            }
+                        }
+                    }
                     Some("content_block_delta") => {
-                        if let Some(text) = event["delta"]["text"].as_str() {
-                            events.push(StreamEvent::TextDelta(text.to_string()));
+                        let idx = event["index"].as_u64().unwrap_or(0) as usize;
+                        if event["delta"]["type"].as_str() == Some("input_json_delta") {
+                            if let Some(partial) = event["delta"]["partial_json"].as_str() {
+                                if state.active_tools.contains_key(&idx) {
+                                    state.pending_args.entry(idx).or_default().push_str(partial);
+                                    let id = state.active_tools.get(&idx).unwrap().0.clone();
+                                    events.push(StreamEvent::ToolCallDelta {
+                                        id,
+                                        arguments: partial.to_string(),
+                                    });
+                                }
+                            }
+                        } else if let Some(text) = event["delta"]["text"].as_str() {
+                            if !text.is_empty() {
+                                events.push(StreamEvent::TextDelta(text.to_string()));
+                            }
+                        }
+                    }
+                    Some("content_block_stop") => {
+                        let idx = event["index"].as_u64().unwrap_or(0) as usize;
+                        if let Some((id, name)) = state.active_tools.remove(&idx) {
+                            let args_str = state.pending_args.remove(&idx).unwrap_or_default();
+                            let parsed = match serde_json::from_str::<Value>(&args_str) {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    events.push(StreamEvent::Error(format!(
+                                        "tool args JSON parse failed: {e}"
+                                    )));
+                                    Value::Object(Default::default())
+                                }
+                            };
+                            events.push(StreamEvent::ToolCallEnd {
+                                id,
+                                name,
+                                arguments: parsed,
+                            });
                         }
                     }
                     Some("message_delta") => {
                         if let Some(usage) = event.get("usage") {
+                            events.push(StreamEvent::Usage(UsageInfo {
+                                input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
+                                output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
+                            }));
+                        }
+                    }
+                    Some("message_start") => {
+                        if let Some(usage) = event["message"].get("usage") {
                             events.push(StreamEvent::Usage(UsageInfo {
                                 input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
                                 output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),

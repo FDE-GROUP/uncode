@@ -3,8 +3,11 @@ use futures::stream::{self, BoxStream, StreamExt};
 use reqwest::Client;
 use serde_json::Value;
 
-use crate::driver::{CompletionRequest, LlmDriver, StreamEvent, UsageInfo};
-use crate::providers::common::{build_chat_messages, map_http_error};
+use crate::driver::{CompletionRequest, LlmDriver, StreamEvent};
+use crate::providers::common::{
+    OpenAiStreamState, build_chat_messages, build_tools_json, extract_usage, flush_tool_calls,
+    map_http_error, parse_openai_tool_calls,
+};
 use uncode_core::error::UncodeError;
 
 pub struct OpenAiDriver {
@@ -36,6 +39,9 @@ fn build_body(request: &CompletionRequest) -> Value {
     if let Some(t) = request.temperature {
         body["temperature"] = serde_json::json!(t);
     }
+    if let Some(tools) = build_tools_json(&request.tools) {
+        body["tools"] = tools;
+    }
     body
 }
 
@@ -64,21 +70,23 @@ impl LlmDriver for OpenAiDriver {
             ));
         }
 
+        let state = OpenAiStreamState::new();
         let stream = response
             .bytes_stream()
-            .flat_map(|chunk| {
+            .scan(state, |state, chunk| {
                 let events: Vec<StreamEvent> = match chunk {
-                    Ok(c) => parse_sse(&String::from_utf8_lossy(&c)),
+                    Ok(c) => parse_sse_chunk(&String::from_utf8_lossy(&c), state),
                     Err(e) => vec![StreamEvent::Error(e.to_string())],
                 };
-                stream::iter(events)
+                std::future::ready(Some(stream::iter(events)))
             })
+            .flatten()
             .chain(stream::once(async { StreamEvent::Done }));
         Ok(Box::pin(stream))
     }
 }
 
-fn parse_sse(text: &str) -> Vec<StreamEvent> {
+fn parse_sse_chunk(text: &str, state: &mut OpenAiStreamState) -> Vec<StreamEvent> {
     let mut events = Vec::new();
     for line in text.lines() {
         let line = line.trim();
@@ -88,19 +96,25 @@ fn parse_sse(text: &str) -> Vec<StreamEvent> {
         if let Some(json_str) = line.strip_prefix("data: ") {
             if let Ok(event) = serde_json::from_str::<Value>(json_str) {
                 if let Some(choice) = event["choices"][0].as_object() {
-                    if let Some(delta) = choice.get("delta") {
-                        if let Some(content) = delta["content"].as_str() {
-                            if !content.is_empty() {
-                                events.push(StreamEvent::TextDelta(content.to_string()));
-                            }
+                    // Tool calls
+                    events.extend(parse_openai_tool_calls(choice, state));
+
+                    // Text delta
+                    if let Some(content) = choice["delta"]["content"].as_str() {
+                        if !content.is_empty() {
+                            events.push(StreamEvent::TextDelta(content.to_string()));
+                        }
+                    }
+
+                    // Finish reason — flush tool calls
+                    if let Some(reason) = choice.get("finish_reason") {
+                        if !reason.is_null() {
+                            events.extend(flush_tool_calls(state));
                         }
                     }
                 }
-                if let Some(usage) = event.get("usage") {
-                    events.push(StreamEvent::Usage(UsageInfo {
-                        input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
-                        output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
-                    }));
+                if let Some(usage_event) = extract_usage(&event) {
+                    events.push(usage_event);
                 }
             }
         }
