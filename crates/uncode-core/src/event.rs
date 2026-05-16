@@ -35,6 +35,8 @@ pub enum AgentEvent {
     },
     ToolCallEnd {
         tool_id: String,
+        tool_name: String,
+        arguments: String,
         status: ToolCallStatus,
         duration_ms: u64,
         output_size: Option<usize>,
@@ -105,6 +107,7 @@ pub enum ProgressType {
     Spinner,
     Percentage { current: u64, total: u64 },
     LogLine,
+    Stdout,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

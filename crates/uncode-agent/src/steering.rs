@@ -1,17 +1,19 @@
 use tokio::sync::mpsc;
 use uncode_core::message::Message;
 
+const CHANNEL_CAPACITY: usize = 64;
+
 pub struct MessageQueue {
-    steering_tx: mpsc::UnboundedSender<Message>,
-    steering_rx: mpsc::UnboundedReceiver<Message>,
-    follow_up_tx: mpsc::UnboundedSender<Message>,
-    follow_up_rx: mpsc::UnboundedReceiver<Message>,
+    steering_tx: mpsc::Sender<Message>,
+    steering_rx: mpsc::Receiver<Message>,
+    follow_up_tx: mpsc::Sender<Message>,
+    follow_up_rx: mpsc::Receiver<Message>,
 }
 
 impl MessageQueue {
     pub fn new() -> Self {
-        let (steering_tx, steering_rx) = mpsc::unbounded_channel();
-        let (follow_up_tx, follow_up_rx) = mpsc::unbounded_channel();
+        let (steering_tx, steering_rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let (follow_up_tx, follow_up_rx) = mpsc::channel(CHANNEL_CAPACITY);
         Self {
             steering_tx,
             steering_rx,
@@ -20,12 +22,12 @@ impl MessageQueue {
         }
     }
 
-    pub fn steer(&self, msg: Message) {
-        let _ = self.steering_tx.send(msg);
+    pub async fn steer(&self, msg: Message) {
+        let _ = self.steering_tx.send(msg).await;
     }
 
-    pub fn follow_up(&self, msg: Message) {
-        let _ = self.follow_up_tx.send(msg);
+    pub async fn follow_up(&self, msg: Message) {
+        let _ = self.follow_up_tx.send(msg).await;
     }
 
     pub fn drain_steering(&mut self) -> Vec<Message> {
@@ -60,6 +62,6 @@ impl Default for MessageQueue {
 
 #[derive(Clone)]
 pub struct MessageQueueHandle {
-    pub steering: mpsc::UnboundedSender<Message>,
-    pub follow_up: mpsc::UnboundedSender<Message>,
+    pub steering: mpsc::Sender<Message>,
+    pub follow_up: mpsc::Sender<Message>,
 }
