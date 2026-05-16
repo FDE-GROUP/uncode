@@ -186,10 +186,12 @@ struct GrepRenderer;
 
 impl ToolRenderer for GrepRenderer {
     fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
-        vec![Line::from(Span::styled(
-            args.to_string(),
-            Style::default().fg(theme.tool_status.running),
-        ))]
+        let pattern = extract_quoted_value(args, &["\"pattern\""])
+            .unwrap_or_else(|| args.to_string());
+        vec![Line::from(vec![
+            Span::styled("└ ", Style::default().fg(theme.ui.footer_text)),
+            Span::styled(pattern, Style::default().fg(theme.tool_status.running)),
+        ])]
     }
 
     fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
@@ -220,12 +222,15 @@ struct BashRenderer;
 impl ToolRenderer for BashRenderer {
     fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let cmd = extract_command(args);
-        vec![Line::from(Span::styled(
-            format!("$ {cmd}"),
-            Style::default()
-                .fg(theme.bash.command)
-                .add_modifier(Modifier::BOLD),
-        ))]
+        vec![Line::from(vec![
+            Span::styled("└ ", Style::default().fg(theme.ui.footer_text)),
+            Span::styled(
+                format!("$ {cmd}"),
+                Style::default()
+                    .fg(theme.bash.command)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ])]
     }
 
     fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
@@ -246,10 +251,12 @@ struct FindRenderer;
 
 impl ToolRenderer for FindRenderer {
     fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
-        vec![Line::from(Span::styled(
-            args.to_string(),
-            Style::default().fg(theme.tool_status.running),
-        ))]
+        let query = extract_quoted_value(args, &["\"pattern\"", "\"path\""])
+            .unwrap_or_else(|| args.to_string());
+        vec![Line::from(vec![
+            Span::styled("└ ", Style::default().fg(theme.ui.footer_text)),
+            Span::styled(query, Style::default().fg(theme.tool_status.running)),
+        ])]
     }
 
     fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
@@ -273,10 +280,12 @@ struct LsRenderer;
 
 impl ToolRenderer for LsRenderer {
     fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
-        vec![Line::from(Span::styled(
-            args.to_string(),
-            Style::default().fg(theme.tool_status.running),
-        ))]
+        let dir = extract_quoted_value(args, &["\"path\""])
+            .unwrap_or_else(|| args.to_string());
+        vec![Line::from(vec![
+            Span::styled("└ ", Style::default().fg(theme.ui.footer_text)),
+            Span::styled(dir, Style::default().fg(theme.tool_status.running)),
+        ])]
     }
 
     fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
@@ -301,8 +310,13 @@ impl ToolRenderer for LsRenderer {
 struct FallbackRenderer;
 
 impl ToolRenderer for FallbackRenderer {
-    fn render_call(&self, args: &str, _width: u16, _theme: &Theme) -> Vec<Line<'static>> {
-        vec![Line::from(args.to_string())]
+    fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
+        let summary = extract_quoted_value(args, &["\"path\"", "\"file_path\"", "\"command\""])
+            .unwrap_or_else(|| args.to_string());
+        vec![Line::from(vec![
+            Span::styled("└ ", Style::default().fg(theme.ui.footer_text)),
+            Span::raw(summary),
+        ])]
     }
 
     fn render_result(&self, result: &str, _width: u16, _theme: &Theme) -> Vec<Line<'static>> {
