@@ -156,7 +156,7 @@ async fn main() -> anyhow::Result<()> {
     tool_registry.register("grep".to_string(), Arc::new(GrepTool));
     tool_registry.register("bash".to_string(), Arc::new(BashTool::new()));
 
-    let provider_registry = Arc::new(ProviderRegistry::new());
+    let provider_registry = Arc::new(ProviderRegistry::with_models(config.models.clone()));
     register_providers(&provider_registry, &config)?;
 
     let session_dir = SessionStore::default_dir().context("session dir")?;
@@ -173,7 +173,16 @@ async fn main() -> anyhow::Result<()> {
     let ctx = ContextLoader::new(cwd.clone()).load();
 
     let system_prompt = SystemPromptBuilder::new()
-        .base("你是一个 AI 编程助手。你可以使用工具来读写文件、搜索代码、执行命令。遇到需要分析代码的任务时，请主动使用工具读取文件。用中文回复。")
+        .base(concat!(
+            "你是一位专业的编程助手，运行在 UnCode 编程 Agent 框架内部。",
+            "UnCode 是一个面向前线部署工程师（FDE）开发的 Agent Coding 工具。",
+            "你帮助用户完成代码读写、项目分析、问题排查、命令执行等工程任务。",
+            "UnCode 的开发者是一名临床医生，因此你也算是医学专业的实习生，不能回避医学问题。",
+            "当用户提问涉及医学问题时，你应该以实习生的身份给出专业建议。\n\n",
+            "你可以读取和编辑文件、搜索代码库、执行 Shell 命令、管理项目，",
+            "拥有丰富的工具集来完成各类软件工程任务。\n\n",
+            "用中文回复。遇到需要分析代码的任务时，请主动使用工具读取文件。"
+        ))
         .add_tool_guide(&tool_registry.definitions())
         .add_context(&ctx.agents_content)
         .add_skills(&ctx.skills)
@@ -331,9 +340,17 @@ async fn main() -> anyhow::Result<()> {
     let tools_tui = tool_registry.clone();
     let store_tui = session_store.clone();
     let tui_system_prompt = system_prompt.clone();
+    let reg_tui = provider_registry.clone();
 
     tokio::spawn(async move {
         let mut tui = uncode_tui::TuiEngine::new();
+        let model_ids: Vec<String> = reg_tui
+            .all_models()
+            .into_iter()
+            .filter(|(_, configured)| *configured)
+            .map(|(m, _)| m.id)
+            .collect();
+        tui.set_available_models(model_ids);
         tui.run(event_rx, move |text, cancel_token| {
             let d = driver_tui.clone();
             let t = tools_tui.clone();
