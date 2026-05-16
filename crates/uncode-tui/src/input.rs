@@ -1,8 +1,10 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use std::collections::VecDeque;
+use unicode_width::UnicodeWidthStr;
 
 const MAX_HISTORY: usize = 100;
 const MAX_UNDO: usize = 50;
@@ -107,9 +109,26 @@ impl InputEditor {
                 self.last_input_char = true;
                 InputAction::None
             }
-            // Enter: submit
+            // Enter: submit (apply completion if visible)
             KeyCode::Enter => {
                 self.last_input_char = false;
+                // If completions are visible, apply highlighted item first
+                if !self.completions.is_empty() {
+                    let idx = self.completion_index % self.completions.len();
+                    let selected = self.completions[idx].clone();
+                    self.completions.clear();
+                    self.completion_index = 0;
+                    if let Some(pos) = self.buffer.rfind('/') {
+                        self.buffer.truncate(pos);
+                        self.buffer.push_str(&selected);
+                    } else if let Some(pos) = self.buffer.rfind(' ') {
+                        self.buffer.truncate(pos + 1);
+                        self.buffer.push_str(&selected);
+                    } else {
+                        self.buffer = selected;
+                    }
+                    self.cursor = self.buffer.len();
+                }
                 let text = std::mem::take(&mut self.buffer);
                 self.cursor = 0;
                 self.history_index = None;
@@ -129,6 +148,14 @@ impl InputEditor {
             }
             KeyCode::Up => {
                 self.last_input_char = false;
+                if !self.completions.is_empty() {
+                    self.completion_index = if self.completion_index == 0 {
+                        self.completions.len() - 1
+                    } else {
+                        self.completion_index - 1
+                    };
+                    return InputAction::None;
+                }
                 if self.history.is_empty() {
                     return InputAction::None;
                 }
@@ -143,6 +170,10 @@ impl InputEditor {
             }
             KeyCode::Down => {
                 self.last_input_char = false;
+                if !self.completions.is_empty() {
+                    self.completion_index = (self.completion_index + 1) % self.completions.len();
+                    return InputAction::None;
+                }
                 match self.history_index {
                     Some(i) if i < self.history.len() - 1 => {
                         let new_idx = i + 1;
@@ -278,16 +309,7 @@ impl InputEditor {
             KeyCode::Tab => {
                 self.last_input_char = false;
                 if !self.completions.is_empty() {
-                    let idx = self.completion_index % self.completions.len();
-                    self.completion_index = (idx + 1) % self.completions.len();
-                    let selected = &self.completions[idx];
-                    if let Some(pos) = self.buffer.rfind(' ') {
-                        self.buffer.truncate(pos + 1);
-                        self.buffer.push_str(selected);
-                    } else {
-                        self.buffer = selected.clone();
-                    }
-                    self.cursor = self.buffer.len();
+                    self.completion_index = (self.completion_index + 1) % self.completions.len();
                 }
                 InputAction::None
             }
@@ -341,13 +363,15 @@ impl InputEditor {
     }
 
     pub fn set_completions(&mut self, completions: Vec<String>) {
+        if self.completions != completions {
+            self.completion_index = 0;
+        }
         self.completions = completions;
-        self.completion_index = 0;
     }
 
     pub fn render(&self, f: &mut Frame, area: Rect, border_color: Color) {
         let display_text = if self.buffer.is_empty() {
-            "> _".to_string()
+            "> ".to_string()
         } else {
             format!("> {}", self.buffer)
         };
@@ -356,12 +380,69 @@ impl InputEditor {
             .block(
                 Block::default()
                     .borders(Borders::TOP)
-                    .title("输入")
                     .border_style(Style::default().fg(border_color)),
             )
             .style(Style::default().fg(Color::White));
 
         f.render_widget(content, area);
+
+        // Place cursor at the end of input text (inside the block, first content line)
+        let display_w = UnicodeWidthStr::width(self.buffer.as_str()) as u16;
+        let cursor_x = area.x + 2 + display_w; // "> " = 2 chars
+        let cursor_y = area.y + 1; // TOP border takes 1 line
+        f.set_cursor_position((
+            cursor_x.min(area.x + area.width.saturating_sub(1)),
+            cursor_y,
+        ));
+
+        // Completion popup above the input box
+        if !self.completions.is_empty() {
+            let height = self.completions.len().min(8) as u16;
+            let width = self
+                .completions
+                .iter()
+                .map(|c| c.len() as u16)
+                .max()
+                .unwrap_or(10)
+                + 4;
+            let popup_area = Rect {
+                x: area.x,
+                y: area.y.saturating_sub(height),
+                width: width.min(area.width),
+                height,
+            };
+            f.render_widget(Clear, popup_area);
+            let items: Vec<Line> = self
+                .completions
+                .iter()
+                .take(8)
+                .enumerate()
+                .map(|(i, cmd)| {
+                    if i == self.completion_index % self.completions.len() {
+                        Line::from(Span::styled(
+                            format!(" > {cmd} "),
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::White)
+                                .add_modifier(Modifier::BOLD),
+                        ))
+                    } else {
+                        Line::from(Span::styled(
+                            format!("   {cmd} "),
+                            Style::default().fg(Color::White),
+                        ))
+                    }
+                })
+                .collect();
+            let popup = Paragraph::new(items)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                )
+                .style(Style::default().bg(Color::Black));
+            f.render_widget(popup, popup_area);
+        }
     }
 }
 

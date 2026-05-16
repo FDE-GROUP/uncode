@@ -48,15 +48,12 @@ impl MessageQueue {
 
     /// 取出所有 steering 消息（工具调用间隙投递）
     pub fn drain_steering(&mut self) -> Vec<String> {
-        let steering: Vec<String> = self
-            .messages
-            .iter()
-            .filter(|m| m.queue_type == QueueType::Steering)
-            .map(|m| m.text.clone())
-            .collect();
-        self.messages
-            .retain(|m| m.queue_type != QueueType::Steering);
-        steering
+        let old = std::mem::take(&mut self.messages);
+        let (steering, rest): (Vec<_>, Vec<_>) = old
+            .into_iter()
+            .partition(|m| m.queue_type == QueueType::Steering);
+        self.messages = rest;
+        steering.into_iter().map(|m| m.text).collect()
     }
 
     /// 队列是否为空

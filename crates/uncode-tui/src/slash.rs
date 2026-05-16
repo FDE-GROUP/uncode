@@ -40,8 +40,6 @@ impl SlashCommands {
                 cmds.join("\n")
             }),
         );
-
-        self.register("quit", "退出 uncode", Box::new(|_| "退出中...".into()));
     }
 
     pub fn register(&mut self, name: &str, description: &str, handler: CommandFn) {
@@ -85,7 +83,8 @@ mod tests {
     fn test_execute_quit() {
         let cmds = SlashCommands::new();
         let result = cmds.execute("/quit");
-        assert!(result.is_some());
+        // quit is handled by TUI engine directly, not via slash handler
+        assert!(result.is_none());
     }
 
     #[test]
@@ -112,7 +111,6 @@ mod tests {
         let cmds = SlashCommands::new();
         let names = cmds.names();
         assert!(names.contains(&"help".to_string()));
-        assert!(names.contains(&"quit".to_string()));
     }
 
     #[test]
