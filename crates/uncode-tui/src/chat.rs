@@ -147,6 +147,7 @@ struct LineCountEntry {
     line_count: usize,
     width: u16,
     cached_lines: Option<Vec<Line<'static>>>,
+    cached_text_len: usize,
 }
 
 /// 对话状态容器
@@ -204,6 +205,7 @@ impl ChatState {
             line_count: 0,
             width: 0,
             cached_lines: None,
+            cached_text_len: 0,
         });
         self.prefix_dirty = true;
     }
@@ -229,6 +231,7 @@ impl ChatState {
 
     /// Ensure all line counts are up to date for the given width.
     /// Re-renders only stale messages and caches the results.
+    /// Uses incremental rendering for streaming messages (tail-only re-render).
     pub fn ensure_line_counts(
         &mut self,
         width: u16,
@@ -253,40 +256,84 @@ impl ChatState {
                 .get(idx)
                 .map_or(true, |e| e.width != width || e.cached_lines.is_none());
 
-            if needs_recompute {
-                let is_last = idx == self.messages.len() - 1;
-                let mut msg_lines =
-                    render_message(&self.messages[idx], width, renderers, theme, tick);
+            if !needs_recompute {
+                continue;
+            }
 
-                // Streaming cursor for active assistant
-                if is_last && agent_busy {
-                    if let ChatMessage::Assistant { text } = &self.messages[idx] {
-                        if !text.is_empty() && !msg_lines.is_empty() {
-                            let show_cursor = tick % 4 < 2;
-                            let last = msg_lines.pop().unwrap();
-                            let mut spans = last.spans;
-                            if show_cursor {
-                                spans.push(Span::styled(
-                                    "█",
-                                    Style::default().fg(theme.tool_status.running),
-                                ));
-                            }
-                            msg_lines.push(Line::from(spans));
+            let is_last = idx == self.messages.len() - 1;
+
+            // Incremental path: streaming append, width unchanged, text grew
+            let can_incremental = is_last
+                && self.line_counts.get(idx).map_or(false, |e| {
+                    e.cached_lines.is_some()
+                        && e.cached_text_len > 0
+                        && message_text_len(&self.messages[idx]) > e.cached_text_len
+                });
+
+            let mut msg_lines = if can_incremental {
+                self.render_incremental(idx, width, renderers, theme, tick)
+            } else {
+                render_message(&self.messages[idx], width, renderers, theme, tick)
+            };
+
+            // Streaming cursor for active assistant
+            if is_last && agent_busy {
+                if let ChatMessage::Assistant { text } = &self.messages[idx] {
+                    if !text.is_empty() && !msg_lines.is_empty() {
+                        let show_cursor = tick % 4 < 2;
+                        let last = msg_lines.pop().unwrap();
+                        let mut spans = last.spans;
+                        if show_cursor {
+                            spans.push(Span::styled(
+                                "█",
+                                Style::default().fg(theme.tool_status.running),
+                            ));
                         }
+                        msg_lines.push(Line::from(spans));
                     }
                 }
-
-                if let Some(entry) = self.line_counts.get_mut(idx) {
-                    entry.line_count = msg_lines.len();
-                    entry.width = width;
-                    entry.cached_lines = Some(msg_lines);
-                }
-                self.prefix_dirty = true;
             }
+
+            if let Some(entry) = self.line_counts.get_mut(idx) {
+                entry.line_count = msg_lines.len();
+                entry.width = width;
+                entry.cached_text_len = message_text_len(&self.messages[idx]);
+                entry.cached_lines = Some(msg_lines);
+            }
+            self.prefix_dirty = true;
         }
 
         if self.prefix_dirty {
             self.recompute_prefix_sum();
+        }
+    }
+
+    /// Incremental render: keep cached prefix lines, only re-render the tail.
+    fn render_incremental(
+        &mut self,
+        idx: usize,
+        width: u16,
+        renderers: &ToolRendererRegistry,
+        theme: &Theme,
+        tick: usize,
+    ) -> Vec<Line<'static>> {
+        let old_lines = self.line_counts[idx]
+            .cached_lines
+            .clone()
+            .unwrap_or_default();
+        let old_count = old_lines.len();
+
+        // Full render of new content
+        let new_lines = render_message(&self.messages[idx], width, renderers, theme, tick);
+
+        if old_count > 2 && new_lines.len() >= old_count {
+            // Keep prefix (all but last line), append new tail
+            let mut result = old_lines;
+            result.pop(); // Last line may have changed
+            result.extend(new_lines.into_iter().skip(old_count - 1));
+            result
+        } else {
+            new_lines
         }
     }
 
@@ -543,6 +590,7 @@ impl ChatState {
                             line_count: 0,
                             width: 0,
                             cached_lines: None,
+                            cached_text_len: 0,
                         })
                         .collect();
                     self.prefix_dirty = true;
@@ -654,6 +702,25 @@ impl ChatState {
 impl Default for ChatState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// 提取消息主文本长度（用于增量渲染检测）
+fn message_text_len(msg: &ChatMessage) -> usize {
+    match msg {
+        ChatMessage::User { text, .. } => text.len(),
+        ChatMessage::Assistant { text } => text.len(),
+        ChatMessage::Thinking { text, .. } => text.len(),
+        ChatMessage::ToolCall {
+            result,
+            arguments_summary,
+            ..
+        } => arguments_summary.len() + result.as_ref().map_or(0, |r| r.len()),
+        ChatMessage::BashExecution { stdout, stderr, .. } => stdout.len() + stderr.len(),
+        ChatMessage::Error { message, .. } => message.len(),
+        ChatMessage::CompactionSummary { summary_text, .. } => summary_text.len(),
+        ChatMessage::QueuedMessage { text } => text.len(),
+        ChatMessage::Summary { .. } => 0,
     }
 }
 
