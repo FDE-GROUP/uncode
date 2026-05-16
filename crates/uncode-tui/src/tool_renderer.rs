@@ -84,30 +84,30 @@ struct ReadRenderer;
 impl ToolRenderer for ReadRenderer {
     fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let path = extract_path(args);
-        vec![Line::from(Span::styled(
-            format!("📖 读取 {path}"),
-            Style::default().fg(theme.tool_status.running),
-        ))]
+        vec![Line::from(vec![
+            Span::styled("└ ", Style::default().fg(theme.ui.footer_text)),
+            Span::styled(path, Style::default().fg(theme.tool_status.running)),
+        ])]
     }
 
     fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let lines: Vec<&str> = result.lines().collect();
         let line_count = lines.len();
         let mut out = vec![Line::from(Span::styled(
-            format!("{line_count} 行"),
+            format!("{line_count} lines"),
             Style::default().fg(theme.ui.footer_text),
         ))];
 
-        let max_lines = 80;
-        for line in lines.iter().take(max_lines) {
+        let code_style = Style::default().fg(theme.markdown.code_text);
+        out.extend(
+            lines
+                .iter()
+                .take(80)
+                .map(|line| Line::from(Span::styled(line.to_string(), code_style))),
+        );
+        if lines.len() > 80 {
             out.push(Line::from(Span::styled(
-                line.to_string(),
-                Style::default().fg(theme.markdown.code_text),
-            )));
-        }
-        if lines.len() > max_lines {
-            out.push(Line::from(Span::styled(
-                format!("... ({} more lines)", lines.len() - max_lines),
+                format!("... ({} more lines)", lines.len() - 80),
                 Style::default().fg(theme.ui.footer_text),
             )));
         }
@@ -120,25 +120,25 @@ struct WriteRenderer;
 impl ToolRenderer for WriteRenderer {
     fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let path = extract_path(args);
-        vec![Line::from(Span::styled(
-            format!("📝 写入 {path}"),
-            Style::default().fg(theme.tool_status.await_confirm),
-        ))]
+        vec![Line::from(vec![
+            Span::styled("└ ", Style::default().fg(theme.ui.footer_text)),
+            Span::styled(path, Style::default().fg(theme.tool_status.await_confirm)),
+        ])]
     }
 
     fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let bytes = result.len();
         let mut out = vec![Line::from(Span::styled(
-            format!("写入 {bytes} 字节"),
+            format!("{bytes} bytes written"),
             Style::default().fg(theme.tool_status.success),
         ))];
-        let lines: Vec<&str> = result.lines().take(10).collect();
-        for line in lines {
-            out.push(Line::from(Span::styled(
-                line.to_string(),
-                Style::default().fg(theme.markdown.code_text),
-            )));
-        }
+        let code_style = Style::default().fg(theme.markdown.code_text);
+        out.extend(
+            result
+                .lines()
+                .take(10)
+                .map(|line| Line::from(Span::styled(line.to_string(), code_style))),
+        );
         out
     }
 }
@@ -148,38 +148,31 @@ struct EditRenderer;
 impl ToolRenderer for EditRenderer {
     fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let path = extract_path(args);
-        vec![Line::from(Span::styled(
-            format!("✏️ 编辑 {path}"),
-            Style::default().fg(theme.tool_status.await_confirm),
-        ))]
+        vec![Line::from(vec![
+            Span::styled("└ ", Style::default().fg(theme.ui.footer_text)),
+            Span::styled(path, Style::default().fg(theme.tool_status.await_confirm)),
+        ])]
     }
 
     fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
-        let mut out = Vec::new();
-        for line in result.lines().take(20) {
-            if line.starts_with('+') && !line.starts_with("++") {
-                out.push(Line::from(Span::styled(
-                    line.to_string(),
-                    Style::default().fg(theme.diff.added_text),
-                )));
-            } else if line.starts_with('-') && !line.starts_with("--") {
-                out.push(Line::from(Span::styled(
-                    line.to_string(),
-                    Style::default().fg(theme.diff.removed_text),
-                )));
-            } else if line.starts_with("@@") {
-                out.push(Line::from(Span::styled(
-                    line.to_string(),
-                    Style::default().fg(theme.diff.header),
-                )));
-            } else {
-                out.push(Line::from(Span::styled(
-                    line.to_string(),
-                    Style::default().fg(theme.diff.context),
-                )));
-            }
-        }
-        if result.lines().count() > 20 {
+        let all_lines: Vec<&str> = result.lines().collect();
+        let mut out: Vec<Line<'static>> = all_lines
+            .iter()
+            .take(20)
+            .map(|line| {
+                let style = if line.starts_with('+') && !line.starts_with("++") {
+                    theme.diff.added_text
+                } else if line.starts_with('-') && !line.starts_with("--") {
+                    theme.diff.removed_text
+                } else if line.starts_with("@@") {
+                    theme.diff.header
+                } else {
+                    theme.diff.context
+                };
+                Line::from(Span::styled(line.to_string(), Style::default().fg(style)))
+            })
+            .collect();
+        if all_lines.len() > 20 {
             out.push(Line::from(Span::styled(
                 "...",
                 Style::default().fg(theme.ui.footer_text),
@@ -194,7 +187,7 @@ struct GrepRenderer;
 impl ToolRenderer for GrepRenderer {
     fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         vec![Line::from(Span::styled(
-            format!("🔍 搜索 {args}"),
+            args.to_string(),
             Style::default().fg(theme.tool_status.running),
         ))]
     }
@@ -202,18 +195,19 @@ impl ToolRenderer for GrepRenderer {
     fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let matches: Vec<&str> = result.lines().collect();
         let mut out = vec![Line::from(Span::styled(
-            format!("找到 {} 处匹配", matches.len()),
+            format!("{} matches found", matches.len()),
             Style::default().fg(theme.tool_status.success),
         ))];
-        for line in matches.iter().take(50) {
-            out.push(Line::from(Span::styled(
-                line.to_string(),
-                Style::default().fg(theme.markdown.code_text),
-            )));
-        }
+        let code_style = Style::default().fg(theme.markdown.code_text);
+        out.extend(
+            matches
+                .iter()
+                .take(50)
+                .map(|line| Line::from(Span::styled(line.to_string(), code_style))),
+        );
         if matches.len() > 50 {
             out.push(Line::from(Span::styled(
-                format!("... 还有 {} 处", matches.len() - 50),
+                format!("... {} more", matches.len() - 50),
                 Style::default().fg(theme.ui.footer_text),
             )));
         }
@@ -253,7 +247,7 @@ struct FindRenderer;
 impl ToolRenderer for FindRenderer {
     fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         vec![Line::from(Span::styled(
-            format!("📂 查找 {args}"),
+            args.to_string(),
             Style::default().fg(theme.tool_status.running),
         ))]
     }
@@ -261,15 +255,16 @@ impl ToolRenderer for FindRenderer {
     fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let files: Vec<&str> = result.lines().collect();
         let mut out = vec![Line::from(Span::styled(
-            format!("找到 {} 个文件", files.len()),
+            format!("{} files found", files.len()),
             Style::default().fg(theme.tool_status.success),
         ))];
-        for f in files.iter().take(20) {
-            out.push(Line::from(Span::styled(
-                f.to_string(),
-                Style::default().fg(theme.tool_status.running),
-            )));
-        }
+        let file_style = Style::default().fg(theme.tool_status.running);
+        out.extend(
+            files
+                .iter()
+                .take(20)
+                .map(|f| Line::from(Span::styled(f.to_string(), file_style))),
+        );
         out
     }
 }
@@ -279,7 +274,7 @@ struct LsRenderer;
 impl ToolRenderer for LsRenderer {
     fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         vec![Line::from(Span::styled(
-            format!("📂 列出 {args}"),
+            args.to_string(),
             Style::default().fg(theme.tool_status.running),
         ))]
     }
@@ -287,15 +282,16 @@ impl ToolRenderer for LsRenderer {
     fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
         let entries: Vec<&str> = result.lines().collect();
         let mut out = vec![Line::from(Span::styled(
-            format!("{} 个条目", entries.len()),
+            format!("{} entries", entries.len()),
             Style::default().fg(theme.tool_status.success),
         ))];
-        for e in entries.iter().take(20) {
-            out.push(Line::from(Span::styled(
-                e.to_string(),
-                Style::default().fg(theme.markdown.code_text),
-            )));
-        }
+        let code_style = Style::default().fg(theme.markdown.code_text);
+        out.extend(
+            entries
+                .iter()
+                .take(20)
+                .map(|e| Line::from(Span::styled(e.to_string(), code_style))),
+        );
         out
     }
 }
@@ -321,6 +317,7 @@ impl ToolRenderer for FallbackRenderer {
 // --- Helpers ---
 
 fn extract_path(args: &str) -> String {
+    // Try full JSON parse first
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(args) {
         if let Some(path) = val
             .get("path")
@@ -330,7 +327,29 @@ fn extract_path(args: &str) -> String {
             return path.to_string();
         }
     }
-    args.to_string()
+    // Fallback: extract from partial JSON (delta streaming)
+    extract_quoted_value(args, &["\"path\"", "\"file_path\""])
+        .unwrap_or_else(|| args.to_string())
+}
+
+/// Extract the first non-empty quoted value following any of the given keys.
+fn extract_quoted_value(s: &str, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(pos) = s.find(key) {
+            let rest = s.get(pos + key.len()..)?;
+            let colon = rest.find(':')?;
+            let after = rest.get(colon + 1..)?.trim_start();
+            if after.starts_with('"') {
+                let inner = after.get(1..)?;
+                let end = inner.find('"')?;
+                let val = &inner[..end];
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 fn extract_command(args: &str) -> String {
@@ -339,7 +358,7 @@ fn extract_command(args: &str) -> String {
             return cmd.to_string();
         }
     }
-    args.to_string()
+    extract_quoted_value(args, &["\"command\""]).unwrap_or_else(|| args.to_string())
 }
 
 #[cfg(test)]
@@ -376,7 +395,7 @@ mod tests {
         assert!(call[0].to_string().contains("src/main.rs"));
 
         let result = r.render_result("line1\nline2\nline3", 80, &theme);
-        assert!(result[0].to_string().contains("3 行"));
+        assert!(result[0].to_string().contains("3 lines"));
     }
 
     #[test]
