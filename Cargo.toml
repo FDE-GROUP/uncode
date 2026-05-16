@@ -108,7 +108,7 @@ tree-sitter-java = "0.23"
 tree-sitter-c = "0.24"
 
 # ── Markdown ──
-pulldown-cmark = "0.12"
+markdown = "1.0"
 
 # ── Proc macros ──
 syn = "2"

@@ -3,17 +3,27 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::driver::LlmDriver;
-use uncode_core::model::{ModelInfo, ModelPricing};
+use uncode_core::config::ModelConfig;
+use uncode_core::model::ModelInfo;
 
 #[derive(Default)]
 pub struct ProviderRegistry {
     drivers: RwLock<HashMap<String, Arc<dyn LlmDriver>>>,
+    models: RwLock<Vec<ModelConfig>>,
 }
 
 impl ProviderRegistry {
     pub fn new() -> Self {
         Self {
-            drivers: RwLock::new(HashMap::new()),
+            drivers: RwLock::new(HashMap::with_capacity(8)),
+            models: RwLock::new(Vec::new()),
+        }
+    }
+
+    pub fn with_models(models: Vec<ModelConfig>) -> Self {
+        Self {
+            drivers: RwLock::new(HashMap::with_capacity(8)),
+            models: RwLock::new(models),
         }
     }
 
@@ -33,68 +43,25 @@ impl ProviderRegistry {
         self.drivers.read().contains_key(name)
     }
 
-    /// 返回所有已知模型信息，标记已配置/未配置
+    /// Return all known models, marking which are configured
     pub fn all_models(&self) -> Vec<(ModelInfo, bool)> {
         let configured: Vec<String> = self.names();
-        builtin_models()
-            .into_iter()
+        self.models
+            .read()
+            .iter()
             .map(|m| {
-                let is_configured = configured.contains(&m.id);
-                (m, is_configured)
+                let info = ModelInfo {
+                    id: m.id.clone(),
+                    provider: m.provider.clone(),
+                    display_name: m.display_name.clone(),
+                    max_tokens: m.max_tokens,
+                    supports_vision: m.supports_vision,
+                    supports_tools: m.supports_tools,
+                    pricing: None,
+                };
+                let is_configured = configured.contains(&m.provider);
+                (info, is_configured)
             })
             .collect()
     }
-}
-
-fn builtin_models() -> Vec<ModelInfo> {
-    vec![
-        ModelInfo {
-            id: "deepseek-v3".into(),
-            provider: "deepseek".into(),
-            display_name: "DeepSeek V3".into(),
-            max_tokens: 128_000,
-            supports_vision: false,
-            supports_tools: true,
-            pricing: Some(ModelPricing {
-                input_per_1k: 0.003,
-                output_per_1k: 0.015,
-                cache_read_per_1k: Some(0.001),
-            }),
-        },
-        ModelInfo {
-            id: "deepseek-v4-pro".into(),
-            provider: "deepseek".into(),
-            display_name: "DeepSeek V4 Pro".into(),
-            max_tokens: 128_000,
-            supports_vision: false,
-            supports_tools: true,
-            pricing: Some(ModelPricing {
-                input_per_1k: 0.005,
-                output_per_1k: 0.025,
-                cache_read_per_1k: Some(0.001),
-            }),
-        },
-        ModelInfo {
-            id: "glm-5.1".into(),
-            provider: "glm".into(),
-            display_name: "GLM 5.1".into(),
-            max_tokens: 128_000,
-            supports_vision: true,
-            supports_tools: true,
-            pricing: Some(ModelPricing {
-                input_per_1k: 0.005,
-                output_per_1k: 0.02,
-                cache_read_per_1k: None,
-            }),
-        },
-        ModelInfo {
-            id: "ollama".into(),
-            provider: "ollama".into(),
-            display_name: "Ollama (local)".into(),
-            max_tokens: 128_000,
-            supports_vision: false,
-            supports_tools: true,
-            pricing: None,
-        },
-    ]
 }
