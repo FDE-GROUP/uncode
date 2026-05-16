@@ -123,6 +123,7 @@ uncode-session = { path = "crates/uncode-session" }
 uncode-tools = { path = "crates/uncode-tools" }
 uncode-agent = { path = "crates/uncode-agent" }
 uncode-tui = { path = "crates/uncode-tui" }
+uncode-rpc = { path = "crates/uncode-rpc" }
 uncode-cli = { path = "crates/uncode-cli" }
 
 [profile.dev]

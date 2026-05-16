@@ -60,10 +60,10 @@ impl InputEditor {
     fn word_boundary_forward(&self) -> usize {
         let chars: Vec<char> = self.buffer[self.cursor..].chars().collect();
         let mut i = 0;
-        while i < chars.len() && chars[i] != ' ' {
+        while i < chars.len() && chars[i] == ' ' {
             i += 1;
         }
-        while i < chars.len() && chars[i] == ' ' {
+        while i < chars.len() && chars[i] != ' ' {
             i += 1;
         }
         let byte_offset: usize = chars[..i].iter().map(|c| c.len_utf8()).sum();

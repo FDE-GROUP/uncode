@@ -1,8 +1,122 @@
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use tree_sitter::Parser;
 
 use crate::theme::{SyntaxColors, Theme};
+
+// ---------------------------------------------------------------------------
+// Language alias normalization (#186)
+// ---------------------------------------------------------------------------
+
+/// Alias → canonical language name (only for languages with tree-sitter grammars).
+static LANGUAGE_ALIASES: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
+    let mut m = HashMap::new();
+    // Rust
+    m.insert("rs", "rust");
+    // JavaScript / TypeScript
+    m.insert("js", "javascript");
+    m.insert("jsx", "javascript");
+    m.insert("ts", "typescript");
+    m.insert("tsx", "typescript");
+    m.insert("typescriptreact", "typescript");
+    m.insert("javascriptreact", "javascript");
+    m.insert("mjs", "javascript");
+    m.insert("cjs", "javascript");
+    // Python
+    m.insert("py", "python");
+    m.insert("py3", "python");
+    m.insert("python3", "python");
+    // Go
+    m.insert("golang", "go");
+    // C / C++
+    m.insert("h", "c");
+    // Shell
+    m.insert("sh", "bash");
+    m.insert("shell", "bash");
+    m.insert("zsh", "bash");
+    m.insert("ksh", "bash");
+    // HTML
+    m.insert("htm", "html");
+    // CSS
+    m.insert("scss", "css");
+    m.insert("sass", "css");
+    m.insert("less", "css");
+    // JSON
+    m.insert("jsonl", "json");
+    m.insert("jsonc", "json");
+    m
+});
+
+/// Canonical language names that map to tree-sitter grammars we ship.
+static TREE_SITTER_LANGUAGES: LazyLock<HashMap<&'static str, tree_sitter::Language>> =
+    LazyLock::new(|| {
+        let mut m: HashMap<&str, tree_sitter::Language> = HashMap::new();
+        m.insert("rust", tree_sitter_rust::LANGUAGE.into());
+        m.insert(
+            "typescript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        );
+        m.insert(
+            "javascript",
+            tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+        );
+        m.insert("python", tree_sitter_python::LANGUAGE.into());
+        m.insert("go", tree_sitter_go::LANGUAGE.into());
+        m.insert("java", tree_sitter_java::LANGUAGE.into());
+        m.insert("c", tree_sitter_c::LANGUAGE.into());
+        m.insert("bash", tree_sitter_bash::LANGUAGE.into());
+        m.insert("html", tree_sitter_html::LANGUAGE.into());
+        m.insert("css", tree_sitter_css::LANGUAGE.into());
+        m.insert("json", tree_sitter_json::LANGUAGE.into());
+        m
+    });
+
+/// Normalize a raw language token from a markdown fence to a canonical name
+/// that exists in `TREE_SITTER_LANGUAGES`, or `None`.
+fn normalize_language(lang: &str) -> Option<&'static str> {
+    let key = lang.trim().to_lowercase();
+    if key.is_empty() {
+        return None;
+    }
+    // Try direct match against canonical names
+    for (&canonical, _) in TREE_SITTER_LANGUAGES.iter() {
+        if canonical == key {
+            return Some(canonical);
+        }
+    }
+    // Try alias lookup
+    LANGUAGE_ALIASES.get(key.as_str()).copied()
+}
+
+// ---------------------------------------------------------------------------
+// Parser cache (#185)
+// ---------------------------------------------------------------------------
+
+/// Per-language cached parser. We lock → parse → unlock per call.
+static PARSER_CACHE: LazyLock<std::sync::Mutex<HashMap<&'static str, Parser>>> =
+    LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// Obtain a cached parser for `lang_name`, creating one if needed.
+/// Returns a MutexGuard holding the lock; caller should drop ASAP after parsing.
+fn cached_parser(
+    lang_name: &'static str,
+) -> Option<std::sync::MutexGuard<'static, HashMap<&'static str, Parser>>> {
+    let lang = TREE_SITTER_LANGUAGES.get(lang_name)?.clone();
+    let mut cache = PARSER_CACHE.lock().unwrap();
+    if !cache.contains_key(lang_name) {
+        let mut parser = Parser::new();
+        parser.set_language(&lang).ok()?;
+        cache.insert(lang_name, parser);
+    }
+    Some(cache)
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 /// 对代码进行语法高亮（tree-sitter AST 级别）
 pub fn highlight_code(code: &str, language: &str) -> Vec<Line<'static>> {
@@ -38,12 +152,10 @@ pub fn highlight_line_with_theme(line: &str, language: &str, theme: &Theme) -> L
     let mut pos = 0usize;
     let colors = &theme.syntax;
 
-    // Sort highlights by start position
     let mut sorted: Vec<_> = highlights.iter().collect();
     sorted.sort_by_key(|h| h.start);
 
     for hl in sorted {
-        // Gap before this highlight
         if pos < hl.start {
             let text = String::from_utf8_lossy(&bytes[pos..hl.start]).to_string();
             spans.push(Span::styled(
@@ -57,7 +169,6 @@ pub fn highlight_line_with_theme(line: &str, language: &str, theme: &Theme) -> L
         pos = hl.end.min(line.len());
     }
 
-    // Remaining text
     if pos < line.len() {
         let text = String::from_utf8_lossy(&bytes[pos..]).to_string();
         spans.push(Span::styled(
@@ -75,6 +186,10 @@ pub fn highlight_line_with_theme(line: &str, language: &str, theme: &Theme) -> L
         Line::from(spans)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Internal highlighting
+// ---------------------------------------------------------------------------
 
 fn highlight_style(kind: &HighlightKind, colors: &SyntaxColors) -> Style {
     match kind {
@@ -108,28 +223,21 @@ struct Highlight {
 }
 
 fn collect_highlights(line: &str, language: &str) -> Vec<Highlight> {
-    let lang = match language {
-        "rust" | "rs" => tree_sitter_rust::LANGUAGE,
-        "typescript" | "ts" | "tsx" | "js" | "jsx" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
-        "python" | "py" => tree_sitter_python::LANGUAGE,
-        "go" => tree_sitter_go::LANGUAGE,
-        "java" => tree_sitter_java::LANGUAGE,
-        "c" | "h" => tree_sitter_c::LANGUAGE,
-        "bash" | "sh" => tree_sitter_bash::LANGUAGE,
-        "html" => tree_sitter_html::LANGUAGE,
-        "css" => tree_sitter_css::LANGUAGE,
-        "json" => tree_sitter_json::LANGUAGE,
-        _ => return Vec::new(),
+    let lang_name = match normalize_language(language) {
+        Some(n) => n,
+        None => return Vec::new(),
     };
 
-    let mut parser = Parser::new();
-    if parser.set_language(&lang.into()).is_err() {
-        return Vec::new();
-    }
-
-    let tree = match parser.parse(line, None) {
-        Some(t) => t,
-        None => return Vec::new(),
+    let tree = {
+        let mut cache = match cached_parser(lang_name) {
+            Some(c) => c,
+            None => return Vec::new(),
+        };
+        let parser = cache.get_mut(lang_name).unwrap();
+        match parser.parse(line, None) {
+            Some(t) => t,
+            None => return Vec::new(),
+        }
     };
 
     let mut highlights = Vec::new();
@@ -184,7 +292,6 @@ fn collect_nodes(node: tree_sitter::Node, source: &str, highlights: &mut Vec<Hig
         }
     }
 
-    // Recurse into children
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         collect_nodes(child, source, highlights);
@@ -192,7 +299,6 @@ fn collect_nodes(node: tree_sitter::Node, source: &str, highlights: &mut Vec<Hig
 }
 
 fn is_function_context(node: &tree_sitter::Node) -> bool {
-    // Check if this identifier node is used as a function call or definition
     if let Some(parent) = node.parent() {
         let parent_kind = parent.kind();
         matches!(
@@ -213,18 +319,5 @@ fn is_function_context(node: &tree_sitter::Node) -> bool {
 /// 根据文件扩展名检测编程语言
 pub fn detect_language_from_path(path: &str) -> Option<&'static str> {
     let ext = std::path::Path::new(path).extension()?.to_str()?;
-    match ext {
-        "rs" => Some("rust"),
-        "ts" | "tsx" => Some("typescript"),
-        "js" | "jsx" => Some("typescript"),
-        "py" => Some("python"),
-        "go" => Some("go"),
-        "java" => Some("java"),
-        "c" | "h" => Some("c"),
-        "sh" | "bash" => Some("bash"),
-        "html" | "htm" => Some("html"),
-        "css" => Some("css"),
-        "json" => Some("json"),
-        _ => None,
-    }
+    normalize_language(ext)
 }
