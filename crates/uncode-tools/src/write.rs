@@ -40,7 +40,13 @@ impl ToolExecutor for WriteTool {
             })?;
         }
 
-        fs::write(&resolved, content).map_err(|e| {
+        // Atomic write: write to temp file then rename
+        let tmp_path = resolved.with_extension("tmp");
+        fs::write(&tmp_path, content).map_err(|e| {
+            uncode_core::error::UncodeError::Tool(format!("write {}: {e}", resolved.display()))
+        })?;
+        fs::rename(&tmp_path, &resolved).map_err(|e| {
+            let _ = fs::remove_file(&tmp_path);
             uncode_core::error::UncodeError::Tool(format!("write {}: {e}", resolved.display()))
         })?;
 
