@@ -105,9 +105,14 @@ impl PermissionManager {
         });
     }
 
-    /// 确认当前待确认项
-    pub fn confirm(&mut self, _choice: ConfirmOption) -> Option<PendingConfirmation> {
-        self.pending.take()
+    /// Confirm the pending request with the given choice.
+    /// Returns Some(pending) for Allow/Edit, None for Deny.
+    pub fn confirm(&mut self, choice: ConfirmOption) -> Option<PendingConfirmation> {
+        let pending = self.pending.take();
+        match choice {
+            ConfirmOption::Allow | ConfirmOption::Edit => pending,
+            ConfirmOption::Deny => None,
+        }
     }
 
     /// 获取当前待确认项

@@ -23,7 +23,8 @@ impl ToolExecutor for LsTool {
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
         let raw = arguments["path"].as_str().unwrap_or(".");
-        let resolved = crate::resolve_path(raw);
+        let resolved = crate::resolve_path(raw)
+            .map_err(uncode_core::error::UncodeError::Tool)?;
         let display = resolved.display().to_string();
 
         let entries = fs::read_dir(&resolved)

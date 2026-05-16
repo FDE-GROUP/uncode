@@ -16,35 +16,41 @@ mod tests {
         dir
     }
 
+    /// Create temp dir and set it as cwd so sandbox checks pass.
+    /// Tests must use relative paths to stay within sandbox.
+    fn sandbox_dir() -> std::path::PathBuf {
+        let dir = temp_dir();
+        std::env::set_current_dir(&dir).unwrap();
+        dir
+    }
+
     #[tokio::test]
     async fn test_read_tool() {
-        let dir = temp_dir();
-        let path = dir.join("test.txt");
-        fs::write(&path, "line 1\nline 2\nline 3\nline 4\nline 5\n").unwrap();
+        let _dir = sandbox_dir();
+        fs::write("test.txt", "line 1\nline 2\nline 3\nline 4\nline 5\n").unwrap();
 
         let tool = ReadTool::new();
         let result = tool
-            .execute(serde_json::json!({"path": path.to_str().unwrap()}))
+            .execute(serde_json::json!({"path": "test.txt"}))
             .await
             .unwrap();
         assert!(result.contains("line 1"));
         assert!(result.contains("line 5"));
 
         let result = tool
-            .execute(serde_json::json!({"path": path.to_str().unwrap(), "offset": 2, "limit": 2}))
+            .execute(serde_json::json!({"path": "test.txt", "offset": 2, "limit": 2}))
             .await
             .unwrap();
         assert!(result.contains("line 3"));
         assert!(!result.contains("line 1"));
-
-        fs::remove_dir_all(dir).ok();
     }
 
     #[tokio::test]
     async fn test_read_tool_missing_path() {
+        let _dir = sandbox_dir();
         let tool = ReadTool::new();
         let result = tool
-            .execute(serde_json::json!({"path": "/nonexistent/path/file.txt"}))
+            .execute(serde_json::json!({"path": "nonexistent_file.txt"}))
             .await;
         assert!(result.is_err());
     }
@@ -58,98 +64,86 @@ mod tests {
 
     #[tokio::test]
     async fn test_write_tool() {
-        let dir = temp_dir();
-        let path = dir.join("output.txt");
+        let _dir = sandbox_dir();
 
         let tool = WriteTool;
         let result = tool
-            .execute(serde_json::json!({"path": path.to_str().unwrap(), "content": "hello world"}))
+            .execute(serde_json::json!({"path": "output.txt", "content": "hello world"}))
             .await
             .unwrap();
         assert!(result.contains("wrote"));
-        assert_eq!(fs::read_to_string(&path).unwrap(), "hello world");
-
-        fs::remove_dir_all(dir).ok();
+        assert_eq!(fs::read_to_string("output.txt").unwrap(), "hello world");
     }
 
     #[tokio::test]
     async fn test_write_tool_creates_parent_dirs() {
-        let dir = temp_dir();
-        let path = dir.join("sub/dir/deep/output.txt");
+        let _dir = sandbox_dir();
 
         let tool = WriteTool;
         tool.execute(serde_json::json!({
-            "path": path.to_str().unwrap(),
+            "path": "sub/dir/deep/output.txt",
             "content": "deep write"
         }))
         .await
         .unwrap();
 
-        assert_eq!(fs::read_to_string(&path).unwrap(), "deep write");
-
-        fs::remove_dir_all(dir).ok();
+        assert_eq!(
+            fs::read_to_string("sub/dir/deep/output.txt").unwrap(),
+            "deep write"
+        );
     }
 
     #[tokio::test]
     async fn test_write_tool_no_content_arg() {
         let tool = WriteTool;
-        let result = tool
-            .execute(serde_json::json!({"path": "/tmp/test.txt"}))
-            .await;
+        let result = tool.execute(serde_json::json!({"path": "test.txt"})).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_edit_tool() {
-        let dir = temp_dir();
-        let path = dir.join("edit_test.txt");
-        fs::write(&path, "hello world\nfoo bar\n").unwrap();
+        let _dir = sandbox_dir();
+        fs::write("edit_test.txt", "hello world\nfoo bar\n").unwrap();
 
         let tool = EditTool;
         tool.execute(serde_json::json!({
-            "path": path.to_str().unwrap(),
+            "path": "edit_test.txt",
             "old_string": "hello world",
             "new_string": "hi there"
         }))
         .await
         .unwrap();
 
-        let content = fs::read_to_string(&path).unwrap();
+        let content = fs::read_to_string("edit_test.txt").unwrap();
         assert!(content.contains("hi there"));
         assert!(!content.contains("hello world"));
-
-        fs::remove_dir_all(dir).ok();
     }
 
     #[tokio::test]
     async fn test_edit_tool_not_found() {
-        let dir = temp_dir();
-        let path = dir.join("notfound.txt");
-        fs::write(&path, "content").unwrap();
+        let _dir = sandbox_dir();
+        fs::write("notfound.txt", "content").unwrap();
 
         let tool = EditTool;
         let result = tool
             .execute(serde_json::json!({
-                "path": path.to_str().unwrap(),
+                "path": "notfound.txt",
                 "old_string": "does not exist",
                 "new_string": "replacement"
             }))
             .await;
         assert!(result.is_err());
-
-        fs::remove_dir_all(dir).ok();
     }
 
     #[tokio::test]
     async fn test_edit_tool_ambiguous_match() {
-        let dir = temp_dir();
-        let path = dir.join("ambiguous.txt");
-        fs::write(&path, "foo bar foo baz foo").unwrap();
+        let _dir = sandbox_dir();
+        fs::write("ambiguous.txt", "foo bar foo baz foo").unwrap();
 
         let tool = EditTool;
         let result = tool
             .execute(serde_json::json!({
-                "path": path.to_str().unwrap(),
+                "path": "ambiguous.txt",
                 "old_string": "foo",
                 "new_string": "replaced"
             }))
@@ -160,68 +154,61 @@ mod tests {
             err_msg.contains("3 times"),
             "expected '3 times' in error, got: {err_msg}"
         );
-
-        fs::remove_dir_all(dir).ok();
     }
 
     #[tokio::test]
     async fn test_ls_tool() {
-        let dir = temp_dir();
-        fs::write(dir.join("file1.txt"), "").unwrap();
-        fs::write(dir.join("file2.rs"), "").unwrap();
-        fs::create_dir(dir.join("subdir")).unwrap();
+        let _dir = sandbox_dir();
+        fs::write("file1.txt", "").unwrap();
+        fs::write("file2.rs", "").unwrap();
+        fs::create_dir("subdir").unwrap();
 
         let tool = LsTool;
         let result = tool
-            .execute(serde_json::json!({"path": dir.to_str().unwrap()}))
+            .execute(serde_json::json!({"path": "."}))
             .await
             .unwrap();
 
         assert!(result.contains("file1.txt"));
         assert!(result.contains("file2.rs"));
         assert!(result.contains("subdir/"));
-
-        fs::remove_dir_all(dir).ok();
     }
 
     #[tokio::test]
     async fn test_ls_tool_empty_dir() {
-        let dir = temp_dir();
-        let empty = dir.join("empty");
-        fs::create_dir_all(&empty).unwrap();
+        let _dir = sandbox_dir();
+        fs::create_dir_all("empty").unwrap();
 
         let tool = LsTool;
         let result = tool
-            .execute(serde_json::json!({"path": empty.to_str().unwrap()}))
+            .execute(serde_json::json!({"path": "empty"}))
             .await
             .unwrap();
 
         assert_eq!(result, "(empty)");
-
-        fs::remove_dir_all(dir).ok();
     }
 
     #[tokio::test]
     async fn test_ls_tool_nonexistent_dir() {
         let tool = LsTool;
         let result = tool
-            .execute(serde_json::json!({"path": "/nonexistent/dir/xyz"}))
+            .execute(serde_json::json!({"path": "nonexistent_dir_xyz"}))
             .await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_find_tool() {
-        let dir = temp_dir();
-        fs::write(dir.join("main.rs"), "fn main() {}").unwrap();
-        fs::write(dir.join("lib.rs"), "pub fn lib() {}").unwrap();
-        fs::write(dir.join("readme.md"), "# test").unwrap();
+        let _dir = sandbox_dir();
+        fs::write("main.rs", "fn main() {}").unwrap();
+        fs::write("lib.rs", "pub fn lib() {}").unwrap();
+        fs::write("readme.md", "# test").unwrap();
 
         let tool = FindTool;
         let result = tool
             .execute(serde_json::json!({
                 "pattern": "*.rs",
-                "path": dir.to_str().unwrap()
+                "path": "."
             }))
             .await
             .unwrap();
@@ -229,27 +216,23 @@ mod tests {
         assert!(result.contains("main.rs"));
         assert!(result.contains("lib.rs"));
         assert!(!result.contains("readme.md"));
-
-        fs::remove_dir_all(dir).ok();
     }
 
     #[tokio::test]
     async fn test_find_tool_no_matches() {
-        let dir = temp_dir();
-        fs::write(dir.join("test.txt"), "content").unwrap();
+        let _dir = sandbox_dir();
+        fs::write("test.txt", "content").unwrap();
 
         let tool = FindTool;
         let result = tool
             .execute(serde_json::json!({
                 "pattern": "*.xyz",
-                "path": dir.to_str().unwrap()
+                "path": "."
             }))
             .await
             .unwrap();
 
         assert_eq!(result, "no files found");
-
-        fs::remove_dir_all(dir).ok();
     }
 
     #[tokio::test]

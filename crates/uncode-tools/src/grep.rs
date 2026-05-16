@@ -17,7 +17,7 @@ impl ToolExecutor for GrepTool {
                 "properties": {
                     "pattern": {"type": "string", "description": "正则表达式"},
                     "path": {"type": "string", "description": "搜索目录路径（相对或绝对），默认当前目录"},
-                    "include": {"type": "string", "description": "文件匹配模式，如 *.rs"}
+                    "include": {"type": "string", "description": "文件匹配模式，如 *.rs、**/*.toml、src/*.rs"}
                 },
                 "required": ["pattern"]
             }),
@@ -32,8 +32,14 @@ impl ToolExecutor for GrepTool {
         let re = Regex::new(pattern)
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("invalid regex: {e}")))?;
 
-        let search_path = crate::resolve_path(arguments["path"].as_str().unwrap_or("."));
-        let include = arguments["include"].as_str();
+        let search_path = crate::resolve_path(arguments["path"].as_str().unwrap_or("."))
+            .map_err(uncode_core::error::UncodeError::Tool)?;
+
+        let glob_pattern = arguments["include"]
+            .as_str()
+            .map(|s| glob::Pattern::new(s))
+            .transpose()
+            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("invalid include pattern: {e}")))?;
 
         let mut results = Vec::new();
         let mut count = 0;
@@ -50,14 +56,10 @@ impl ToolExecutor for GrepTool {
                 break;
             }
 
-            if let Some(inc) = include {
-                if let Some(ext) = entry.path().extension() {
-                    let Some(pattern) = inc.strip_prefix("*.") else {
-                        continue;
-                    };
-                    if ext != pattern {
-                        continue;
-                    }
+            if let Some(ref pat) = glob_pattern {
+                let file_name = entry.file_name().to_string_lossy();
+                if !pat.matches(&file_name) {
+                    continue;
                 }
             }
 
