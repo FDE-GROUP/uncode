@@ -1,38 +1,24 @@
-//! uncode-llm — LLM 供应商抽象层
+//! uncode-llm — LLM 供应商抽象层（API-first 架构）
 //!
-//! 提供统一的 `LlmDriver` trait 和 7 个供应商的具体实现。
-//! 通过 `ProviderRegistry` 实现运行时多供应商注册和切换。
+//! 提供 4 个 API 协议实现，通过 `ApiRegistry` + `ModelRegistry` 实现运行时路由。
+//! 新增供应商只需声明 `Model` 数据 + `CompatConfig`，无需写驱动代码。
 
-// ── 新 API-first 架构（Stage 2+） ──
 pub mod api;
 pub mod api_registry;
 pub mod model_registry;
-
-// ── 旧 Driver-first 架构（Stage 7 清理） ──
-pub mod builder;
-pub mod driver;
 pub mod providers;
-pub mod registry;
 
 pub use api::Api;
 pub use api_registry::ApiRegistry;
-pub use builder::CompletionRequestBuilder;
-pub use driver::{CompletionRequest, LlmDriver, StreamEvent, UsageInfo};
 pub use model_registry::ModelRegistry;
-pub use providers::anthropic::AnthropicDriver;
 pub use providers::anthropic_messages::AnthropicMessagesApi;
-pub use providers::deepseek::DeepSeekDriver;
-pub use providers::gemini::GeminiDriver;
 pub use providers::gemini_generative::GeminiGenerativeAiApi;
-pub use providers::glm::GlmDriver;
-pub use providers::ollama::OllamaDriver;
 pub use providers::ollama_native::OllamaNativeApi;
-pub use providers::openai::OpenAiDriver;
 pub use providers::openai_completions::OpenAiCompletionsApi;
-pub use providers::openrouter::OpenRouterDriver;
-pub use registry::ProviderRegistry;
 
-// ── 顶层入口函数（Stage 5） ──
+pub use api::{StreamEvent, UsageInfo};
+
+// ── 顶层入口函数 ──
 
 use futures::stream::BoxStream;
 use uncode_core::error::UncodeError;
@@ -63,6 +49,3 @@ pub async fn complete(
         .ok_or_else(|| UncodeError::Config(format!("no API registered for '{}'", model.api)))?;
     api.complete(model, context, options).await
 }
-
-#[cfg(test)]
-mod tests;

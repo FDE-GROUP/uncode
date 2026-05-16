@@ -4,8 +4,7 @@ use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::api::Api;
-use crate::driver::{StreamEvent, UsageInfo};
+use crate::api::{Api, StreamEvent, UsageInfo};
 use uncode_core::api_types::{
     CompatConfig, Context, MaxTokensField, StreamOptions, ThinkingFormat,
 };

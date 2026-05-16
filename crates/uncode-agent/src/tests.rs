@@ -17,7 +17,7 @@ mod tests {
     use uncode_core::error::UncodeError;
     use uncode_core::model::Model;
     use uncode_llm::Api;
-    use uncode_llm::driver::StreamEvent;
+    use uncode_llm::StreamEvent;
 
     struct MockApi {
         responses: Mutex<Vec<Vec<StreamEvent>>>,
@@ -386,7 +386,7 @@ mod tests {
     async fn test_agent_loop_text_only() {
         let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
             StreamEvent::TextDelta("Hello!".into()),
-            StreamEvent::Usage(uncode_llm::driver::UsageInfo {
+            StreamEvent::Usage(uncode_llm::UsageInfo {
                 input_tokens: 10,
                 output_tokens: 5,
             }),
@@ -432,7 +432,7 @@ mod tests {
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "world"}),
                 },
-                StreamEvent::Usage(uncode_llm::driver::UsageInfo {
+                StreamEvent::Usage(uncode_llm::UsageInfo {
                     input_tokens: 20,
                     output_tokens: 10,
                 }),
@@ -440,7 +440,7 @@ mod tests {
             ],
             vec![
                 StreamEvent::TextDelta("Done!".into()),
-                StreamEvent::Usage(uncode_llm::driver::UsageInfo {
+                StreamEvent::Usage(uncode_llm::UsageInfo {
                     input_tokens: 30,
                     output_tokens: 8,
                 }),

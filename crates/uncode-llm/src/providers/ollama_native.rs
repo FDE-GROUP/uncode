@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::api::Api;
-use crate::driver::StreamEvent;
+use crate::api::StreamEvent;
 use uncode_core::api_types::{Context, StreamOptions};
 use uncode_core::error::UncodeError;
 use uncode_core::message::{ContentBlock, Role};

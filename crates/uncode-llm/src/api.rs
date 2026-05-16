@@ -4,9 +4,37 @@ use uncode_core::api_types::{Context, StreamOptions};
 use uncode_core::message::Message;
 use uncode_core::model::Model;
 
-use crate::driver::StreamEvent;
+// ── Stream protocol types ──
 
-/// API 协议抽象——每个 API 协议一个实现（对齐 Pi 的 API-first 架构）
+#[derive(Debug, Clone)]
+pub enum StreamEvent {
+    TextDelta(String),
+    ThinkingDelta(String),
+    ToolCallStart {
+        id: String,
+        name: String,
+    },
+    ToolCallDelta {
+        id: String,
+        arguments: String,
+    },
+    ToolCallEnd {
+        id: String,
+        name: String,
+        arguments: serde_json::Value,
+    },
+    Usage(UsageInfo),
+    Error(String),
+    Done,
+}
+
+#[derive(Debug, Clone)]
+pub struct UsageInfo {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+/// API 协议抽象——每个 API 协议一个实现
 #[async_trait]
 pub trait Api: Send + Sync {
     /// 此 API 的标识符，如 "openai-completions"
@@ -36,7 +64,7 @@ pub trait Api: Send + Sync {
 async fn collect_assistant_message(
     mut stream: BoxStream<'static, StreamEvent>,
 ) -> Result<Message, uncode_core::error::UncodeError> {
-    use uncode_core::message::{ContentBlock, Role, UsageInfo};
+    use uncode_core::message::{ContentBlock, Role, UsageInfo as CoreUsageInfo};
 
     let mut text = String::new();
     let mut thinking = String::new();
@@ -44,7 +72,7 @@ async fn collect_assistant_message(
     let mut current_tool_id = String::new();
     let mut current_tool_name = String::new();
     let mut current_tool_args = String::new();
-    let mut usage: Option<UsageInfo> = None;
+    let mut usage: Option<CoreUsageInfo> = None;
 
     while let Some(event) = stream.next().await {
         match event {
@@ -64,7 +92,7 @@ async fn collect_assistant_message(
                 });
             }
             StreamEvent::Usage(u) => {
-                usage = Some(uncode_core::message::UsageInfo {
+                usage = Some(CoreUsageInfo {
                     input_tokens: u.input_tokens,
                     output_tokens: u.output_tokens,
                     cost: None,
