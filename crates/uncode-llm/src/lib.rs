@@ -25,6 +25,7 @@ pub use providers::gemini::GeminiDriver;
 pub use providers::glm::GlmDriver;
 pub use providers::ollama::OllamaDriver;
 pub use providers::openai::OpenAiDriver;
+pub use providers::openai_completions::OpenAiCompletionsApi;
 pub use providers::openrouter::OpenRouterDriver;
 pub use registry::ProviderRegistry;
 
