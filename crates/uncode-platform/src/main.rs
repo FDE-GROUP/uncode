@@ -3,7 +3,7 @@ use axum::response::IntoResponse;
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get, routing::post};
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
@@ -234,8 +234,8 @@ async fn get_session_metrics(
     let mut tool_errors: u64 = 0;
     let mut input_tokens: u64 = 0;
     let mut output_tokens: u64 = 0;
-    let mut tool_counts: HashMap<String, (u64, u64)> = HashMap::new();
-    let mut files_modified: Vec<String> = Vec::new();
+    let mut tool_counts: HashMap<String, (u64, u64)> = HashMap::with_capacity(8);
+    let mut files_modified: HashSet<String> = HashSet::new();
 
     for entry in &entries {
         if let SessionEntry::Message(me) = entry {
@@ -245,28 +245,25 @@ async fn get_session_metrics(
                 output_tokens += usage.output_tokens;
             }
 
-            let mut last_tool_name: Option<String> = None;
+            let mut last_tool_name: Option<&str> = None;
             for block in &me.content {
                 match block {
                     ContentBlock::ToolCall(tc) => {
                         total_tool_calls += 1;
                         tool_counts.entry(tc.name.clone()).or_default().0 += 1;
-                        last_tool_name = Some(tc.name.clone());
+                        last_tool_name = Some(&tc.name);
 
                         if tc.name == "write" || tc.name == "edit" {
                             if let Some(path) = tc.arguments.get("path").and_then(|v| v.as_str()) {
-                                let p = path.to_string();
-                                if !files_modified.contains(&p) {
-                                    files_modified.push(p);
-                                }
+                                files_modified.insert(path.to_string());
                             }
                         }
                     }
                     ContentBlock::ToolResult(tr) => {
                         if tr.is_error {
                             tool_errors += 1;
-                            if let Some(name) = &last_tool_name {
-                                tool_counts.entry(name.clone()).or_default().1 += 1;
+                            if let Some(name) = last_tool_name {
+                                tool_counts.entry(name.to_string()).or_default().1 += 1;
                             }
                         }
                         last_tool_name = None;
@@ -296,7 +293,7 @@ async fn get_session_metrics(
         output_tokens,
         duration_secs,
         tools,
-        files_modified,
+        files_modified: files_modified.into_iter().collect(),
     }))
 }
 
@@ -313,8 +310,8 @@ async fn get_metrics(State(state): State<AppState>) -> Result<Json<MetricsRespon
     let mut total_tool_errors: u64 = 0;
     let mut total_input_tokens: u64 = 0;
     let mut total_output_tokens: u64 = 0;
-    let mut model_counts: HashMap<String, u64> = HashMap::new();
-    let mut tool_counts: HashMap<String, (u64, u64)> = HashMap::new();
+    let mut model_counts: HashMap<String, u64> = HashMap::with_capacity(4);
+    let mut tool_counts: HashMap<String, (u64, u64)> = HashMap::with_capacity(8);
 
     for s in &sessions {
         *model_counts.entry(s.model.clone()).or_default() += 1;
@@ -329,18 +326,18 @@ async fn get_metrics(State(state): State<AppState>) -> Result<Json<MetricsRespon
                         total_output_tokens += usage.output_tokens;
                     }
 
-                    let mut last_tool_name: Option<String> = None;
+                    let mut last_tool_name: Option<&str> = None;
                     for block in &me.content {
                         match block {
                             ContentBlock::ToolCall(tc) => {
                                 total_tool_calls += 1;
                                 tool_counts.entry(tc.name.clone()).or_default().0 += 1;
-                                last_tool_name = Some(tc.name.clone());
+                                last_tool_name = Some(&tc.name);
                             }
                             ContentBlock::ToolResult(tr) if tr.is_error => {
                                 total_tool_errors += 1;
-                                if let Some(name) = &last_tool_name {
-                                    tool_counts.entry(name.clone()).or_default().1 += 1;
+                                if let Some(name) = last_tool_name {
+                                    tool_counts.entry(name.to_string()).or_default().1 += 1;
                                 }
                             }
                             ContentBlock::ToolResult(_) => {}
@@ -449,10 +446,10 @@ async fn get_suggestions(
     let mut suggestions: Vec<Suggestion> = Vec::new();
 
     // Per-tool stats
-    let mut tool_calls: HashMap<String, u64> = HashMap::new();
-    let mut tool_errors: HashMap<String, u64> = HashMap::new();
+    let mut tool_calls: HashMap<String, u64> = HashMap::with_capacity(8);
+    let mut tool_errors: HashMap<String, u64> = HashMap::with_capacity(8);
     // Per-session read counts per file
-    let mut file_reads: HashMap<String, u64> = HashMap::new();
+    let mut file_reads: HashMap<String, u64> = HashMap::with_capacity(16);
     // Token totals
     let mut total_input: u64 = 0;
     let mut total_output: u64 = 0;
@@ -493,15 +490,15 @@ async fn get_suggestions(
                     }
 
                     // Attribute errors to tools by order
-                    let mut last_tool: Option<String> = None;
+                    let mut last_tool: Option<&str> = None;
                     for block in &me.content {
                         match block {
                             ContentBlock::ToolCall(tc) => {
-                                last_tool = Some(tc.name.clone());
+                                last_tool = Some(&tc.name);
                             }
                             ContentBlock::ToolResult(tr) if tr.is_error => {
-                                if let Some(name) = &last_tool {
-                                    *tool_errors.entry(name.clone()).or_default() += 1;
+                                if let Some(name) = last_tool {
+                                    *tool_errors.entry(name.to_string()).or_default() += 1;
                                 }
                             }
                             _ => {}
