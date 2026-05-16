@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -10,8 +11,10 @@ use uncode_core::context::{expand_file_refs, expand_url_refs};
 use uncode_core::event::AgentEvent;
 use uncode_core::message::{ContentBlock, Message, Role};
 use uncode_core::template::{TemplateStore, parse_vars};
-use uncode_llm::registry::ProviderRegistry;
-use uncode_llm::{DeepSeekDriver, OllamaDriver};
+use uncode_llm::{
+    AnthropicMessagesApi, GeminiGenerativeAiApi, OllamaNativeApi, OpenAiCompletionsApi,
+};
+use uncode_llm::{ApiRegistry, ModelRegistry};
 use uncode_session::store::SessionStore;
 use uncode_tools::registry::ToolRegistry;
 use uncode_tools::{BashTool, EditTool, GrepTool, ReadTool, WriteTool};
@@ -156,18 +159,13 @@ async fn main() -> anyhow::Result<()> {
     tool_registry.register("grep".to_string(), Arc::new(GrepTool));
     tool_registry.register("bash".to_string(), Arc::new(BashTool::new()));
 
-    let provider_registry = Arc::new(ProviderRegistry::with_models(config.models.clone()));
-    register_providers(&provider_registry, &config)?;
+    let (api_registry, model_registry) = build_registries(&config);
+    let api_registry = Arc::new(api_registry);
+    let model_registry = Arc::new(model_registry);
+    let api_keys = build_api_keys(&config);
 
     let session_dir = SessionStore::default_dir().context("session dir")?;
     let session_store = Arc::new(SessionStore::new(session_dir));
-
-    let driver = provider_registry
-        .get(&model)
-        .or_else(|| provider_registry.get("deepseek-v4-pro"))
-        .or_else(|| provider_registry.get("glm-4"))
-        .or_else(|| provider_registry.get("ollama"))
-        .context("no LLM driver available")?;
 
     let cwd = std::env::current_dir()?;
     let ctx = ContextLoader::new(cwd.clone()).load();
@@ -214,7 +212,9 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let mut agent = AgentLoop::new(
-        driver.clone(),
+        api_registry.clone(),
+        model_registry.clone(),
+        api_keys.clone(),
         tool_registry.clone(),
         session_store.clone(),
         system_prompt.clone(),
@@ -227,7 +227,7 @@ async fn main() -> anyhow::Result<()> {
 
     // --mode rpc: start JSON-RPC server on stdio
     if cli.mode == "rpc" {
-        return run_rpc_mode(session_store, provider_registry, agent).await;
+        return run_rpc_mode(session_store, model_registry, agent).await;
     }
 
     // --issue：一次性执行后退出
@@ -337,23 +337,25 @@ async fn main() -> anyhow::Result<()> {
     // 默认：启动 TUI
     let event_rx = agent.subscribe();
     let event_tx = agent.event_sender();
-    let driver_tui = driver.clone();
+    let ar_tui = api_registry.clone();
+    let mr_tui = model_registry.clone();
+    let ak_tui = api_keys.clone();
     let tools_tui = tool_registry.clone();
     let store_tui = session_store.clone();
     let tui_system_prompt = system_prompt.clone();
-    let reg_tui = provider_registry.clone();
 
     tokio::spawn(async move {
         let mut tui = uncode_tui::TuiEngine::new();
-        let model_ids: Vec<String> = reg_tui
+        let model_ids: Vec<String> = mr_tui
             .all_models()
             .into_iter()
-            .filter(|(_, configured)| *configured)
-            .map(|(m, _)| m.id)
+            .map(|m| m.id.clone())
             .collect();
         tui.set_available_models(model_ids);
         tui.run(event_rx, move |text, cancel_token| {
-            let d = driver_tui.clone();
+            let ar = ar_tui.clone();
+            let mr = mr_tui.clone();
+            let ak = ak_tui.clone();
             let t = tools_tui.clone();
             let s = store_tui.clone();
             let tx = event_tx.clone();
@@ -362,7 +364,7 @@ async fn main() -> anyhow::Result<()> {
             let m = model.clone();
             tokio::spawn(async move {
                 let expanded = expand_url_refs(&text).await;
-                let mut a = AgentLoop::with_event_sender(d, t, s, sp, m, tx);
+                let mut a = AgentLoop::with_event_sender(ar, mr, ak, t, s, sp, m, tx);
                 if let Some(ref sid) = sid {
                     a.set_session_id(sid.clone());
                 }
@@ -401,13 +403,13 @@ async fn run_json_mode(agent: AgentLoop, prompt: String) -> anyhow::Result<()> {
 
 async fn run_rpc_mode(
     session_store: Arc<SessionStore>,
-    provider_registry: Arc<ProviderRegistry>,
+    model_registry: Arc<ModelRegistry>,
     agent: AgentLoop,
 ) -> anyhow::Result<()> {
     let server = Arc::new(uncode_rpc::RpcServer::new());
 
     // Register core commands
-    uncode_rpc::register_core_commands(&server, session_store, provider_registry).await;
+    uncode_rpc::register_core_commands(&server, session_store, model_registry).await;
 
     // Forward agent events as JSON-RPC notifications
     let event_rx = agent.subscribe();
@@ -443,22 +445,21 @@ fn run_templates() -> anyhow::Result<()> {
 
 fn run_models(json_output: bool) -> anyhow::Result<()> {
     let config = load_config()?;
-    let registry = ProviderRegistry::new();
-    register_providers(&registry, &config)?;
+    let (_, model_registry) = build_registries(&config);
+    let api_keys = build_api_keys(&config);
 
-    let models = registry.all_models();
+    let models = model_registry.all_models();
 
     if json_output {
         let output: Vec<serde_json::Value> = models
             .iter()
-            .map(|(m, configured)| {
+            .map(|m| {
+                let configured = api_keys.contains_key(&m.provider) || m.provider == "ollama";
                 serde_json::json!({
                     "id": m.id,
                     "provider": m.provider,
-                    "display_name": m.display_name,
-                    "max_tokens": m.max_tokens,
-                    "supports_tools": m.supports_tools,
-                    "supports_vision": m.supports_vision,
+                    "name": m.name,
+                    "context_window": m.context_window,
                     "configured": configured,
                 })
             })
@@ -469,9 +470,10 @@ fn run_models(json_output: bool) -> anyhow::Result<()> {
 
     println!("{:<15} {:<20} {:<12} STATUS", "PROVIDER", "MODEL", "CTX");
     println!("{}", "-".repeat(70));
-    for (m, configured) in &models {
-        let status = if *configured { "✅" } else { "❌" };
-        let ctx = format!("{}k", m.max_tokens / 1000);
+    for m in models {
+        let configured = api_keys.contains_key(&m.provider) || m.provider == "ollama";
+        let status = if configured { "✅" } else { "❌" };
+        let ctx = format!("{}k", m.context_window / 1000);
         println!("{:<15} {:<20} {:<12} {status}", m.provider, m.id, ctx);
     }
     Ok(())
@@ -615,33 +617,50 @@ fn print_messages(messages: &[Message]) {
     }
 }
 
-fn register_providers(registry: &ProviderRegistry, config: &AppConfig) -> anyhow::Result<()> {
-    if let Some(ref pc) = config.providers.glm {
-        registry.register(
-            "glm-5.1".into(),
-            Arc::new(DeepSeekDriver::with_base_url(
-                pc.api_key.clone(),
-                "https://open.bigmodel.cn/api/coding/paas/v4".into(),
-            )),
-        );
-    }
-    if let Some(ref pc) = config.providers.deepseek {
-        let driver = if let Some(ref url) = pc.base_url {
-            DeepSeekDriver::with_base_url(pc.api_key.clone(), url.clone())
-        } else {
-            DeepSeekDriver::new(pc.api_key.clone())
-        };
-        registry.register("deepseek-v3".into(), Arc::new(driver));
-        registry.register(
-            "deepseek-v4-pro".into(),
-            Arc::new(DeepSeekDriver::new(pc.api_key.clone())),
-        );
-    }
+fn build_registries(config: &AppConfig) -> (ApiRegistry, ModelRegistry) {
+    let mut api_registry = ApiRegistry::new();
+    api_registry.register(Arc::new(OpenAiCompletionsApi::new()));
+    api_registry.register(Arc::new(AnthropicMessagesApi::new()));
+    api_registry.register(Arc::new(GeminiGenerativeAiApi::new()));
+    api_registry.register(Arc::new(OllamaNativeApi::new()));
+
+    let mut model_registry = ModelRegistry::from_builtin();
+
+    // Override Ollama host if configured
     if let Some(ref oc) = config.providers.ollama {
-        let driver = OllamaDriver::with_host(oc.host.clone());
-        registry.register("ollama".into(), Arc::new(driver));
+        if let Some(ollama_model) = model_registry.get("ollama").cloned() {
+            let mut updated = ollama_model;
+            // Strip trailing /v1 if present — Ollama native API uses base host
+            let base = oc.host.trim_end_matches("/v1").to_string();
+            updated.base_url = base;
+            model_registry.register(updated);
+        }
     }
-    Ok(())
+
+    (api_registry, model_registry)
+}
+
+fn build_api_keys(config: &AppConfig) -> HashMap<String, String> {
+    let mut keys = HashMap::new();
+    if let Some(ref pc) = config.providers.deepseek {
+        keys.insert("deepseek".into(), pc.api_key.clone());
+    }
+    if let Some(ref pc) = config.providers.glm {
+        keys.insert("glm".into(), pc.api_key.clone());
+    }
+    if let Some(ref pc) = config.providers.openai {
+        keys.insert("openai".into(), pc.api_key.clone());
+    }
+    if let Some(ref pc) = config.providers.anthropic {
+        keys.insert("anthropic".into(), pc.api_key.clone());
+    }
+    if let Some(ref pc) = config.providers.gemini {
+        keys.insert("gemini".into(), pc.api_key.clone());
+    }
+    if let Some(ref pc) = config.providers.openrouter {
+        keys.insert("openrouter".into(), pc.api_key.clone());
+    }
+    keys
 }
 
 async fn resolve_prompt(cli: &Cli, prompt: String, cwd: &std::path::Path) -> String {

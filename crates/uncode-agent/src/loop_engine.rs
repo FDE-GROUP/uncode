@@ -1,28 +1,31 @@
 use futures::StreamExt;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
+use uncode_core::api_types::{Context, StreamOptions};
 use uncode_core::error::UncodeError;
 use uncode_core::event::AgentEvent;
 use uncode_core::message::{ContentBlock, Message, Role, UsageInfo};
 use uncode_core::session::SessionEntry;
-use uncode_llm::driver::{CompletionRequest, LlmDriver, StreamEvent};
+use uncode_llm::StreamEvent;
+use uncode_llm::{ApiRegistry, ModelRegistry};
 use uncode_session::store::SessionStore;
 use uncode_tools::registry::ToolRegistry;
 
 const MAX_TURNS: u64 = 50;
-const DEFAULT_MAX_TOKENS: u64 = 128_000;
 
 pub struct AgentLoop {
-    driver: Arc<dyn LlmDriver>,
+    api_registry: Arc<ApiRegistry>,
+    model_registry: Arc<ModelRegistry>,
+    api_keys: Arc<HashMap<String, String>>,
     tool_registry: Arc<ToolRegistry>,
     session_store: Arc<SessionStore>,
     system_prompt: String,
-    model: String,
-    model_max_tokens: u64,
+    model_id: String,
     session_id: Option<String>,
     event_tx: broadcast::Sender<AgentEvent>,
     cancel_token: CancellationToken,
@@ -30,38 +33,23 @@ pub struct AgentLoop {
 
 impl AgentLoop {
     pub fn new(
-        driver: Arc<dyn LlmDriver>,
+        api_registry: Arc<ApiRegistry>,
+        model_registry: Arc<ModelRegistry>,
+        api_keys: HashMap<String, String>,
         tool_registry: Arc<ToolRegistry>,
         session_store: Arc<SessionStore>,
         system_prompt: String,
-        model: String,
-    ) -> Self {
-        Self::with_max_tokens(
-            driver,
-            tool_registry,
-            session_store,
-            system_prompt,
-            model,
-            DEFAULT_MAX_TOKENS,
-        )
-    }
-
-    pub fn with_max_tokens(
-        driver: Arc<dyn LlmDriver>,
-        tool_registry: Arc<ToolRegistry>,
-        session_store: Arc<SessionStore>,
-        system_prompt: String,
-        model: String,
-        model_max_tokens: u64,
+        model_id: String,
     ) -> Self {
         let (event_tx, _) = broadcast::channel(256);
         Self {
-            driver,
+            api_registry,
+            model_registry,
+            api_keys: Arc::new(api_keys),
             tool_registry,
             session_store,
             system_prompt,
-            model,
-            model_max_tokens,
+            model_id,
             session_id: None,
             event_tx,
             cancel_token: CancellationToken::new(),
@@ -69,20 +57,23 @@ impl AgentLoop {
     }
 
     pub fn with_event_sender(
-        driver: Arc<dyn LlmDriver>,
+        api_registry: Arc<ApiRegistry>,
+        model_registry: Arc<ModelRegistry>,
+        api_keys: HashMap<String, String>,
         tool_registry: Arc<ToolRegistry>,
         session_store: Arc<SessionStore>,
         system_prompt: String,
-        model: String,
+        model_id: String,
         event_tx: broadcast::Sender<AgentEvent>,
     ) -> Self {
         Self {
-            driver,
+            api_registry,
+            model_registry,
+            api_keys: Arc::new(api_keys),
             tool_registry,
             session_store,
             system_prompt,
-            model,
-            model_max_tokens: DEFAULT_MAX_TOKENS,
+            model_id,
             session_id: None,
             event_tx,
             cancel_token: CancellationToken::new(),
@@ -124,7 +115,7 @@ impl AgentLoop {
                     .to_string();
                 if let Err(e) =
                     self.session_store
-                        .init_session_with_title(&id, &self.model, &cwd, None)
+                        .init_session_with_title(&id, &self.model_id, &cwd, None)
                 {
                     debug!("session init skipped: {e}");
                 }
@@ -171,13 +162,17 @@ impl AgentLoop {
             turn += 1;
             debug!("turn {turn}/{}", MAX_TURNS);
 
+            let model = self.model_registry.get(&self.model_id).ok_or_else(|| {
+                UncodeError::Config(format!("model not found: {}", self.model_id))
+            })?;
+
             // Compaction check before building request
-            if crate::compaction::should_compact(&messages, self.model_max_tokens) {
+            if crate::compaction::should_compact(&messages, model.context_window as u64) {
                 if let Err(e) = crate::compaction::compact_messages(
                     &mut messages,
-                    &self.driver,
-                    &self.model,
-                    self.model_max_tokens,
+                    &self.api_registry,
+                    model,
+                    &self.api_keys,
                 )
                 .await
                 {
@@ -185,13 +180,17 @@ impl AgentLoop {
                 }
             }
 
-            let request = CompletionRequest {
-                model: self.model.clone(),
+            let api_key = self.api_keys.get(&model.provider).cloned();
+            let context = Context {
+                system_prompt: Some(self.system_prompt.clone()),
                 messages: messages.clone(),
-                system: Some(self.system_prompt.clone()),
-                max_tokens: Some(8192),
-                temperature: Some(0.7),
                 tools: tools.clone(),
+            };
+            let options = StreamOptions {
+                api_key,
+                temperature: Some(0.7),
+                max_tokens: Some(8192),
+                ..StreamOptions::default()
             };
 
             let mut stream = tokio::select! {
@@ -200,7 +199,7 @@ impl AgentLoop {
                     self.emit(AgentEvent::AgentInterrupted { turn, partial_response: false });
                     break;
                 }
-                result = self.driver.complete(request) => result?,
+                result = uncode_llm::stream(model, &context, &options, &self.api_registry) => result?,
             };
             let mut current_text = String::with_capacity(2048);
             let mut current_thinking = String::with_capacity(1024);

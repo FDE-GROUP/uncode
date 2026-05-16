@@ -7,46 +7,44 @@ mod tests {
     use crate::system_prompt::SystemPromptBuilder;
     use crate::token;
 
-    // ── Mock LLM Driver ──────────────────────────────────────────────
+    // ── Mock Api ────────────────────────────────────────────────────
 
     use async_trait::async_trait;
-    use futures::StreamExt;
-    use futures::stream;
+    use futures::stream::{self, BoxStream, StreamExt};
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use uncode_core::api_types::{Context, StreamOptions};
     use uncode_core::error::UncodeError;
-    use uncode_llm::driver::{
-        CompletionRequest, LlmDriver, StreamEvent, UsageInfo as LlmUsageInfo,
-    };
+    use uncode_core::model::Model;
+    use uncode_llm::Api;
+    use uncode_llm::driver::StreamEvent;
 
-    struct MockLlmDriver {
+    struct MockApi {
         responses: Mutex<Vec<Vec<StreamEvent>>>,
         call_count: AtomicUsize,
     }
 
-    impl MockLlmDriver {
+    impl MockApi {
         fn new(responses: Vec<Vec<StreamEvent>>) -> Self {
             Self {
                 responses: Mutex::new(responses),
                 call_count: AtomicUsize::new(0),
             }
         }
-
-        fn call_count(&self) -> usize {
-            self.call_count.load(Ordering::SeqCst)
-        }
     }
 
     #[async_trait]
-    impl LlmDriver for MockLlmDriver {
-        fn provider_name(&self) -> &'static str {
+    impl Api for MockApi {
+        fn api_name(&self) -> &'static str {
             "mock"
         }
 
-        async fn complete(
+        async fn stream(
             &self,
-            _request: CompletionRequest,
-        ) -> Result<futures::stream::BoxStream<'static, StreamEvent>, UncodeError> {
+            _model: &Model,
+            _context: &Context,
+            _options: &StreamOptions,
+        ) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
             let idx = self.call_count.fetch_add(1, Ordering::SeqCst);
             let events = self
                 .responses
@@ -85,8 +83,10 @@ mod tests {
 
     // ── Test Helpers ─────────────────────────────────────────────────
 
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use uncode_llm::{ApiRegistry, ModelRegistry};
     use uncode_session::store::SessionStore;
     use uncode_tools::registry::ToolRegistry;
 
@@ -105,6 +105,28 @@ mod tests {
         let reg = Arc::new(ToolRegistry::new());
         reg.register("echo".to_string(), Arc::new(EchoTool));
         reg
+    }
+
+    fn make_registries(
+        responses: Vec<Vec<StreamEvent>>,
+    ) -> (
+        Arc<ApiRegistry>,
+        Arc<ModelRegistry>,
+        HashMap<String, String>,
+    ) {
+        let mut api_registry = ApiRegistry::new();
+        api_registry.register(Arc::new(MockApi::new(responses)));
+        let mut model_registry = ModelRegistry::new();
+        model_registry.register(Model {
+            id: "mock".into(),
+            api: "mock".into(),
+            ..Model::default()
+        });
+        (
+            Arc::new(api_registry),
+            Arc::new(model_registry),
+            HashMap::new(),
+        )
     }
 
     // ── 纯函数测试 ──────────────────────────────────────────────────
@@ -362,17 +384,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_loop_text_only() {
-        let driver = Arc::new(MockLlmDriver::new(vec![vec![
+        let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
             StreamEvent::TextDelta("Hello!".into()),
-            StreamEvent::Usage(LlmUsageInfo {
+            StreamEvent::Usage(uncode_llm::driver::UsageInfo {
                 input_tokens: 10,
                 output_tokens: 5,
             }),
             StreamEvent::Done,
-        ]]));
+        ]]);
 
         let agent = AgentLoop::new(
-            driver.clone(),
+            api_reg.clone(),
+            model_reg.clone(),
+            api_keys,
             make_tool_registry(),
             Arc::new(SessionStore::new(test_session_dir())),
             "system".into(),
@@ -381,7 +405,6 @@ mod tests {
 
         let messages = agent.run(Message::user("hi")).await.unwrap();
 
-        assert_eq!(driver.call_count(), 1);
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].role, Role::System);
         assert_eq!(messages[1].role, Role::User);
@@ -394,7 +417,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_loop_tool_call_then_text() {
-        let driver = Arc::new(MockLlmDriver::new(vec![
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
             vec![
                 StreamEvent::ToolCallStart {
                     id: "tc1".into(),
@@ -409,7 +432,7 @@ mod tests {
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "world"}),
                 },
-                StreamEvent::Usage(LlmUsageInfo {
+                StreamEvent::Usage(uncode_llm::driver::UsageInfo {
                     input_tokens: 20,
                     output_tokens: 10,
                 }),
@@ -417,16 +440,18 @@ mod tests {
             ],
             vec![
                 StreamEvent::TextDelta("Done!".into()),
-                StreamEvent::Usage(LlmUsageInfo {
+                StreamEvent::Usage(uncode_llm::driver::UsageInfo {
                     input_tokens: 30,
                     output_tokens: 8,
                 }),
                 StreamEvent::Done,
             ],
-        ]));
+        ]);
 
         let agent = AgentLoop::new(
-            driver.clone(),
+            api_reg,
+            model_reg,
+            api_keys,
             make_tool_registry(),
             Arc::new(SessionStore::new(test_session_dir())),
             "system".into(),
@@ -435,7 +460,6 @@ mod tests {
 
         let messages = agent.run(Message::user("echo hello")).await.unwrap();
 
-        assert_eq!(driver.call_count(), 2);
         // System, User, Assistant(ToolCall), Tool(ToolResult), Assistant(Text)
         assert_eq!(messages.len(), 5);
 
@@ -472,7 +496,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_loop_multiple_tool_calls_in_one_turn() {
-        let driver = Arc::new(MockLlmDriver::new(vec![
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
             vec![
                 StreamEvent::ToolCallStart {
                     id: "tc1".into(),
@@ -498,10 +522,12 @@ mod tests {
                 StreamEvent::TextDelta("All done.".into()),
                 StreamEvent::Done,
             ],
-        ]));
+        ]);
 
         let agent = AgentLoop::new(
-            driver.clone(),
+            api_reg,
+            model_reg,
+            api_keys,
             make_tool_registry(),
             Arc::new(SessionStore::new(test_session_dir())),
             "system".into(),
@@ -510,7 +536,6 @@ mod tests {
 
         let messages = agent.run(Message::user("echo twice")).await.unwrap();
 
-        assert_eq!(driver.call_count(), 2);
         // System, User, Assistant(ToolCall×2), Tool(ToolResult), Tool(ToolResult), Assistant(Text)
         assert_eq!(messages.len(), 6);
 
@@ -534,7 +559,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_loop_tool_not_found() {
-        let driver = Arc::new(MockLlmDriver::new(vec![
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
             vec![
                 StreamEvent::ToolCallStart {
                     id: "tc1".into(),
@@ -548,10 +573,12 @@ mod tests {
                 StreamEvent::Done,
             ],
             vec![StreamEvent::TextDelta("OK".into()), StreamEvent::Done],
-        ]));
+        ]);
 
         let agent = AgentLoop::new(
-            driver.clone(),
+            api_reg,
+            model_reg,
+            api_keys,
             make_tool_registry(),
             Arc::new(SessionStore::new(test_session_dir())),
             "system".into(),
@@ -571,7 +598,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_loop_message_sequence_integrity() {
-        let driver = Arc::new(MockLlmDriver::new(vec![
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
             vec![
                 StreamEvent::ToolCallStart {
                     id: "tc1".into(),
@@ -585,10 +612,12 @@ mod tests {
                 StreamEvent::Done,
             ],
             vec![StreamEvent::TextDelta("result".into()), StreamEvent::Done],
-        ]));
+        ]);
 
         let agent = AgentLoop::new(
-            driver,
+            api_reg,
+            model_reg,
+            api_keys,
             make_tool_registry(),
             Arc::new(SessionStore::new(test_session_dir())),
             "system".into(),

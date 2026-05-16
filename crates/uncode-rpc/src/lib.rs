@@ -247,7 +247,7 @@ fn event_name(event: &uncode_core::event::AgentEvent) -> &'static str {
 pub async fn register_core_commands(
     server: &RpcServer,
     session_store: Arc<uncode_session::store::SessionStore>,
-    provider_registry: Arc<uncode_llm::registry::ProviderRegistry>,
+    model_registry: Arc<uncode_llm::ModelRegistry>,
 ) {
     // session.create
     let ss = session_store.clone();
@@ -297,19 +297,19 @@ pub async fn register_core_commands(
         .await;
 
     // model.list
-    let pr = provider_registry.clone();
+    let mr = model_registry.clone();
     server
         .register("model.list", move |_| {
-            let models: Vec<serde_json::Value> = pr
+            let models: Vec<serde_json::Value> = mr
                 .all_models()
                 .into_iter()
-                .map(|(info, configured)| {
+                .map(|m| {
                     serde_json::json!({
-                        "id": info.id,
-                        "display_name": info.display_name,
-                        "provider": info.provider,
-                        "max_tokens": info.max_tokens,
-                        "configured": configured,
+                        "id": m.id,
+                        "name": m.name,
+                        "provider": m.provider,
+                        "context_window": m.context_window,
+                        "api": m.api,
                     })
                 })
                 .collect();
@@ -318,14 +318,14 @@ pub async fn register_core_commands(
         .await;
 
     // model.switch
-    let pr = provider_registry.clone();
+    let mr = model_registry.clone();
     server
         .register("model.switch", move |params| {
             let model = params
                 .get("model")
                 .and_then(|v| v.as_str())
                 .ok_or("missing model name")?;
-            if !pr.has(model) {
+            if !mr.has(model) {
                 return Err(format!("model not found: {model}"));
             }
             Ok(serde_json::json!({"switched": model}))

@@ -1,7 +1,10 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+
+use futures::StreamExt;
+use uncode_core::api_types::{Context, StreamOptions};
 use uncode_core::message::{ContentBlock, Message, Role};
-use uncode_llm::LlmDriver;
-use uncode_llm::driver::CompletionRequest;
+use uncode_core::model::Model;
+use uncode_llm::{ApiRegistry, StreamEvent};
 
 const COMPACTION_THRESHOLD_NUM: u64 = 80;
 const COMPACTION_THRESHOLD_DEN: u64 = 100;
@@ -37,11 +40,11 @@ pub fn should_compact(messages: &[Message], model_max_tokens: u64) -> bool {
 /// 对消息列表执行上下文压缩（保留最近5轮，旧消息LLM摘要）
 pub async fn compact_messages(
     messages: &mut Vec<Message>,
-    driver: &Arc<dyn LlmDriver>,
-    model: &str,
-    model_max_tokens: u64,
+    api_registry: &ApiRegistry,
+    model: &Model,
+    api_keys: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
-    if messages.len() <= KEEP_RECENT + 4 || !should_compact(messages, model_max_tokens) {
+    if messages.len() <= KEEP_RECENT + 4 || !should_compact(messages, model.context_window as u64) {
         return Ok(());
     }
 
@@ -68,20 +71,23 @@ pub async fn compact_messages(
         "请用2-3句话总结以下对话的关键内容：目标、已完成工作、当前进展。\n\n{conversation}"
     );
 
-    let request = CompletionRequest {
-        model: model.to_string(),
+    let api_key = api_keys.get(&model.provider).cloned();
+    let context = Context {
+        system_prompt: Some("你是一个会话摘要助手。用简洁的中文生成摘要。".into()),
         messages: vec![Message::user(prompt)],
-        system: Some("你是一个会话摘要助手。用简洁的中文生成摘要。".into()),
-        max_tokens: Some(1024),
-        temperature: Some(0.3),
         tools: vec![],
     };
+    let options = StreamOptions {
+        api_key,
+        temperature: Some(0.3),
+        max_tokens: Some(1024),
+        ..StreamOptions::default()
+    };
 
-    let mut stream = driver.complete(request).await?;
-    use futures::StreamExt;
+    let mut stream = uncode_llm::stream(model, &context, &options, api_registry).await?;
     let mut summary = String::new();
     while let Some(event) = stream.next().await {
-        if let uncode_llm::driver::StreamEvent::TextDelta(text) = event {
+        if let StreamEvent::TextDelta(text) = event {
             summary.push_str(&text);
         }
     }

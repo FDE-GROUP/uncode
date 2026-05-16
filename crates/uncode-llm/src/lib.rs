@@ -32,5 +32,37 @@ pub use providers::openai_completions::OpenAiCompletionsApi;
 pub use providers::openrouter::OpenRouterDriver;
 pub use registry::ProviderRegistry;
 
+// ── 顶层入口函数（Stage 5） ──
+
+use futures::stream::BoxStream;
+use uncode_core::error::UncodeError;
+use uncode_core::message::Message as CoreMessage;
+
+/// 通过 ApiRegistry 路由到对应 API 实现的流式补全
+pub async fn stream(
+    model: &uncode_core::model::Model,
+    context: &uncode_core::api_types::Context,
+    options: &uncode_core::api_types::StreamOptions,
+    api_registry: &ApiRegistry,
+) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
+    let api = api_registry
+        .get(&model.api)
+        .ok_or_else(|| UncodeError::Config(format!("no API registered for '{}'", model.api)))?;
+    api.stream(model, context, options).await
+}
+
+/// 通过 ApiRegistry 路由到对应 API 实现的非流式补全
+pub async fn complete(
+    model: &uncode_core::model::Model,
+    context: &uncode_core::api_types::Context,
+    options: &uncode_core::api_types::StreamOptions,
+    api_registry: &ApiRegistry,
+) -> Result<CoreMessage, UncodeError> {
+    let api = api_registry
+        .get(&model.api)
+        .ok_or_else(|| UncodeError::Config(format!("no API registered for '{}'", model.api)))?;
+    api.complete(model, context, options).await
+}
+
 #[cfg(test)]
 mod tests;
