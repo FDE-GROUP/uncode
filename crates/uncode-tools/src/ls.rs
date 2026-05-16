@@ -15,16 +15,19 @@ impl ToolExecutor for LsTool {
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "目录路径，默认当前目录"}
+                    "path": {"type": "string", "description": "目录路径（相对或绝对），默认当前目录"}
                 }
             }),
         }
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
-        let path = arguments["path"].as_str().unwrap_or(".");
-        let entries = fs::read_dir(path)
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("ls {path}: {e}")))?;
+        let raw = arguments["path"].as_str().unwrap_or(".");
+        let resolved = crate::resolve_path(raw);
+        let display = resolved.display().to_string();
+
+        let entries = fs::read_dir(&resolved)
+            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("ls {display}: {e}")))?;
 
         let mut results: Vec<String> = entries
             .flatten()

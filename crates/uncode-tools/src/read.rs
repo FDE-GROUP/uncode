@@ -32,7 +32,7 @@ impl ToolExecutor for ReadTool {
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "文件路径"},
+                    "path": {"type": "string", "description": "文件路径（相对或绝对）"},
                     "offset": {"type": "integer", "description": "起始行号"},
                     "limit": {"type": "integer", "description": "读取行数"}
                 },
@@ -42,17 +42,30 @@ impl ToolExecutor for ReadTool {
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
-        let path = arguments["path"]
+        let raw = arguments["path"]
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("path required".into()))?;
 
-        let meta = fs::metadata(path)
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("read {}: {e}", path)))?;
+        let path = std::path::Path::new(raw);
+        let resolved = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .unwrap_or_default()
+                .join(path)
+        };
+
+        let meta = fs::metadata(&resolved).map_err(|e| {
+            uncode_core::error::UncodeError::Tool(format!("read {}: {e}", resolved.display()))
+        })?;
 
         if meta.is_dir() {
-            let mut entries: Vec<String> = fs::read_dir(path)
+            let mut entries: Vec<String> = fs::read_dir(&resolved)
                 .map_err(|e| {
-                    uncode_core::error::UncodeError::Tool(format!("read dir {}: {e}", path))
+                    uncode_core::error::UncodeError::Tool(format!(
+                        "read dir {}: {e}",
+                        resolved.display()
+                    ))
                 })?
                 .filter_map(|e| e.ok())
                 .map(|e| {
@@ -66,13 +79,15 @@ impl ToolExecutor for ReadTool {
                 .collect();
             entries.sort();
             return Ok(format!(
-                "Directory listing for {path}:\n{}",
+                "Directory listing for {}:\n{}",
+                resolved.display(),
                 entries.join("\n")
             ));
         }
 
-        let content = fs::read_to_string(path)
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("read {}: {e}", path)))?;
+        let content = fs::read_to_string(&resolved).map_err(|e| {
+            uncode_core::error::UncodeError::Tool(format!("read {}: {e}", resolved.display()))
+        })?;
 
         if content.len() > self.max_size {
             return Err(uncode_core::error::UncodeError::Tool(format!(

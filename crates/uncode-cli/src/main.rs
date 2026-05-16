@@ -183,6 +183,7 @@ async fn main() -> anyhow::Result<()> {
             "拥有丰富的工具集来完成各类软件工程任务。\n\n",
             "用中文回复。遇到需要分析代码的任务时，请主动使用工具读取文件。"
         ))
+        .add_working_dir(&cwd)
         .add_tool_guide(&tool_registry.definitions())
         .add_context(&ctx.agents_content)
         .add_skills(&ctx.skills)
