@@ -1,9 +1,12 @@
 pub mod anthropic;
+pub mod anthropic_messages;
 pub mod common;
 pub mod deepseek;
 pub mod gemini;
+pub mod gemini_generative;
 pub mod glm;
 pub mod ollama;
+pub mod ollama_native;
 pub mod openai;
 pub mod openai_completions;
 pub mod openrouter;
