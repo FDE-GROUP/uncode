@@ -39,7 +39,9 @@ impl ToolExecutor for GrepTool {
             .as_str()
             .map(|s| glob::Pattern::new(s))
             .transpose()
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("invalid include pattern: {e}")))?;
+            .map_err(|e| {
+                uncode_core::error::UncodeError::Tool(format!("invalid include pattern: {e}"))
+            })?;
 
         let mut results = Vec::new();
         let mut count = 0;

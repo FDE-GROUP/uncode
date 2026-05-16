@@ -35,8 +35,7 @@ impl ToolExecutor for EditTool {
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("new_string required".into()))?;
 
-        let resolved = crate::resolve_path(raw)
-            .map_err(uncode_core::error::UncodeError::Tool)?;
+        let resolved = crate::resolve_path(raw).map_err(uncode_core::error::UncodeError::Tool)?;
         let display = resolved.display().to_string();
 
         let content = fs::read_to_string(&resolved)
