@@ -108,7 +108,7 @@ mod tests {
         let header = store.read_header("test-session").unwrap();
         assert_eq!(header.id, "test-session");
         assert_eq!(header.model, "deepseek-v3");
-        assert_eq!(header.entry_type, "header");
+        assert_eq!(header.entry_type, "session");
 
         fs::remove_dir_all(dir).ok();
     }
@@ -142,9 +142,8 @@ mod tests {
 
         // 空文件无法读取 header
         assert!(store.read_header("empty").is_err());
-        // 空文件加载 entries 返回空列表（不是错误）
-        let entries = store.load_entries("empty").unwrap();
-        assert!(entries.is_empty());
+        // 空文件加载 entries 也是错误（无有效 header）
+        assert!(store.load_entries("empty").is_err());
 
         fs::remove_dir_all(dir).ok();
     }
@@ -293,6 +292,190 @@ mod tests {
 
         let result = store.find_most_recent().unwrap();
         assert_eq!(result.unwrap().id, "older-session");
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    // ── Tree operation tests ──
+
+    #[test]
+    fn test_append_entry_auto_parent_id() {
+        let dir = temp_dir();
+        let store = SessionStore::new(dir.clone());
+        store.init_session("tree-test", "model", "/test").unwrap();
+
+        let e1 = SessionEntry::Message(MessageEntry::from(Message::user("first")));
+        store.append_entry("tree-test", &e1).unwrap();
+
+        let e2 = SessionEntry::Message(MessageEntry::from(Message::user("second")));
+        store.append_entry("tree-test", &e2).unwrap();
+
+        let entries = store.load_entries("tree-test").unwrap();
+        // First entry has no parent (root)
+        assert!(entries[0].parent_id().is_none());
+        // Second entry's parent should be first entry's id
+        assert_eq!(
+            entries[1].parent_id().map(|s| s.to_string()),
+            Some(entries[0].entry_id().to_string())
+        );
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_get_leaf_id_initial() {
+        let dir = temp_dir();
+        let store = SessionStore::new(dir.clone());
+        store.init_session("leaf-test", "model", "/test").unwrap();
+
+        let e = SessionEntry::Message(MessageEntry::from(Message::user("hello")));
+        store.append_entry("leaf-test", &e).unwrap();
+
+        let leaf = store.get_leaf_id("leaf-test").unwrap();
+        assert!(leaf.is_some());
+
+        let entries = store.load_entries("leaf-test").unwrap();
+        assert_eq!(leaf.as_deref(), Some(entries[0].entry_id()));
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_set_leaf_moves_pointer() {
+        let dir = temp_dir();
+        let store = SessionStore::new(dir.clone());
+        store
+            .init_session("set-leaf-test", "model", "/test")
+            .unwrap();
+
+        let e1 = SessionEntry::Message(MessageEntry::from(Message::user("first")));
+        store.append_entry("set-leaf-test", &e1).unwrap();
+        let e1_id = store
+            .get_entry(
+                "set-leaf-test",
+                store
+                    .get_leaf_id("set-leaf-test")
+                    .unwrap()
+                    .unwrap()
+                    .as_str(),
+            )
+            .unwrap()
+            .unwrap()
+            .entry_id()
+            .to_string();
+
+        let e2 = SessionEntry::Message(MessageEntry::from(Message::user("second")));
+        store.append_entry("set-leaf-test", &e2).unwrap();
+
+        // Leaf should be on e2
+        let leaf = store.get_leaf_id("set-leaf-test").unwrap();
+        assert_ne!(leaf.as_deref(), Some(e1_id.as_str()));
+
+        // Move leaf back to e1
+        store.set_leaf("set-leaf-test", &e1_id).unwrap();
+
+        // Verify a LeafEntry was created targeting e1
+        let entries = store.load_entries("set-leaf-test").unwrap();
+        let has_leaf = entries.iter().any(|e| {
+            if let SessionEntry::Leaf(l) = e {
+                l.target_id == e1_id
+            } else {
+                false
+            }
+        });
+        assert!(has_leaf);
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_get_entry_found_and_missing() {
+        let dir = temp_dir();
+        let store = SessionStore::new(dir.clone());
+        store.init_session("entry-test", "model", "/test").unwrap();
+
+        let e = SessionEntry::Message(MessageEntry::from(Message::user("hello")));
+        store.append_entry("entry-test", &e).unwrap();
+
+        let entries = store.load_entries("entry-test").unwrap();
+        let id = entries[0].entry_id().to_string();
+
+        assert!(store.get_entry("entry-test", &id).unwrap().is_some());
+        assert!(
+            store
+                .get_entry("entry-test", "nonexistent")
+                .unwrap()
+                .is_none()
+        );
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_get_path_to_root_linear() {
+        let dir = temp_dir();
+        let store = SessionStore::new(dir.clone());
+        store.init_session("path-test", "model", "/test").unwrap();
+
+        let e1 = SessionEntry::Message(MessageEntry::from(Message::user("a")));
+        store.append_entry("path-test", &e1).unwrap();
+        let e2 = SessionEntry::Message(MessageEntry::from(Message::user("b")));
+        store.append_entry("path-test", &e2).unwrap();
+        let e3 = SessionEntry::Message(MessageEntry::from(Message::user("c")));
+        store.append_entry("path-test", &e3).unwrap();
+
+        let entries = store.load_entries("path-test").unwrap();
+        let e3_id = entries[2].entry_id().to_string();
+
+        let path = store.get_path_to_root("path-test", &e3_id).unwrap();
+        // Path from leaf to root: e3 → e2 → e1
+        assert_eq!(path.len(), 3);
+        assert_eq!(path[0].entry_id(), entries[2].entry_id());
+        assert_eq!(path[1].entry_id(), entries[1].entry_id());
+        assert_eq!(path[2].entry_id(), entries[0].entry_id());
+
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn test_v1_jsonl_end_to_end_migration() {
+        use std::io::Write;
+
+        let dir = temp_dir();
+        let path = dir.join("v1-session.jsonl");
+
+        // Write a v1-style JSONL: header (version=1) + entries without parent_id
+        let header_json = r#"{"type":"session","id":"v1-session","version":1,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","model":"test-model","working_dir":"/test"}"#;
+        let entry1 = r#"{"type":"message","id":"aaa111","timestamp":"2025-01-01T00:00:01Z","role":"user","content":[{"type":"text","text":"hello"}]}"#;
+        let entry2 = r#"{"type":"message","id":"bbb222","timestamp":"2025-01-01T00:00:02Z","role":"assistant","content":[{"type":"text","text":"world"}]}"#;
+
+        {
+            let mut f = std::fs::File::create(&path).unwrap();
+            writeln!(f, "{header_json}").unwrap();
+            writeln!(f, "{entry1}").unwrap();
+            writeln!(f, "{entry2}").unwrap();
+        }
+
+        // Load via SessionStore — should auto-migrate
+        let store = SessionStore::new(dir.clone());
+        let header = store.read_header("v1-session").unwrap();
+        assert_eq!(header.version, 2, "version should be migrated to 2");
+
+        let entries = store.load_entries("v1-session").unwrap();
+        assert_eq!(entries.len(), 2);
+        // First entry: no parent (root)
+        assert!(entries[0].parent_id().is_none());
+        // Second entry: parent = first entry's id
+        assert_eq!(
+            entries[1].parent_id().map(|s| s.to_string()),
+            Some(entries[0].entry_id().to_string())
+        );
+
+        // get_path_to_root should work
+        let path = store
+            .get_path_to_root("v1-session", entries[1].entry_id())
+            .unwrap();
+        assert_eq!(path.len(), 2);
 
         fs::remove_dir_all(dir).ok();
     }

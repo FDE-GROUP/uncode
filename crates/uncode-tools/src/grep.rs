@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use regex::Regex;
 use uncode_core::error::UncodeResult;
-use uncode_core::tool::{ToolDefinition, ToolExecutor};
+use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
 
 #[derive(Default)]
 pub struct GrepTool;
@@ -21,6 +21,8 @@ impl ToolExecutor for GrepTool {
                 },
                 "required": ["pattern"]
             }),
+            label: Some("Search".into()),
+            execution_mode: ExecutionMode::default(),
         }
     }
 
@@ -37,7 +39,7 @@ impl ToolExecutor for GrepTool {
 
         let glob_pattern = arguments["include"]
             .as_str()
-            .map(|s| glob::Pattern::new(s))
+            .map(glob::Pattern::new)
             .transpose()
             .map_err(|e| {
                 uncode_core::error::UncodeError::Tool(format!("invalid include pattern: {e}"))

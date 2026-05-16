@@ -8,17 +8,22 @@ pub struct MessageQueue {
     steering_rx: mpsc::Receiver<Message>,
     follow_up_tx: mpsc::Sender<Message>,
     follow_up_rx: mpsc::Receiver<Message>,
+    next_turn_tx: mpsc::Sender<Message>,
+    next_turn_rx: mpsc::Receiver<Message>,
 }
 
 impl MessageQueue {
     pub fn new() -> Self {
         let (steering_tx, steering_rx) = mpsc::channel(CHANNEL_CAPACITY);
         let (follow_up_tx, follow_up_rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let (next_turn_tx, next_turn_rx) = mpsc::channel(CHANNEL_CAPACITY);
         Self {
             steering_tx,
             steering_rx,
             follow_up_tx,
             follow_up_rx,
+            next_turn_tx,
+            next_turn_rx,
         }
     }
 
@@ -30,6 +35,10 @@ impl MessageQueue {
         let _ = self.follow_up_tx.send(msg).await;
     }
 
+    pub async fn next_turn(&self, msg: Message) {
+        let _ = self.next_turn_tx.send(msg).await;
+    }
+
     pub fn drain_steering(&mut self) -> Vec<Message> {
         let mut messages = Vec::new();
         while let Ok(msg) = self.steering_rx.try_recv() {
@@ -38,7 +47,7 @@ impl MessageQueue {
         messages
     }
 
-    pub async fn wait_follow_up(&mut self) -> Vec<Message> {
+    pub fn drain_follow_up(&mut self) -> Vec<Message> {
         let mut messages = Vec::new();
         while let Ok(msg) = self.follow_up_rx.try_recv() {
             messages.push(msg);
@@ -46,10 +55,35 @@ impl MessageQueue {
         messages
     }
 
-    pub fn clone_sender(&self) -> MessageQueueHandle {
+    pub fn drain_next_turn(&mut self) -> Vec<Message> {
+        let mut messages = Vec::new();
+        while let Ok(msg) = self.next_turn_rx.try_recv() {
+            messages.push(msg);
+        }
+        messages
+    }
+
+    pub fn clear_steering(&mut self) -> Vec<Message> {
+        self.drain_steering()
+    }
+
+    pub fn clear_follow_up(&mut self) -> Vec<Message> {
+        self.drain_follow_up()
+    }
+
+    pub fn clear_all(&mut self) -> (Vec<Message>, Vec<Message>) {
+        (self.drain_steering(), self.drain_follow_up())
+    }
+
+    pub fn has_items(&self) -> bool {
+        !self.steering_rx.is_empty() || !self.follow_up_rx.is_empty()
+    }
+
+    pub fn clone_handle(&self) -> MessageQueueHandle {
         MessageQueueHandle {
             steering: self.steering_tx.clone(),
             follow_up: self.follow_up_tx.clone(),
+            next_turn: self.next_turn_tx.clone(),
         }
     }
 }
@@ -64,4 +98,5 @@ impl Default for MessageQueue {
 pub struct MessageQueueHandle {
     pub steering: mpsc::Sender<Message>,
     pub follow_up: mpsc::Sender<Message>,
+    pub next_turn: mpsc::Sender<Message>,
 }

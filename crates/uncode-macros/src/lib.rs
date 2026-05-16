@@ -3,11 +3,12 @@ use quote::{format_ident, quote};
 use syn::{FnArg, ItemFn, Pat, Type, parse_macro_input};
 
 #[proc_macro_attribute]
-pub fn tool(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn tool(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
     let fn_name = &input.sig.ident;
     let fn_name_str = fn_name.to_string();
 
+    let tool_attr = parse_tool_attr(attr);
     let description = extract_doc(&input.attrs);
     let params = extract_params(&input.sig.inputs);
 
@@ -20,6 +21,17 @@ pub fn tool(_attr: TokenStream, item: TokenStream) -> TokenStream {
         .collect();
 
     let schema_fn_name = format_ident!("__tool_schema_{}", fn_name);
+
+    let label_expr = match &tool_attr.label {
+        Some(l) => quote! { Some(#l.to_string()) },
+        None => quote! { None },
+    };
+    let exec_mode_expr = match &tool_attr.execution_mode {
+        Some(m) if m == "sequential" => {
+            quote! { uncode_core::tool::ExecutionMode::Sequential }
+        }
+        _ => quote! { uncode_core::tool::ExecutionMode::default() },
+    };
 
     let expanded = quote! {
         #input
@@ -44,11 +56,61 @@ pub fn tool(_attr: TokenStream, item: TokenStream) -> TokenStream {
                     "properties": properties,
                     "required": [#(#required),*]
                 }),
+                label: #label_expr,
+                execution_mode: #exec_mode_expr,
             }
         }
     };
 
     TokenStream::from(expanded)
+}
+
+struct ToolAttr {
+    label: Option<String>,
+    execution_mode: Option<String>,
+}
+
+fn parse_tool_attr(attr: TokenStream) -> ToolAttr {
+    let mut label = None;
+    let mut execution_mode = None;
+
+    if attr.is_empty() {
+        return ToolAttr {
+            label,
+            execution_mode,
+        };
+    }
+
+    let tokens = attr.to_string();
+    for part in tokens.split(',') {
+        let part = part.trim();
+        if let Some(value) = extract_kv(part, "label") {
+            label = Some(value);
+        } else if let Some(value) = extract_kv(part, "execution_mode") {
+            execution_mode = Some(value);
+        }
+    }
+
+    ToolAttr {
+        label,
+        execution_mode,
+    }
+}
+
+fn extract_kv(input: &str, key: &str) -> Option<String> {
+    let prefix = format!("{key}=");
+    if let Some(rest) = input.strip_prefix(&prefix) {
+        let rest = rest.trim();
+        if (rest.starts_with('"') && rest.ends_with('"'))
+            || (rest.starts_with('\'') && rest.ends_with('\''))
+        {
+            Some(rest[1..rest.len() - 1].to_string())
+        } else {
+            Some(rest.to_string())
+        }
+    } else {
+        None
+    }
 }
 
 fn extract_doc(attrs: &[syn::Attribute]) -> String {

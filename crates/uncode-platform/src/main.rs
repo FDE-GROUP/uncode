@@ -238,39 +238,52 @@ async fn get_session_metrics(
     let mut files_modified: HashSet<String> = HashSet::new();
 
     for entry in &entries {
-        if let SessionEntry::Message(me) = entry {
-            total_messages += 1;
-            if let Some(ref usage) = me.usage {
-                input_tokens += usage.input_tokens;
-                output_tokens += usage.output_tokens;
-            }
+        match entry {
+            SessionEntry::Message(me) => {
+                total_messages += 1;
+                if let Some(ref usage) = me.usage {
+                    input_tokens += usage.input_tokens;
+                    output_tokens += usage.output_tokens;
+                }
 
-            let mut last_tool_name: Option<&str> = None;
-            for block in &me.content {
-                match block {
-                    ContentBlock::ToolCall(tc) => {
-                        total_tool_calls += 1;
-                        tool_counts.entry(tc.name.clone()).or_default().0 += 1;
-                        last_tool_name = Some(&tc.name);
+                let mut last_tool_name: Option<&str> = None;
+                for block in &me.content {
+                    match block {
+                        ContentBlock::ToolCall(tc) => {
+                            total_tool_calls += 1;
+                            tool_counts.entry(tc.name.clone()).or_default().0 += 1;
+                            last_tool_name = Some(&tc.name);
 
-                        if tc.name == "write" || tc.name == "edit" {
-                            if let Some(path) = tc.arguments.get("path").and_then(|v| v.as_str()) {
-                                files_modified.insert(path.to_string());
+                            if tc.name == "write" || tc.name == "edit" {
+                                if let Some(path) =
+                                    tc.arguments.get("path").and_then(|v| v.as_str())
+                                {
+                                    files_modified.insert(path.to_string());
+                                }
                             }
                         }
-                    }
-                    ContentBlock::ToolResult(tr) => {
-                        if tr.is_error {
-                            tool_errors += 1;
-                            if let Some(name) = last_tool_name {
-                                tool_counts.entry(name.to_string()).or_default().1 += 1;
+                        ContentBlock::ToolResult(tr) => {
+                            if tr.is_error {
+                                tool_errors += 1;
+                                if let Some(name) = last_tool_name {
+                                    tool_counts.entry(name.to_string()).or_default().1 += 1;
+                                }
                             }
+                            last_tool_name = None;
                         }
-                        last_tool_name = None;
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
+            SessionEntry::Compaction(ce) => {
+                // Use pre-tracked file paths from compaction entries
+                if let Some(ref files) = ce.files_modified {
+                    for f in files {
+                        files_modified.insert(f.clone());
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

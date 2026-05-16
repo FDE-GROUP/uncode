@@ -432,6 +432,7 @@ impl ChatState {
             AgentEvent::ContentDelta {
                 delta_type,
                 content,
+                content_index: _,
             } => match delta_type {
                 DeltaType::Text => {
                     self.deactivate_thinking();
@@ -1108,6 +1109,7 @@ mod tests {
         AgentEvent::ContentDelta {
             delta_type: DeltaType::Text,
             content: content.to_string(),
+            content_index: None,
         }
     }
 
@@ -1115,6 +1117,7 @@ mod tests {
         AgentEvent::ContentDelta {
             delta_type: DeltaType::Thinking,
             content: content.to_string(),
+            content_index: None,
         }
     }
 
@@ -1176,6 +1179,8 @@ mod tests {
             status: ToolCallStatus::Success,
             duration_ms: 42,
             output_size: Some(1024),
+            result_summary: Some("file contents...".into()),
+            is_error: false,
         });
 
         if let ChatMessage::ToolCall {
@@ -1251,6 +1256,8 @@ mod tests {
             status: ToolCallStatus::Success,
             duration_ms: 120,
             output_size: Some(2048),
+            result_summary: Some("file contents...".into()),
+            is_error: false,
         });
 
         if let ChatMessage::ToolCall {
@@ -1489,6 +1496,7 @@ mod tests {
         state.handle_event(AgentEvent::ContentDelta {
             delta_type: DeltaType::Text,
             content: "Hello world".to_string(),
+            content_index: None,
         });
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
