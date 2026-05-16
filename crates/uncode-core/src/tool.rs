@@ -1,47 +1,22 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// 工具定义，传递给 LLM 的 JSON Schema
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolDefinition {
-    pub name: String,
-    pub description: String,
-    pub parameters: serde_json::Value,
-    /// Human-readable label for UI display
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    /// Execution mode: Parallel or Sequential
-    #[serde(default)]
-    pub execution_mode: ExecutionMode,
-}
+// Re-export ToolDefinition + ExecutionMode from uncode-ai
+pub use uncode_ai::tool_def::{ExecutionMode, ToolDefinition};
 
-/// 工具执行模式：并行或顺序
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ExecutionMode {
-    #[default]
-    Parallel,
-    Sequential,
-}
-
-/// Content item within a tool result (aligned with Pi's TextContent | ImageContent)
+/// Content item within a tool result
 #[derive(Debug, Clone)]
 pub enum ToolContent {
     Text(String),
     Image { mime_type: String, data: String },
 }
 
-/// Structured tool execution result (aligned with Pi's AgentToolResult)
+/// Structured tool execution result
 #[derive(Debug, Clone)]
 pub struct ToolResult {
-    /// Content items sent back to the LLM (text + optional images)
     pub content: Vec<ToolContent>,
-    /// Whether this result represents an error
     pub is_error: bool,
-    /// Structured details for UI/logging — not sent to LLM
     pub details: Option<serde_json::Value>,
-    /// Hint that the agent should terminate after this result
     pub terminate: bool,
 }
 
@@ -74,7 +49,6 @@ impl ToolResult {
         self
     }
 
-    /// Extract text content as a single string (for LLM feedback)
     pub fn text_content(&self) -> String {
         self.content
             .iter()
@@ -87,28 +61,22 @@ impl ToolResult {
     }
 }
 
-/// Progress update emitted during tool execution (aligned with Pi's onUpdate)
+/// Progress update emitted during tool execution
 #[derive(Debug, Clone)]
 pub enum ToolProgress {
-    /// Spinner-style update with a text detail
     Spinner(String),
-    /// Percentage progress
     Percentage {
         current: u64,
         total: u64,
         detail: String,
     },
-    /// Log line output (e.g., streaming stdout)
     LogLine(String),
 }
 
-/// Context passed to tool execution, carrying cancellation + progress
+/// Context passed to tool execution
 pub struct ToolContext {
-    /// Per-call cancellation token (child of agent-level token)
     pub cancel_token: tokio_util::sync::CancellationToken,
-    /// Progress callback for streaming updates
     pub on_progress: Option<Box<dyn Fn(ToolProgress) + Send + Sync>>,
-    /// Tool call ID for correlation
     pub tool_call_id: String,
 }
 
@@ -120,7 +88,6 @@ pub struct BeforeToolCallContext {
     pub args: serde_json::Value,
 }
 
-/// Result from beforeToolCall — Some(reason) blocks execution
 pub type BeforeToolCallResult = Option<String>;
 
 /// Context provided to afterToolCall hook
@@ -131,7 +98,6 @@ pub struct AfterToolCallContext {
     pub args: serde_json::Value,
 }
 
-/// Result from afterToolCall — patches applied on top of original result
 #[derive(Debug, Clone, Default)]
 pub struct AfterToolCallResult {
     pub content: Option<Vec<ToolContent>>,
@@ -140,39 +106,33 @@ pub struct AfterToolCallResult {
     pub terminate: Option<bool>,
 }
 
-/// Tool lifecycle hooks (aligned with Pi's beforeToolCall/afterToolCall)
+/// Tool lifecycle hooks
 #[async_trait]
 pub trait ToolHooks: Send + Sync {
-    /// Called before tool execution. Return Some(reason) to block execution.
     async fn before_tool_call(&self, _ctx: &BeforeToolCallContext) -> BeforeToolCallResult {
         None
     }
 
-    /// Called after tool execution. Return patches to modify the result.
     async fn after_tool_call(
         &self,
         _ctx: &AfterToolCallContext,
         result: &mut ToolResult,
     ) -> AfterToolCallResult {
-        let _ = result; // suppress unused warning
+        let _ = result;
         AfterToolCallResult::default()
     }
 }
 
-/// 工具执行器 trait，所有工具（内置或扩展）必须实现
+/// 工具执行器 trait
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
-    /// 返回工具的 JSON Schema 定义
     fn definition(&self) -> ToolDefinition;
 
-    /// Legacy execute — return a plain String. Backward compatible.
     async fn execute(
         &self,
         arguments: serde_json::Value,
     ) -> Result<String, crate::error::UncodeError>;
 
-    /// Prepare/validate arguments before execution (aligned with Pi's prepareArguments).
-    /// Default passes arguments through unchanged.
     fn prepare_arguments(
         &self,
         arguments: serde_json::Value,
@@ -180,7 +140,6 @@ pub trait ToolExecutor: Send + Sync {
         Ok(arguments)
     }
 
-    /// Execute with context (cancellation + progress). Default wraps legacy execute.
     async fn execute_with_context(
         &self,
         arguments: serde_json::Value,
@@ -193,7 +152,6 @@ pub trait ToolExecutor: Send + Sync {
 
 // ── ExecutionEnv ──
 
-/// 文件元信息
 #[derive(Debug, Clone)]
 pub struct FileInfo {
     pub path: PathBuf,
@@ -204,7 +162,6 @@ pub struct FileInfo {
     pub modified: Option<std::time::SystemTime>,
 }
 
-/// 目录条目
 #[derive(Debug, Clone)]
 pub struct DirEntry {
     pub name: String,
@@ -213,7 +170,6 @@ pub struct DirEntry {
     pub is_symlink: bool,
 }
 
-/// Shell 执行选项
 #[derive(Debug, Clone, Default)]
 pub struct ShellOptions {
     pub workdir: Option<PathBuf>,
@@ -221,7 +177,6 @@ pub struct ShellOptions {
     pub env: Option<std::collections::HashMap<String, String>>,
 }
 
-/// Shell 执行结果
 #[derive(Debug, Clone)]
 pub struct ShellResult {
     pub stdout: String,
@@ -230,7 +185,6 @@ pub struct ShellResult {
     pub cancelled: bool,
 }
 
-/// 文件系统抽象
 #[async_trait]
 pub trait FileSystem: Send + Sync {
     async fn read_text_file(&self, path: &Path) -> Result<String, crate::error::UncodeError>;
@@ -242,7 +196,6 @@ pub trait FileSystem: Send + Sync {
     async fn canonical_path(&self, path: &Path) -> Result<PathBuf, crate::error::UncodeError>;
 }
 
-/// Shell 抽象
 #[async_trait]
 pub trait Shell: Send + Sync {
     async fn exec(
@@ -252,7 +205,6 @@ pub trait Shell: Send + Sync {
     ) -> Result<ShellResult, crate::error::UncodeError>;
 }
 
-/// 执行环境 = FileSystem + Shell
 pub trait ExecutionEnv: Send + Sync {
     fn fs(&self) -> &dyn FileSystem;
     fn shell(&self) -> &dyn Shell;

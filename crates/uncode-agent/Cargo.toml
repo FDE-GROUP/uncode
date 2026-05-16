@@ -11,9 +11,7 @@ authors.workspace = true
 
 [dependencies]
 uncode-core.workspace = true
-uncode-llm.workspace = true
-uncode-session.workspace = true
-uncode-tools.workspace = true
+uncode-ai.workspace = true
 
 tokio.workspace = true
 tokio-util.workspace = true
@@ -28,6 +26,10 @@ futures.workspace = true
 reqwest.workspace = true
 dirs.workspace = true
 uuid.workspace = true
+parking_lot.workspace = true
+regex.workspace = true
+glob.workspace = true
+walkdir.workspace = true
 
 [lints]
 workspace = true

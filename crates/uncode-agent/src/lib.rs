@@ -11,10 +11,12 @@ pub mod github;
 pub mod harness;
 pub mod loop_engine;
 pub mod model_switch;
+pub mod session;
 pub mod steering;
 pub mod stop;
 pub mod system_prompt;
 pub mod token;
+pub mod tools;
 
 pub use compaction::{
     compact_messages, compact_session, estimate_context_tokens, should_compact,
