@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use futures::stream::{self, BoxStream};
+use futures::stream::{self, BoxStream, StreamExt};
 use reqwest::Client;
 use serde_json::Value;
 
@@ -31,7 +31,7 @@ impl OllamaDriver {
         let mut body = serde_json::json!({
             "model": request.model,
             "messages": messages,
-            "stream": false,
+            "stream": true,
         });
 
         if let Some(t) = request.temperature {
@@ -73,17 +73,36 @@ impl LlmDriver for OllamaDriver {
             return Err(UncodeError::Llm(text));
         }
 
-        let full: Value = response
-            .json()
-            .await
-            .map_err(|e| UncodeError::Llm(e.to_string()))?;
-
-        let content = full["message"]["content"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-
-        let stream = stream::iter(vec![StreamEvent::TextDelta(content), StreamEvent::Done]);
+        let stream = response
+            .bytes_stream()
+            .flat_map(|chunk| {
+                let events: Vec<StreamEvent> = match chunk {
+                    Ok(c) => {
+                        let text = String::from_utf8_lossy(&c);
+                        let mut v = Vec::new();
+                        for line in text.lines() {
+                            let line = line.trim();
+                            if line.is_empty() {
+                                continue;
+                            }
+                            if let Ok(event) = serde_json::from_str::<Value>(line) {
+                                if let Some(content) = event["message"]["content"].as_str() {
+                                    if !content.is_empty() {
+                                        v.push(StreamEvent::TextDelta(content.to_string()));
+                                    }
+                                }
+                                if event["done"].as_bool() == Some(true) {
+                                    // no more events after done flag
+                                }
+                            }
+                        }
+                        v
+                    }
+                    Err(e) => vec![StreamEvent::Error(e.to_string())],
+                };
+                stream::iter(events)
+            })
+            .chain(stream::once(async { StreamEvent::Done }));
 
         Ok(Box::pin(stream))
     }

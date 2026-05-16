@@ -65,12 +65,12 @@ impl LlmDriver for GeminiDriver {
     ) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
         let model = request.model.clone();
         let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse&key={}",
-            self.api_key
+            "https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse"
         );
         let response = self
             .client
             .post(&url)
+            .header("x-goog-api-key", &self.api_key)
             .json(&build_body(&request))
             .send()
             .await

@@ -104,6 +104,7 @@ mod tests {
     fn test_session_entry_message_json() {
         let msg = Message::user("hello");
         let entry = SessionEntry::Message(MessageEntry {
+            id: None,
             timestamp: chrono::Utc::now(),
             role: msg.role,
             content: msg.content,

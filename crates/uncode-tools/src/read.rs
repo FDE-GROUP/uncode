@@ -46,8 +46,7 @@ impl ToolExecutor for ReadTool {
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("path required".into()))?;
 
-        let resolved = crate::resolve_path(raw)
-            .map_err(uncode_core::error::UncodeError::Tool)?;
+        let resolved = crate::resolve_path(raw).map_err(uncode_core::error::UncodeError::Tool)?;
 
         let meta = fs::metadata(&resolved).map_err(|e| {
             uncode_core::error::UncodeError::Tool(format!("read {}: {e}", resolved.display()))

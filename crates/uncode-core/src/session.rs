@@ -49,6 +49,8 @@ pub enum SessionEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageEntry {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub timestamp: DateTime<Utc>,
     pub role: Role,
     pub content: Vec<ContentBlock>,
@@ -59,6 +61,7 @@ pub struct MessageEntry {
 impl MessageEntry {
     pub fn new(role: Role, content: Vec<ContentBlock>) -> Self {
         Self {
+            id: None,
             timestamp: Utc::now(),
             role,
             content,
@@ -70,6 +73,7 @@ impl MessageEntry {
 impl From<Message> for MessageEntry {
     fn from(msg: Message) -> Self {
         Self {
+            id: Some(msg.id),
             timestamp: Utc::now(),
             role: msg.role,
             content: msg.content,

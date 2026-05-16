@@ -22,7 +22,10 @@ impl AnthropicDriver {
 }
 
 fn build_body(request: &CompletionRequest) -> Value {
-    let messages = build_chat_messages(request);
+    let messages = build_chat_messages(request)
+        .into_iter()
+        .filter(|m| m["role"].as_str() != Some("system"))
+        .collect::<Vec<_>>();
     let mut body = serde_json::json!({
         "model": request.model,
         "messages": messages,

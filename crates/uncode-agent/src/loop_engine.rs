@@ -340,6 +340,11 @@ impl AgentLoop {
                                 let exec_result = tokio::select! {
                                     _ = self.cancel_token.cancelled() => {
                                         info!("agent interrupted during tool execution: {name}");
+                                        // Persist already-collected tool results before breaking
+                                        for tr in tool_results.drain(..) {
+                                            let tool_msg = Message::new(Role::Tool, vec![tr]);
+                                            messages.push(tool_msg);
+                                        }
                                         self.emit(AgentEvent::AgentInterrupted {
                                             turn,
                                             partial_response: !current_text.is_empty(),

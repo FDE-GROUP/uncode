@@ -318,7 +318,11 @@ impl TuiEngine {
         line2_area: ratatui::layout::Rect,
     ) {
         let (status_icon, status_color) = if self.agent_busy {
-            let dot = if (self.tick / 4) % 2 == 0 { "●" } else { "○" };
+            let dot = if (self.tick / 4) % 2 == 0 {
+                "●"
+            } else {
+                "○"
+            };
             (dot, self.theme.tool_status.success)
         } else {
             ("●", self.theme.tool_status.success)
@@ -366,21 +370,28 @@ impl TuiEngine {
 
             tokio::select! {
                 biased;
-                Ok(ui_event) = async {
+                ui_result = async {
                     loop {
-                        if event::poll(std::time::Duration::from_millis(50)).unwrap_or(false) {
+                        let poll_ok = event::poll(std::time::Duration::from_millis(50));
+                        if poll_ok.is_err() {
+                            return Err::<Event, std::io::Error>(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                "terminal poll failed",
+                            ));
+                        }
+                        if poll_ok.unwrap() {
                             let ev = event::read().unwrap_or(Event::Key(
                                 event::KeyEvent::new(KeyCode::Null, event::KeyModifiers::empty())
                             ));
                             match ev {
                                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                                    return Ok::<Event, std::io::Error>(Event::Key(key));
+                                    return Ok(Event::Key(key));
                                 }
                                 Event::Mouse(mouse) => {
-                                    return Ok::<Event, std::io::Error>(Event::Mouse(mouse));
+                                    return Ok(Event::Mouse(mouse));
                                 }
                                 Event::Resize(w, h) => {
-                                    return Ok::<Event, std::io::Error>(Event::Resize(w, h));
+                                    return Ok(Event::Resize(w, h));
                                 }
                                 _ => {}
                             }
@@ -388,6 +399,10 @@ impl TuiEngine {
                         tokio::task::yield_now().await;
                     }
                 } => {
+                    let ui_event = match ui_result {
+                        Ok(ev) => ev,
+                        Err(_) => break,
+                    };
                     match ui_event {
                         Event::Key(key_event) => {
                             // ESC: highest priority — interrupt agent or dismiss overlays
@@ -573,6 +588,9 @@ impl TuiEngine {
                                 KeyCode::Down if self.selector.is_visible() => self.selector.next(),
                                 KeyCode::Enter if self.selector.is_visible() => {
                                     if let Some(selected) = self.selector.selected_item().map(|s| s.to_string()) {
+                                        if let Some(idx) = self.available_models.iter().position(|m| m == &selected) {
+                                            self.model_index = idx;
+                                        }
                                         self.model = selected.clone();
                                         self.chat.messages.push(chat::ChatMessage::Summary {
                                             completed: vec![format!("Model switched to: {selected}")],
@@ -846,6 +864,9 @@ impl TuiEngine {
 
         let old = self.model.clone();
         self.model = name.to_string();
+        if let Some(idx) = self.available_models.iter().position(|m| m == name) {
+            self.model_index = idx;
+        }
         self.chat.messages.push(chat::ChatMessage::Summary {
             completed: vec![format!("Model switched: {old} -> {name}")],
             next_steps: vec![],
