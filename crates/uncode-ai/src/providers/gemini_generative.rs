@@ -3,8 +3,7 @@ use futures::stream::{self, BoxStream, StreamExt};
 use reqwest::Client;
 use serde_json::Value;
 
-use crate::api::Api;
-use crate::api::StreamEvent;
+use crate::api::{Api, StreamEvent, ToolCallEndData};
 use crate::api_types::{Context, StopReason, StreamOptions};
 use crate::message::{ContentBlock, Role};
 use crate::model::Model;
@@ -119,11 +118,11 @@ fn parse_gemini_chunk(text: &str) -> Vec<StreamEvent> {
                                 id: id.clone(),
                                 arguments: args.to_string(),
                             });
-                            events.push(StreamEvent::ToolCallEnd {
+                            events.push(StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
                                 id,
                                 name,
                                 arguments: args,
-                            });
+                            })));
                         }
                     }
                 }

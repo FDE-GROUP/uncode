@@ -4,12 +4,11 @@ use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::api::Api;
-use crate::api::StreamEvent;
+use crate::api::{Api, StreamEvent, ToolCallEndData};
 use crate::api_types::{Context, StopReason, StreamOptions};
 use crate::message::{ContentBlock, Role};
 use crate::model::Model;
-use crate::tool_def::ToolDefinition;
+use crate::providers::build_tools_json;
 use uncode_shared::error::UncodeError;
 
 pub struct OllamaNativeApi {
@@ -111,26 +110,6 @@ fn build_chat_messages(context: &Context) -> Vec<Value> {
     messages
 }
 
-fn build_tools_json(tools: &[ToolDefinition]) -> Option<Value> {
-    if tools.is_empty() {
-        return None;
-    }
-    let tools_json: Vec<Value> = tools
-        .iter()
-        .map(|t| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.parameters
-                }
-            })
-        })
-        .collect();
-    Some(Value::Array(tools_json))
-}
-
 fn build_ollama_body(model: &Model, context: &Context, options: &StreamOptions) -> Value {
     let messages = build_chat_messages(context);
     let mut body = serde_json::json!({
@@ -176,7 +155,7 @@ fn parse_ollama_chunk(text: &str, state: &mut OllamaToolState) -> Vec<StreamEven
 
             if let Some(tool_calls) = event["message"]["tool_calls"].as_array() {
                 for (i, tc) in tool_calls.iter().enumerate() {
-                    let id = tc["id"].as_str().unwrap_or("").to_string();
+                    let id = tc["id"].as_str().unwrap_or_default().to_string();
                     if let Some(func) = tc.get("function") {
                         let name = func["name"].as_str().unwrap_or_default().to_string();
                         let args = func["arguments"].clone();
@@ -190,11 +169,11 @@ fn parse_ollama_chunk(text: &str, state: &mut OllamaToolState) -> Vec<StreamEven
                                 id: id.clone(),
                                 arguments: args.to_string(),
                             });
-                            events.push(StreamEvent::ToolCallEnd {
+                            events.push(StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
                                 id,
                                 name,
                                 arguments: args,
-                            });
+                            })));
                         }
                     }
                 }
@@ -213,7 +192,7 @@ fn parse_ollama_chunk(text: &str, state: &mut OllamaToolState) -> Vec<StreamEven
                         if state.active_tools.contains_key(&i) {
                             continue;
                         }
-                        let id = tc["id"].as_str().unwrap_or("").to_string();
+                        let id = tc["id"].as_str().unwrap_or_default().to_string();
                         if let Some(func) = tc.get("function") {
                             let name = func["name"].as_str().unwrap_or_default().to_string();
                             let args = func["arguments"].clone();
@@ -226,11 +205,11 @@ fn parse_ollama_chunk(text: &str, state: &mut OllamaToolState) -> Vec<StreamEven
                                     id: id.clone(),
                                     arguments: args.to_string(),
                                 });
-                                events.push(StreamEvent::ToolCallEnd {
+                                events.push(StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
                                     id,
                                     name,
                                     arguments: args,
-                                });
+                                })));
                             }
                         }
                     }

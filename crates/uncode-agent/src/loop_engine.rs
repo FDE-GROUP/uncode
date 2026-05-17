@@ -16,7 +16,7 @@ use uncode_core::api_types::{Context, StreamOptions, ThinkingLevel};
 use uncode_core::error::HarnessError;
 use uncode_core::error::UncodeError;
 use uncode_core::event::AgentEvent;
-use uncode_core::event::ToolCallStatus;
+use uncode_core::event::{SessionEndData, ToolCallEndEventData, ToolCallStatus};
 use uncode_core::message::{ContentBlock, Message, Role, UsageInfo};
 use uncode_core::session::{SessionEntry, ThinkingLevelChangeEntry, generate_entry_id};
 use uncode_core::tool::{
@@ -25,6 +25,17 @@ use uncode_core::tool::{
 };
 
 const MAX_TURNS: u64 = 50;
+
+/// Extract the first text block from a message, or "" if none.
+fn first_text(msg: &Message) -> &str {
+    msg.content
+        .first()
+        .and_then(|b| match b {
+            ContentBlock::Text { text } => Some(text.as_str()),
+            _ => None,
+        })
+        .unwrap_or("")
+}
 
 pub struct AgentLoop {
     api_registry: Arc<ApiRegistry>,
@@ -377,15 +388,7 @@ impl AgentLoop {
             let msgs = mq.drain_next_turn();
             for msg in &msgs {
                 self.emit(AgentEvent::MessageDelivered {
-                    text: msg
-                        .content
-                        .first()
-                        .and_then(|b| match b {
-                            ContentBlock::Text { text } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .unwrap_or("")
-                        .to_string(),
+                    text: first_text(msg).to_string(),
                 });
             }
             msgs
@@ -500,12 +503,13 @@ impl AgentLoop {
 
                 // Persist ThinkingLevelChange if it differs from what was last recorded
                 if thinking_level != effective_thinking_level {
-                    let tl_entry = SessionEntry::ThinkingLevelChange(ThinkingLevelChangeEntry {
-                        id: generate_entry_id(),
-                        parent_id: None,
-                        timestamp: chrono::Utc::now(),
-                        thinking_level: thinking_level.unwrap_or(ThinkingLevel::High),
-                    });
+                    let tl_entry =
+                        SessionEntry::ThinkingLevelChange(Box::new(ThinkingLevelChangeEntry {
+                            id: generate_entry_id(),
+                            parent_id: None,
+                            timestamp: chrono::Utc::now(),
+                            thinking_level: thinking_level.unwrap_or(ThinkingLevel::High),
+                        }));
                     if let Err(e) = self.session_store.append_entry(&session_id, &tl_entry) {
                         debug!("persist thinking level change skipped: {e}");
                     }
@@ -555,7 +559,7 @@ impl AgentLoop {
                     if self.cancel_token.is_cancelled() {
                         info!("agent interrupted during streaming at turn {turn}");
                         if !current_text.is_empty() || !current_thinking.is_empty() {
-                            let mut content: Vec<ContentBlock> = Vec::new();
+                            let mut content: Vec<ContentBlock> = Vec::with_capacity(2);
                             if !current_thinking.is_empty() {
                                 content.push(ContentBlock::Thinking {
                                     text: std::mem::take(&mut current_thinking),
@@ -578,7 +582,7 @@ impl AgentLoop {
                     let event = tokio::select! {
                         _ = self.cancel_token.cancelled() => {
                             if !current_text.is_empty() || !current_thinking.is_empty() {
-                                let mut content: Vec<ContentBlock> = Vec::new();
+                                let mut content: Vec<ContentBlock> = Vec::with_capacity(2);
                                 if !current_thinking.is_empty() {
                                     content.push(ContentBlock::Thinking {
                                         text: std::mem::take(&mut current_thinking),
@@ -653,11 +657,10 @@ impl AgentLoop {
                                 }
                             }
                         }
-                        StreamEvent::ToolCallEnd {
-                            id,
-                            name,
-                            arguments,
-                        } => {
+                        StreamEvent::ToolCallEnd(data) => {
+                            let id = data.id;
+                            let name = data.name;
+                            let arguments = data.arguments;
                             info!("tool call end: {name} ({id})");
                             if !args_pushed.contains(&id) {
                                 let args_detail = pending_tool_calls
@@ -698,7 +701,8 @@ impl AgentLoop {
                                 pending_tool_calls.len(),
                                 pending_executions.len()
                             );
-                            let mut assistant_content: Vec<ContentBlock> = Vec::new();
+                            let mut assistant_content: Vec<ContentBlock> =
+                                Vec::with_capacity(pending_tool_calls.len() + 2);
 
                             if !current_thinking.is_empty() {
                                 assistant_content.push(ContentBlock::Thinking {
@@ -715,13 +719,13 @@ impl AgentLoop {
                             for (id, name, arguments) in &pending_tool_calls {
                                 let args: serde_json::Value =
                                     serde_json::from_str(arguments).unwrap_or_default();
-                                assistant_content.push(ContentBlock::ToolCall(
+                                assistant_content.push(ContentBlock::ToolCall(Box::new(
                                     uncode_core::message::ToolCall {
                                         id: id.clone(),
                                         name: name.clone(),
                                         arguments: args,
                                     },
-                                ));
+                                )));
                             }
 
                             if !assistant_content.is_empty() {
@@ -910,29 +914,31 @@ impl AgentLoop {
                                     let is_error = tool_result.is_error;
 
                                     self.emit(AgentEvent::ToolCallEnd {
-                                        tool_id: id.clone(),
-                                        tool_name: name.clone(),
-                                        arguments: String::new(),
-                                        status: if is_error {
-                                            ToolCallStatus::Failed
-                                        } else {
-                                            ToolCallStatus::Success
-                                        },
-                                        duration_ms: 0,
-                                        output_size: Some(content_text.len()),
-                                        result_summary: Some(
-                                            content_text.chars().take(200).collect(),
-                                        ),
-                                        is_error,
+                                        data: Box::new(ToolCallEndEventData {
+                                            tool_id: id.clone(),
+                                            tool_name: name.clone(),
+                                            arguments: String::new(),
+                                            status: if is_error {
+                                                ToolCallStatus::Failed
+                                            } else {
+                                                ToolCallStatus::Success
+                                            },
+                                            duration_ms: 0,
+                                            output_size: Some(content_text.len()),
+                                            result_summary: Some(
+                                                content_text.chars().take(200).collect(),
+                                            ),
+                                            is_error,
+                                        }),
                                     });
 
-                                    let result_block = ContentBlock::ToolResult(
+                                    let result_block = ContentBlock::ToolResult(Box::new(
                                         uncode_core::message::ToolResult {
                                             tool_call_id: id.clone(),
                                             content: content_text,
                                             is_error,
                                         },
-                                    );
+                                    ));
                                     let tool_msg = Message::new(Role::Tool, vec![result_block]);
                                     self.emit(AgentEvent::MessageStart {
                                         role: Role::Tool,
@@ -1002,15 +1008,7 @@ impl AgentLoop {
                 };
                 for msg in &steering_msgs {
                     self.emit(AgentEvent::MessageDelivered {
-                        text: msg
-                            .content
-                            .first()
-                            .and_then(|b| match b {
-                                ContentBlock::Text { text } => Some(text.as_str()),
-                                _ => None,
-                            })
-                            .unwrap_or("")
-                            .to_string(),
+                        text: first_text(msg).to_string(),
                     });
                 }
                 pending_messages = steering_msgs;
@@ -1025,15 +1023,7 @@ impl AgentLoop {
             if !follow_up_msgs.is_empty() {
                 for msg in &follow_up_msgs {
                     self.emit(AgentEvent::MessageDelivered {
-                        text: msg
-                            .content
-                            .first()
-                            .and_then(|b| match b {
-                                ContentBlock::Text { text } => Some(text.as_str()),
-                                _ => None,
-                            })
-                            .unwrap_or("")
-                            .to_string(),
+                        text: first_text(msg).to_string(),
                     });
                 }
                 pending_messages = follow_up_msgs;
@@ -1049,17 +1039,19 @@ impl AgentLoop {
         };
 
         self.emit(AgentEvent::SessionEnd {
-            session_id: session_id.clone(),
-            total_turns: turn,
-            total_tokens: total_usage,
-            exit_reason: (if self.cancel_token.is_cancelled() {
-                "interrupted"
-            } else if turn >= MAX_TURNS {
-                "max_turns"
-            } else {
-                "completed"
-            })
-            .into(),
+            data: Box::new(SessionEndData {
+                session_id: session_id.clone(),
+                total_turns: turn,
+                total_tokens: total_usage,
+                exit_reason: (if self.cancel_token.is_cancelled() {
+                    "interrupted"
+                } else if turn >= MAX_TURNS {
+                    "max_turns"
+                } else {
+                    "completed"
+                })
+                .into(),
+            }),
         });
 
         self.emit(AgentEvent::AgentSettled {

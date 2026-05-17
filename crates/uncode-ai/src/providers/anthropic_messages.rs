@@ -4,8 +4,7 @@ use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::api::Api;
-use crate::api::{StreamEvent, UsageInfo};
+use crate::api::{Api, StreamEvent, ToolCallEndData, UsageInfo};
 use crate::api_types::{Context, StopReason, StreamOptions, ThinkingLevel};
 use crate::message::{ContentBlock, Role};
 use crate::model::Model;
@@ -219,11 +218,12 @@ fn parse_anthropic_chunk(text: &str, state: &mut AnthropicToolState) -> Vec<Stre
                             if let Some(partial) = event["delta"]["partial_json"].as_str() {
                                 if state.active_tools.contains_key(&idx) {
                                     state.pending_args.entry(idx).or_default().push_str(partial);
-                                    let id = state.active_tools.get(&idx).unwrap().0.clone();
-                                    events.push(StreamEvent::ToolCallDelta {
-                                        id,
-                                        arguments: partial.to_string(),
-                                    });
+                                    if let Some(entry) = state.active_tools.get(&idx) {
+                                        events.push(StreamEvent::ToolCallDelta {
+                                            id: entry.0.clone(),
+                                            arguments: partial.to_string(),
+                                        });
+                                    }
                                 }
                             }
                         } else if let Some(text) = event["delta"]["text"].as_str() {
@@ -246,11 +246,11 @@ fn parse_anthropic_chunk(text: &str, state: &mut AnthropicToolState) -> Vec<Stre
                                     Value::Object(Default::default())
                                 }
                             };
-                            events.push(StreamEvent::ToolCallEnd {
+                            events.push(StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
                                 id,
                                 name,
                                 arguments: parsed,
-                            });
+                            })));
                         }
                     }
                     Some("message_delta") => {

@@ -5,6 +5,46 @@ use serde::{Deserialize, Serialize};
 use crate::message::{Role, UsageInfo};
 use crate::tool::ToolContent;
 
+// ── Boxed data structs for large AgentEvent variants ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionEndData {
+    pub session_id: String,
+    pub total_turns: u64,
+    pub total_tokens: UsageInfo,
+    pub exit_reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallEndEventData {
+    pub tool_id: String,
+    pub tool_name: String,
+    pub arguments: String,
+    pub status: ToolCallStatus,
+    pub duration_ms: u64,
+    pub output_size: Option<usize>,
+    pub result_summary: Option<String>,
+    pub is_error: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskUpdateData {
+    pub task_id: String,
+    pub status: TaskStatus,
+    pub title: String,
+    pub subtasks: Vec<String>,
+    pub depends_on: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhaseSummaryData {
+    pub phase: u64,
+    pub completed: Vec<String>,
+    pub issues: Vec<String>,
+    pub next_steps: Vec<String>,
+    pub token_usage: UsageInfo,
+}
+
 /// Agent 向 TUI/Platform 广播的事件，驱动对话区更新
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -16,10 +56,8 @@ pub enum AgentEvent {
         timestamp: DateTime<Utc>,
     },
     SessionEnd {
-        session_id: String,
-        total_turns: u64,
-        total_tokens: UsageInfo,
-        exit_reason: String,
+        #[serde(flatten)]
+        data: Box<SessionEndData>,
     },
 
     // ── Turn lifecycle ──
@@ -60,30 +98,18 @@ pub enum AgentEvent {
         detail: String,
     },
     ToolCallEnd {
-        tool_id: String,
-        tool_name: String,
-        arguments: String,
-        status: ToolCallStatus,
-        duration_ms: u64,
-        output_size: Option<usize>,
-        result_summary: Option<String>,
-        is_error: bool,
+        #[serde(flatten)]
+        data: Box<ToolCallEndEventData>,
     },
 
     // ── Task/Phase (reserved) ──
     TaskUpdate {
-        task_id: String,
-        status: TaskStatus,
-        title: String,
-        subtasks: Vec<String>,
-        depends_on: Vec<String>,
+        #[serde(flatten)]
+        data: Box<TaskUpdateData>,
     },
     PhaseSummary {
-        phase: u64,
-        completed: Vec<String>,
-        issues: Vec<String>,
-        next_steps: Vec<String>,
-        token_usage: UsageInfo,
+        #[serde(flatten)]
+        data: Box<PhaseSummaryData>,
     },
 
     // ── Session compaction ──
@@ -119,7 +145,7 @@ pub enum AgentEvent {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum TaskStatus {
@@ -130,7 +156,7 @@ pub enum TaskStatus {
     Blocked,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum DeltaType {
@@ -148,7 +174,7 @@ pub enum ProgressType {
     Stdout,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ToolCallStatus {
@@ -157,7 +183,7 @@ pub enum ToolCallStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ErrorCategory {
@@ -232,15 +258,8 @@ impl EventRouter {
 
     /// Dispatch an event to all sync handlers (fire-and-forget).
     pub fn dispatch(&self, event: &AgentEvent) {
-        let tag = match serde_json::to_value(event) {
-            Ok(serde_json::Value::Object(map)) => map
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            _ => return,
-        };
-        if let Some(handlers) = self.sync_handlers.get(&tag) {
+        let tag = event_tag(event);
+        if let Some(handlers) = self.sync_handlers.get(tag) {
             for h in handlers {
                 h(event);
             }
@@ -250,21 +269,39 @@ impl EventRouter {
     /// Dispatch an event to all hook handlers and collect results.
     /// Returns Vec<HookResult> for the caller to aggregate.
     pub async fn dispatch_hooks(&self, event: &AgentEvent) -> Vec<HookResult> {
-        let tag = match serde_json::to_value(event) {
-            Ok(serde_json::Value::Object(map)) => map
-                .get("type")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            _ => return Vec::new(),
-        };
+        let tag = event_tag(event);
         let mut results = Vec::new();
-        if let Some(handlers) = self.hook_handlers.get(&tag) {
+        if let Some(handlers) = self.hook_handlers.get(tag) {
             for h in handlers {
                 results.push(h(event).await);
             }
         }
         results
+    }
+}
+
+/// Extract the serde tag name from an AgentEvent without serializing.
+/// Matches the `#[serde(tag = "type", rename_all = "snake_case")]` output.
+fn event_tag(event: &AgentEvent) -> &'static str {
+    match event {
+        AgentEvent::SessionStart { .. } => "session_start",
+        AgentEvent::SessionEnd { .. } => "session_end",
+        AgentEvent::TurnStart { .. } => "turn_start",
+        AgentEvent::TurnEnd { .. } => "turn_end",
+        AgentEvent::MessageStart { .. } => "message_start",
+        AgentEvent::MessageEnd { .. } => "message_end",
+        AgentEvent::ContentDelta { .. } => "content_delta",
+        AgentEvent::ToolCallStart { .. } => "tool_call_start",
+        AgentEvent::ToolCallProgress { .. } => "tool_call_progress",
+        AgentEvent::ToolCallEnd { .. } => "tool_call_end",
+        AgentEvent::TaskUpdate { .. } => "task_update",
+        AgentEvent::PhaseSummary { .. } => "phase_summary",
+        AgentEvent::CompactionComplete { .. } => "compaction_complete",
+        AgentEvent::MessageQueued { .. } => "message_queued",
+        AgentEvent::MessageDelivered { .. } => "message_delivered",
+        AgentEvent::Error { .. } => "error",
+        AgentEvent::AgentInterrupted { .. } => "agent_interrupted",
+        AgentEvent::AgentSettled { .. } => "agent_settled",
     }
 }
 

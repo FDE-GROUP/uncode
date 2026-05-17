@@ -17,7 +17,7 @@ pub fn tool(attr: TokenStream, item: TokenStream) -> TokenStream {
     let param_descs: Vec<_> = params.iter().map(|p| &p.description).collect();
     let required: Vec<_> = params
         .iter()
-        .filter_map(|p| if p.required { Some(&p.name) } else { None })
+        .filter_map(|p| p.required.then_some(&p.name))
         .collect();
 
     let schema_fn_name = format_ident!("__tool_schema_{}", fn_name);

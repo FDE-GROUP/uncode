@@ -171,7 +171,7 @@ impl SessionStore {
             target_id: target_id.to_string(),
         };
 
-        self.append_entry(session_id, &SessionEntry::Leaf(leaf))?;
+        self.append_entry(session_id, &SessionEntry::Leaf(Box::new(leaf)))?;
         Ok(())
     }
 
@@ -449,13 +449,13 @@ impl SessionStore {
 
         self.init_session(&new_id, &header.model, &header.working_dir)?;
 
-        let branch_entry = SessionEntry::Branch(uncode_core::session::BranchEntry {
+        let branch_entry = SessionEntry::Branch(Box::new(uncode_core::session::BranchEntry {
             id: generate_entry_id(),
             parent_id: None,
             timestamp: chrono::Utc::now(),
             parent_session_id: parent_id.to_string(),
             reason: reason.to_string(),
-        });
+        }));
         self.append_entry(&new_id, &branch_entry)?;
 
         Ok(new_id)

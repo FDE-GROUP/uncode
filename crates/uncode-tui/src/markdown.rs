@@ -497,9 +497,10 @@ fn expand_tabs(s: &str) -> String {
 /// Returns one or more span vectors, each fitting within `max`.
 /// Adjacent graphemes with the same style are merged into a single Span.
 fn wrap_spans(spans: &[Span<'static>], max: usize) -> Vec<Vec<Span<'static>>> {
+    // lines always has at least one entry; last_mut()/last() are always Some
     let mut lines: Vec<Vec<Span<'static>>> = vec![vec![]];
     let mut current_width = 0usize;
-    let mut buf = String::new();
+    let mut buf = String::with_capacity(64);
     let mut buf_style = Style::default();
 
     let flush_buf = |buf: &mut String, style: Style, line: &mut Vec<Span<'static>>| {
@@ -514,15 +515,23 @@ fn wrap_spans(spans: &[Span<'static>], max: usize) -> Vec<Vec<Span<'static>>> {
 
         // If style changed, flush the current buffer first
         if span_style != buf_style {
-            flush_buf(&mut buf, buf_style, lines.last_mut().unwrap());
+            flush_buf(
+                &mut buf,
+                buf_style,
+                lines.last_mut().expect("lines non-empty"),
+            );
             buf_style = span_style;
         }
 
         for grapheme in UnicodeSegmentation::graphemes(text, true) {
             let gw = UnicodeWidthStr::width(grapheme);
-            if current_width + gw > max && !lines.last().unwrap().is_empty() {
+            if current_width + gw > max && !lines.last().expect("lines non-empty").is_empty() {
                 // Flush pending buffer before starting new line
-                flush_buf(&mut buf, buf_style, lines.last_mut().unwrap());
+                flush_buf(
+                    &mut buf,
+                    buf_style,
+                    lines.last_mut().expect("lines non-empty"),
+                );
                 lines.push(vec![]);
                 current_width = 0;
             }
@@ -532,14 +541,18 @@ fn wrap_spans(spans: &[Span<'static>], max: usize) -> Vec<Vec<Span<'static>>> {
     }
 
     // Flush remaining buffer
-    flush_buf(&mut buf, buf_style, lines.last_mut().unwrap());
+    flush_buf(
+        &mut buf,
+        buf_style,
+        lines.last_mut().expect("lines non-empty"),
+    );
 
     lines
 }
 
 /// Extract plain text from inline children (for table cell width calculation).
 fn collect_inline_text(children: &[Node]) -> String {
-    let mut out = String::new();
+    let mut out = String::with_capacity(children.len() * 16);
     for child in children {
         collect_text_recursive(child, &mut out);
     }

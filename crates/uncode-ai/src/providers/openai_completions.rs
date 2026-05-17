@@ -4,13 +4,13 @@ use reqwest::Client;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::api::{Api, StreamEvent, UsageInfo};
+use crate::api::{Api, StreamEvent, ToolCallEndData, UsageInfo};
 use crate::api_types::{
     CompatConfig, Context, MaxTokensField, StopReason, StreamOptions, ThinkingFormat, ThinkingLevel,
 };
 use crate::message::{ContentBlock, Role};
 use crate::model::Model;
-use crate::tool_def::ToolDefinition;
+use crate::providers::build_tools_json;
 use uncode_shared::error::UncodeError;
 
 pub struct OpenAiCompletionsApi {
@@ -126,26 +126,6 @@ fn build_chat_messages(context: &Context, compat: &CompatConfig) -> Vec<Value> {
         }
     }
     messages
-}
-
-fn build_tools_json(tools: &[ToolDefinition]) -> Option<Value> {
-    if tools.is_empty() {
-        return None;
-    }
-    let tools_json: Vec<Value> = tools
-        .iter()
-        .map(|t| {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": t.name,
-                    "description": t.description,
-                    "parameters": t.parameters
-                }
-            })
-        })
-        .collect();
-    Some(Value::Array(tools_json))
 }
 
 fn build_request_body(model: &Model, context: &Context, options: &StreamOptions) -> Value {
@@ -359,11 +339,11 @@ fn flush_tool_calls(state: &mut StreamState) -> Vec<StreamEvent> {
             }
         };
         let name = state.tool_names.remove(&id).unwrap_or_default();
-        events.push(StreamEvent::ToolCallEnd {
+        events.push(StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
             id,
             name,
             arguments: parsed,
-        });
+        })));
     }
     events
 }

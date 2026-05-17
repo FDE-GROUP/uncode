@@ -22,7 +22,7 @@ fn extract_all_refs(text: &str) -> Vec<String> {
                 if next.is_whitespace() || next == ')' || next == ']' || next == ',' {
                     break;
                 }
-                path.push(chars.next().unwrap());
+                path.push(chars.next().unwrap_or(next));
             }
             if !path.is_empty() {
                 refs.push(path);

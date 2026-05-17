@@ -10,27 +10,20 @@ use futures::stream::{BoxStream, StreamExt};
 pub enum StreamEvent {
     TextDelta(String),
     ThinkingDelta(String),
-    ToolCallStart {
-        id: String,
-        name: String,
-    },
-    ToolCallDelta {
-        id: String,
-        arguments: String,
-    },
-    ToolCallEnd {
-        id: String,
-        name: String,
-        arguments: serde_json::Value,
-    },
+    ToolCallStart { id: String, name: String },
+    ToolCallDelta { id: String, arguments: String },
+    ToolCallEnd(Box<ToolCallEndData>),
     Usage(UsageInfo),
-    Error {
-        reason: StopReason,
-        message: String,
-    },
-    Done {
-        reason: StopReason,
-    },
+    Error { reason: StopReason, message: String },
+    Done { reason: StopReason },
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ToolCallEndData {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
 }
 
 #[derive(Debug, Clone)]
@@ -71,12 +64,12 @@ async fn collect_assistant_message(
 ) -> Result<Message, uncode_shared::error::UncodeError> {
     use crate::message::{ContentBlock, Role, UsageInfo as CoreUsageInfo};
 
-    let mut text = String::new();
-    let mut thinking = String::new();
+    let mut text = String::with_capacity(2048);
+    let mut thinking = String::with_capacity(1024);
     let mut tool_calls: Vec<crate::message::ToolCall> = Vec::new();
-    let mut current_tool_id = String::new();
-    let mut current_tool_name = String::new();
-    let mut current_tool_args = String::new();
+    let mut current_tool_id = String::with_capacity(32);
+    let mut current_tool_name = String::with_capacity(32);
+    let mut current_tool_args = String::with_capacity(512);
     let mut usage: Option<CoreUsageInfo> = None;
 
     while let Some(event) = stream.next().await {
@@ -89,11 +82,11 @@ async fn collect_assistant_message(
                 current_tool_args.clear();
             }
             StreamEvent::ToolCallDelta { arguments, .. } => current_tool_args.push_str(&arguments),
-            StreamEvent::ToolCallEnd { arguments, .. } => {
+            StreamEvent::ToolCallEnd(data) => {
                 tool_calls.push(crate::message::ToolCall {
                     id: current_tool_id.clone(),
                     name: current_tool_name.clone(),
-                    arguments,
+                    arguments: data.arguments,
                 });
             }
             StreamEvent::Usage(u) => {
@@ -118,7 +111,7 @@ async fn collect_assistant_message(
         content.push(ContentBlock::Text { text });
     }
     for tc in tool_calls {
-        content.push(ContentBlock::ToolCall(tc));
+        content.push(ContentBlock::ToolCall(Box::new(tc)));
     }
 
     let mut msg = Message::new(Role::Assistant, content);

@@ -58,7 +58,7 @@ pub enum ChatMessage {
 }
 
 /// 工具调用渲染状态（TUI 侧独立于 AgentEvent::ToolCallStatus）
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolCallRenderStatus {
     Pending,
     Running,
@@ -290,15 +290,16 @@ impl ChatState {
                 if let ChatMessage::Assistant { text } = &self.messages[idx] {
                     if !text.is_empty() && !msg_lines.is_empty() {
                         let show_cursor = tick % 4 < 2;
-                        let last = msg_lines.pop().unwrap();
-                        let mut spans = last.spans;
-                        if show_cursor {
-                            spans.push(Span::styled(
-                                "█",
-                                Style::default().fg(theme.tool_status.running),
-                            ));
+                        if let Some(last) = msg_lines.pop() {
+                            let mut spans = last.spans;
+                            if show_cursor {
+                                spans.push(Span::styled(
+                                    "█",
+                                    Style::default().fg(theme.tool_status.running),
+                                ));
+                            }
+                            msg_lines.push(Line::from(spans));
                         }
-                        msg_lines.push(Line::from(spans));
                     }
                 }
             }
@@ -507,21 +508,18 @@ impl ChatState {
                     self.invalidate(idx);
                 }
             }
-            AgentEvent::ToolCallEnd {
-                tool_id,
-                tool_name: _,
-                arguments,
-                status,
-                duration_ms,
-                ..
-            } => {
+            AgentEvent::ToolCallEnd { data } => {
+                let tool_id = &data.tool_id;
+                let arguments = &data.arguments;
+                let status = data.status;
+                let duration_ms = data.duration_ms;
                 let render_status = ToolCallRenderStatus::from(status);
                 let idx = self.messages.iter().rposition(|m| {
                     matches!(
                         m,
                         ChatMessage::ToolCall { tool_id: tid, .. }
                         | ChatMessage::BashExecution { tool_id: tid, .. }
-                        if tid == &tool_id
+                        if tid == tool_id
                     )
                 });
                 if let Some(idx) = idx {
@@ -562,14 +560,10 @@ impl ChatState {
             } => {
                 self.push_message(ChatMessage::Error { message, category });
             }
-            AgentEvent::PhaseSummary {
-                completed,
-                next_steps,
-                ..
-            } => {
+            AgentEvent::PhaseSummary { data } => {
                 self.push_message(ChatMessage::Summary {
-                    completed,
-                    next_steps,
+                    completed: data.completed.clone(),
+                    next_steps: data.next_steps.clone(),
                 });
             }
             AgentEvent::CompactionComplete {
@@ -695,15 +689,16 @@ impl ChatState {
                     if !text.is_empty() && !msg_lines.is_empty() {
                         // Blink every 2 ticks (~100ms at 50ms poll)
                         let show_cursor = tick % 4 < 2;
-                        let last = msg_lines.pop().unwrap();
-                        let mut spans = last.spans;
-                        if show_cursor {
-                            spans.push(Span::styled(
-                                "█",
-                                Style::default().fg(theme.tool_status.running),
-                            ));
+                        if let Some(last) = msg_lines.pop() {
+                            let mut spans = last.spans;
+                            if show_cursor {
+                                spans.push(Span::styled(
+                                    "█",
+                                    Style::default().fg(theme.tool_status.running),
+                                ));
+                            }
+                            msg_lines.push(Line::from(spans));
                         }
-                        msg_lines.push(Line::from(spans));
                     }
                 }
             }
@@ -1089,7 +1084,7 @@ fn extract_file_refs(text: &str) -> Vec<String> {
                 if next.is_whitespace() || next == ')' || next == ']' || next == ',' {
                     break;
                 }
-                path.push(chars.next().unwrap());
+                path.push(chars.next().unwrap_or(next));
             }
             if !path.is_empty() {
                 refs.push(path);
@@ -1103,6 +1098,7 @@ fn extract_file_refs(text: &str) -> Vec<String> {
 mod tests {
     use super::*;
     use uncode_core::event::ErrorCategory;
+    use uncode_core::event::{PhaseSummaryData, ToolCallEndEventData};
     use uncode_core::message::UsageInfo;
 
     fn make_text_delta(content: &str) -> AgentEvent {
@@ -1173,14 +1169,16 @@ mod tests {
         assert_eq!(state.messages.len(), 2);
 
         state.handle_event(AgentEvent::ToolCallEnd {
-            tool_id: "t1".into(),
-            tool_name: "read".into(),
-            arguments: r#"{"path":"src/main.rs"}"#.into(),
-            status: ToolCallStatus::Success,
-            duration_ms: 42,
-            output_size: Some(1024),
-            result_summary: Some("file contents...".into()),
-            is_error: false,
+            data: Box::new(ToolCallEndEventData {
+                tool_id: "t1".into(),
+                tool_name: "read".into(),
+                arguments: r#"{"path":"src/main.rs"}"#.into(),
+                status: ToolCallStatus::Success,
+                duration_ms: 42,
+                output_size: Some(1024),
+                result_summary: Some("file contents...".into()),
+                is_error: false,
+            }),
         });
 
         if let ChatMessage::ToolCall {
@@ -1250,14 +1248,16 @@ mod tests {
 
         // Tool finishes → final state
         state.handle_event(AgentEvent::ToolCallEnd {
-            tool_id: "t1".into(),
-            tool_name: "read".into(),
-            arguments: r#"{"path":"crates/uncode-tui/src/chat.rs"}"#.into(),
-            status: ToolCallStatus::Success,
-            duration_ms: 120,
-            output_size: Some(2048),
-            result_summary: Some("file contents...".into()),
-            is_error: false,
+            data: Box::new(ToolCallEndEventData {
+                tool_id: "t1".into(),
+                tool_name: "read".into(),
+                arguments: r#"{"path":"crates/uncode-tui/src/chat.rs"}"#.into(),
+                status: ToolCallStatus::Success,
+                duration_ms: 120,
+                output_size: Some(2048),
+                result_summary: Some("file contents...".into()),
+                is_error: false,
+            }),
         });
 
         if let ChatMessage::ToolCall {
@@ -1331,11 +1331,13 @@ mod tests {
     fn test_summary_message() {
         let mut state = ChatState::new();
         state.handle_event(AgentEvent::PhaseSummary {
-            phase: 1,
-            completed: vec!["分析代码".into()],
-            issues: vec![],
-            next_steps: vec!["实现功能".into()],
-            token_usage: UsageInfo::default(),
+            data: Box::new(PhaseSummaryData {
+                phase: 1,
+                completed: vec!["分析代码".into()],
+                issues: vec![],
+                next_steps: vec!["实现功能".into()],
+                token_usage: UsageInfo::default(),
+            }),
         });
         assert!(matches!(
             &state.messages[0],

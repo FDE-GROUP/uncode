@@ -11,7 +11,7 @@ pub mod model_registry;
 pub mod providers;
 pub mod tool_def;
 
-pub use api::{Api, StreamEvent, UsageInfo as LlmUsageInfo};
+pub use api::{Api, StreamEvent, ToolCallEndData, UsageInfo as LlmUsageInfo};
 pub use api_registry::ApiRegistry;
 pub use model_registry::ModelRegistry;
 pub use providers::anthropic_messages::AnthropicMessagesApi;

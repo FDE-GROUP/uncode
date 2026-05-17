@@ -27,24 +27,36 @@ impl ToolExecutor for FindTool {
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
         let pattern = arguments["pattern"]
             .as_str()
-            .ok_or_else(|| uncode_core::error::UncodeError::Tool("pattern required".into()))?;
-        let root_raw = arguments["path"].as_str().unwrap_or(".");
-        let root = super::resolve_path(root_raw).map_err(uncode_core::error::UncodeError::Tool)?;
+            .ok_or_else(|| uncode_core::error::UncodeError::Tool("pattern required".into()))?
+            .to_string();
+        let root_raw = arguments["path"].as_str().unwrap_or(".").to_string();
+        let root = super::resolve_path(&root_raw).map_err(uncode_core::error::UncodeError::Tool)?;
 
-        let glob_pattern = format!("{}/{}", root.display(), pattern);
-        let mut results: Vec<String> = glob::glob(&glob_pattern)
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("glob: {e}")))?
-            .flatten()
-            .take(200)
-            .map(|e| e.display().to_string())
-            .collect();
+        let root_display = root.display().to_string();
+        let result = tokio::task::spawn_blocking(move || find_files(&root_display, &pattern))
+            .await
+            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("find task failed: {e}")))?;
 
-        if results.is_empty() {
-            return Ok("no files found".into());
-        }
-        if results.len() >= 200 {
-            results.push("... (truncated)".into());
-        }
-        Ok(results.join("\n"))
+        Ok(result)
     }
+}
+
+fn find_files(root: &str, pattern: &str) -> String {
+    let glob_pattern = format!("{root}/{pattern}");
+    let Ok(iter) = glob::glob(&glob_pattern) else {
+        return format!("invalid glob pattern: {pattern}");
+    };
+    let mut results: Vec<String> = iter
+        .flatten()
+        .take(200)
+        .map(|e| e.display().to_string())
+        .collect();
+
+    if results.is_empty() {
+        return "no files found".into();
+    }
+    if results.len() >= 200 {
+        results.push("... (truncated)".into());
+    }
+    results.join("\n")
 }

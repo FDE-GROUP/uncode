@@ -29,9 +29,10 @@ impl ToolExecutor for GrepTool {
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
         let pattern = arguments["pattern"]
             .as_str()
-            .ok_or_else(|| uncode_core::error::UncodeError::Tool("pattern required".into()))?;
+            .ok_or_else(|| uncode_core::error::UncodeError::Tool("pattern required".into()))?
+            .to_string();
 
-        let re = Regex::new(pattern)
+        let re = Regex::new(&pattern)
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("invalid regex: {e}")))?;
 
         let search_path = super::resolve_path(arguments["path"].as_str().unwrap_or("."))
@@ -45,48 +46,64 @@ impl ToolExecutor for GrepTool {
                 uncode_core::error::UncodeError::Tool(format!("invalid include pattern: {e}"))
             })?;
 
-        let mut results = Vec::new();
-        let mut count = 0;
-        let max_results = 50;
+        // Run blocking file I/O on a dedicated thread to avoid stalling the tokio runtime
+        let result = tokio::task::spawn_blocking(move || {
+            grep_files(&re, &search_path, glob_pattern.as_ref())
+        })
+        .await
+        .map_err(|e| uncode_core::error::UncodeError::Tool(format!("grep task failed: {e}")))?;
 
-        for entry in walkdir::WalkDir::new(&search_path)
-            .max_depth(20)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().is_file())
-        {
-            if count >= max_results {
-                results.push("... (truncated)".into());
-                break;
-            }
+        Ok(result)
+    }
+}
 
-            if let Some(ref pat) = glob_pattern {
-                let file_name = entry.file_name().to_string_lossy();
-                if !pat.matches(&file_name) {
-                    continue;
-                }
-            }
+const MAX_RESULTS: usize = 50;
 
-            let content = match std::fs::read_to_string(entry.path()) {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
+fn grep_files(
+    re: &Regex,
+    search_path: &std::path::Path,
+    glob_pattern: Option<&glob::Pattern>,
+) -> String {
+    let mut results = Vec::with_capacity(MAX_RESULTS);
+    let mut count = 0;
 
-            for (i, line) in content.lines().enumerate() {
-                if re.is_match(line) {
-                    results.push(format!("{}:{}: {}", entry.path().display(), i + 1, line));
-                    count += 1;
-                    if count >= max_results {
-                        break;
-                    }
-                }
+    for entry in walkdir::WalkDir::new(search_path)
+        .max_depth(20)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        if count >= MAX_RESULTS {
+            results.push("... (truncated)".into());
+            break;
+        }
+
+        if let Some(pat) = glob_pattern {
+            let file_name = entry.file_name().to_string_lossy();
+            if !pat.matches(&file_name) {
+                continue;
             }
         }
 
-        if results.is_empty() {
-            Ok("no matches".into())
-        } else {
-            Ok(results.join("\n"))
+        let content = match std::fs::read_to_string(entry.path()) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+
+        for (i, line) in content.lines().enumerate() {
+            if re.is_match(line) {
+                results.push(format!("{}:{}: {}", entry.path().display(), i + 1, line));
+                count += 1;
+                if count >= MAX_RESULTS {
+                    break;
+                }
+            }
         }
+    }
+
+    if results.is_empty() {
+        "no matches".into()
+    } else {
+        results.join("\n")
     }
 }

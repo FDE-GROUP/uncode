@@ -221,24 +221,24 @@ impl AgentHarness {
                         continue; // model_switch 已在 set_model 中持久化
                     }
                     PendingSessionWrite::ThinkingLevelChange { level } => {
-                        SessionEntry::ThinkingLevelChange(
+                        SessionEntry::ThinkingLevelChange(Box::new(
                             uncode_core::session::ThinkingLevelChangeEntry {
                                 id: uncode_core::session::generate_entry_id(),
                                 parent_id: None,
                                 timestamp: chrono::Utc::now(),
                                 thinking_level: level,
                             },
-                        )
+                        ))
                     }
                     PendingSessionWrite::Custom { entry } => entry,
                     PendingSessionWrite::Label { target_id, label } => {
-                        SessionEntry::Label(uncode_core::session::LabelEntry {
+                        SessionEntry::Label(Box::new(uncode_core::session::LabelEntry {
                             id: uncode_core::session::generate_entry_id(),
                             parent_id: None,
                             timestamp: chrono::Utc::now(),
                             target_id,
                             label,
-                        })
+                        }))
                     }
                 };
                 if let Err(e) = self.session_store.append_entry(session_id, &entry) {

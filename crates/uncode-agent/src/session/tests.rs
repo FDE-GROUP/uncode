@@ -51,7 +51,7 @@ mod tests {
             .unwrap();
 
         let msg = Message::user("hello world");
-        let entry = SessionEntry::Message(MessageEntry::from(msg));
+        let entry = SessionEntry::Message(Box::new(MessageEntry::from(msg)));
         store.append_entry("test-session", &entry).unwrap();
 
         let entries = store.load_entries("test-session").unwrap();
@@ -70,7 +70,7 @@ mod tests {
 
         for i in 0..5 {
             let msg = Message::user(format!("message {i}"));
-            let entry = SessionEntry::Message(MessageEntry::from(msg));
+            let entry = SessionEntry::Message(Box::new(MessageEntry::from(msg)));
             store.append_entry("multi-session", &entry).unwrap();
         }
 
@@ -90,7 +90,7 @@ mod tests {
             store
                 .append_entry(
                     "nonexistent",
-                    &SessionEntry::Message(MessageEntry::from(Message::user("x")))
+                    &SessionEntry::Message(Box::new(MessageEntry::from(Message::user("x")))),
                 )
                 .is_err()
         );
@@ -304,10 +304,10 @@ mod tests {
         let store = SessionStore::new(dir.clone());
         store.init_session("tree-test", "model", "/test").unwrap();
 
-        let e1 = SessionEntry::Message(MessageEntry::from(Message::user("first")));
+        let e1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("first"))));
         store.append_entry("tree-test", &e1).unwrap();
 
-        let e2 = SessionEntry::Message(MessageEntry::from(Message::user("second")));
+        let e2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("second"))));
         store.append_entry("tree-test", &e2).unwrap();
 
         let entries = store.load_entries("tree-test").unwrap();
@@ -328,7 +328,7 @@ mod tests {
         let store = SessionStore::new(dir.clone());
         store.init_session("leaf-test", "model", "/test").unwrap();
 
-        let e = SessionEntry::Message(MessageEntry::from(Message::user("hello")));
+        let e = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("hello"))));
         store.append_entry("leaf-test", &e).unwrap();
 
         let leaf = store.get_leaf_id("leaf-test").unwrap();
@@ -348,7 +348,7 @@ mod tests {
             .init_session("set-leaf-test", "model", "/test")
             .unwrap();
 
-        let e1 = SessionEntry::Message(MessageEntry::from(Message::user("first")));
+        let e1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("first"))));
         store.append_entry("set-leaf-test", &e1).unwrap();
         let e1_id = store
             .get_entry(
@@ -364,7 +364,7 @@ mod tests {
             .entry_id()
             .to_string();
 
-        let e2 = SessionEntry::Message(MessageEntry::from(Message::user("second")));
+        let e2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("second"))));
         store.append_entry("set-leaf-test", &e2).unwrap();
 
         // Leaf should be on e2
@@ -394,7 +394,7 @@ mod tests {
         let store = SessionStore::new(dir.clone());
         store.init_session("entry-test", "model", "/test").unwrap();
 
-        let e = SessionEntry::Message(MessageEntry::from(Message::user("hello")));
+        let e = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("hello"))));
         store.append_entry("entry-test", &e).unwrap();
 
         let entries = store.load_entries("entry-test").unwrap();
@@ -417,11 +417,11 @@ mod tests {
         let store = SessionStore::new(dir.clone());
         store.init_session("path-test", "model", "/test").unwrap();
 
-        let e1 = SessionEntry::Message(MessageEntry::from(Message::user("a")));
+        let e1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("a"))));
         store.append_entry("path-test", &e1).unwrap();
-        let e2 = SessionEntry::Message(MessageEntry::from(Message::user("b")));
+        let e2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("b"))));
         store.append_entry("path-test", &e2).unwrap();
-        let e3 = SessionEntry::Message(MessageEntry::from(Message::user("c")));
+        let e3 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("c"))));
         store.append_entry("path-test", &e3).unwrap();
 
         let entries = store.load_entries("path-test").unwrap();

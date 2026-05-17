@@ -172,7 +172,9 @@ fn replace_positional_slices(template: &str, args: &[&str]) -> String {
             }
         }
         // Copy one char (handle multi-byte UTF-8)
-        let c = template[i..].chars().next().unwrap();
+        let Some(c) = template[i..].chars().next() else {
+            break;
+        };
         result.push(c);
         i += c.len_utf8();
     }

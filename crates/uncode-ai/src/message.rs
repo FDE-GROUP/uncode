@@ -18,7 +18,7 @@ pub struct Message {
 }
 
 /// 消息发送者角色
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[non_exhaustive]
 pub enum Role {
@@ -49,9 +49,9 @@ pub enum ContentBlock {
     /// LLM 的思考/推理过程
     Thinking { text: String },
     /// LLM 请求调用工具
-    ToolCall(ToolCall),
+    ToolCall(Box<ToolCall>),
     /// 工具执行结果
-    ToolResult(ToolResult),
+    ToolResult(Box<ToolResult>),
     /// 图片内容（base64 编码）
     Image { mime_type: String, data: String },
     /// Bash 执行结果（exclude_from_context=true 时从 LLM context 丢弃）
