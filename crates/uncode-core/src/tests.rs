@@ -52,11 +52,11 @@ mod tests {
 
     #[test]
     fn test_content_block_tool_call_json() {
-        let block = ContentBlock::ToolCall(ToolCall {
+        let block = ContentBlock::ToolCall(Box::new(ToolCall {
             id: "call_1".into(),
             name: "read".into(),
             arguments: serde_json::json!({"path": "src/main.rs"}),
-        });
+        }));
         let json = serde_json::to_string(&block).unwrap();
         assert!(json.contains(r#""type":"tool_call""#));
         let parsed: ContentBlock = serde_json::from_str(&json).unwrap();
@@ -69,20 +69,20 @@ mod tests {
     #[test]
     fn test_agent_event_json() {
         let event = AgentEvent::TaskUpdate {
-            task_id: "t1".into(),
-            status: TaskStatus::Running,
-            title: "test task".into(),
-            subtasks: vec![],
-            depends_on: vec![],
+            data: Box::new(crate::event::TaskUpdateData {
+                task_id: "t1".into(),
+                status: TaskStatus::Running,
+                title: "test task".into(),
+                subtasks: vec![],
+                depends_on: vec![],
+            }),
         };
         let json = serde_json::to_string(&event).unwrap();
         let parsed: AgentEvent = serde_json::from_str(&json).unwrap();
         match parsed {
-            AgentEvent::TaskUpdate {
-                task_id, status, ..
-            } => {
-                assert_eq!(task_id, "t1");
-                assert!(matches!(status, TaskStatus::Running));
+            AgentEvent::TaskUpdate { data } => {
+                assert_eq!(data.task_id, "t1");
+                assert!(matches!(data.status, TaskStatus::Running));
             }
             _ => panic!(),
         }
@@ -104,14 +104,14 @@ mod tests {
     #[test]
     fn test_session_entry_message_json() {
         let msg = Message::user("hello");
-        let entry = SessionEntry::Message(MessageEntry {
+        let entry = SessionEntry::Message(Box::new(MessageEntry {
             id: generate_entry_id(),
             parent_id: None,
             timestamp: chrono::Utc::now(),
             role: msg.role,
             content: msg.content,
             usage: None,
-        });
+        }));
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains(r#""type":"message""#));
         let parsed: SessionEntry = serde_json::from_str(&json).unwrap();
@@ -207,13 +207,13 @@ mod tests {
 
     #[test]
     fn test_session_entry_branch_json() {
-        let entry = SessionEntry::Branch(BranchEntry {
+        let entry = SessionEntry::Branch(Box::new(BranchEntry {
             id: generate_entry_id(),
             parent_id: None,
             timestamp: chrono::Utc::now(),
             parent_session_id: "parent123".into(),
             reason: "explore alternative".into(),
-        });
+        }));
         let json = serde_json::to_string(&entry).unwrap();
         assert!(json.contains(r#""type":"branch""#));
         let parsed: SessionEntry = serde_json::from_str(&json).unwrap();

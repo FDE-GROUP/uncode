@@ -170,7 +170,7 @@ mod tests {
         store
             .append_entry(
                 "test-session",
-                &SessionEntry::Message(MessageEntry {
+                &SessionEntry::Message(Box::new(MessageEntry {
                     id: msg1_id.clone(),
                     parent_id: None,
                     timestamp: chrono::Utc::now(),
@@ -179,7 +179,7 @@ mod tests {
                         text: "old message".into(),
                     }],
                     usage: None,
-                }),
+                })),
             )
             .unwrap();
 
@@ -187,7 +187,7 @@ mod tests {
         store
             .append_entry(
                 "test-session",
-                &SessionEntry::Message(MessageEntry {
+                &SessionEntry::Message(Box::new(MessageEntry {
                     id: msg2_id.clone(),
                     parent_id: None,
                     timestamp: chrono::Utc::now(),
@@ -196,7 +196,7 @@ mod tests {
                         text: "old response".into(),
                     }],
                     usage: None,
-                }),
+                })),
             )
             .unwrap();
 
@@ -204,16 +204,16 @@ mod tests {
         store
             .append_entry(
                 "test-session",
-                &SessionEntry::Compaction(CompactionEntry {
+                &SessionEntry::Compaction(Box::new(CompactionEntry {
                     id: generate_entry_id(),
                     parent_id: None,
                     timestamp: chrono::Utc::now(),
                     summary: "Discussion about old topic".into(),
                     first_kept_entry_id: msg2_id.clone(),
                     tokens_before: 1000,
-                    files_read: None,
-                    files_modified: None,
-                }),
+                    files_read: vec![],
+                    files_modified: vec![],
+                })),
             )
             .unwrap();
 
@@ -222,7 +222,7 @@ mod tests {
         store
             .append_entry(
                 "test-session",
-                &SessionEntry::Message(MessageEntry {
+                &SessionEntry::Message(Box::new(MessageEntry {
                     id: msg3_id,
                     parent_id: None,
                     timestamp: chrono::Utc::now(),
@@ -231,7 +231,7 @@ mod tests {
                         text: "recent message".into(),
                     }],
                     usage: None,
-                }),
+                })),
             )
             .unwrap();
 
@@ -260,13 +260,13 @@ mod tests {
         store
             .append_entry(
                 "test-session",
-                &SessionEntry::ModelChange(ModelChangeEntry {
+                &SessionEntry::ModelChange(Box::new(ModelChangeEntry {
                     id: generate_entry_id(),
                     parent_id: None,
                     timestamp: chrono::Utc::now(),
                     provider: "openai".into(),
                     model_id: "gpt-4".into(),
-                }),
+                })),
             )
             .unwrap();
 
@@ -287,13 +287,13 @@ mod tests {
         store
             .append_entry(
                 "test-session",
-                &SessionEntry::BranchSummary(BranchSummaryEntry {
+                &SessionEntry::BranchSummary(Box::new(BranchSummaryEntry {
                     id: generate_entry_id(),
                     parent_id: None,
                     timestamp: chrono::Utc::now(),
                     from_id: "some_entry".into(),
                     summary: "Explored alternative approach".into(),
-                }),
+                })),
             )
             .unwrap();
 
@@ -321,12 +321,12 @@ mod tests {
         store
             .append_entry(
                 "test-session",
-                &SessionEntry::ThinkingLevelChange(ThinkingLevelChangeEntry {
+                &SessionEntry::ThinkingLevelChange(Box::new(ThinkingLevelChangeEntry {
                     id: generate_entry_id(),
                     parent_id: None,
                     timestamp: chrono::Utc::now(),
                     thinking_level: ThinkingLevel::High,
-                }),
+                })),
             )
             .unwrap();
 

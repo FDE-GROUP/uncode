@@ -1,10 +1,11 @@
 use uncode_core::message::{ContentBlock, Message};
 
-const CHARS_PER_TOKEN: f32 = 3.5;
-
 /// 估算文本的 token 数量（字符数/3.5）
 pub fn estimate_tokens(text: &str) -> u64 {
-    (text.chars().count() as f32 / CHARS_PER_TOKEN).ceil() as u64
+    let char_count = text.chars().count();
+    // Integer division ceiling: (a + b - 1) / b
+    let tokens = (char_count * 10 + 34) / 35; // char_count / 3.5 ≈ char_count * 10 / 35
+    tokens as u64
 }
 
 /// 估算单条消息的 token 数量

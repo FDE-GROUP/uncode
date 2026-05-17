@@ -178,7 +178,7 @@ async fn list_sessions(
             id: s.id,
             model: s.model,
             title: s.title,
-            message_count: s.message_count as usize,
+            message_count: usize::try_from(s.message_count).unwrap_or(usize::MAX),
             working_dir: s.working_dir,
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),
@@ -276,11 +276,8 @@ async fn get_session_metrics(
                 }
             }
             SessionEntry::Compaction(ce) => {
-                // Use pre-tracked file paths from compaction entries
-                if let Some(ref files) = ce.files_modified {
-                    for f in files {
-                        files_modified.insert(f.clone());
-                    }
+                for f in &ce.files_modified {
+                    files_modified.insert(f.clone());
                 }
             }
             _ => {}
@@ -382,7 +379,7 @@ async fn get_metrics(State(state): State<AppState>) -> Result<Json<MetricsRespon
             id: s.id.clone(),
             model: s.model.clone(),
             title: s.title.clone(),
-            message_count: s.message_count as usize,
+            message_count: usize::try_from(s.message_count).unwrap_or(usize::MAX),
             working_dir: s.working_dir.clone(),
             created_at: s.created_at.to_rfc3339(),
             updated_at: s.updated_at.to_rfc3339(),

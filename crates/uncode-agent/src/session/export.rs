@@ -279,16 +279,16 @@ mod tests {
     fn test_export_html_with_compaction_entry() {
         use uncode_core::session::{CompactionEntry, generate_entry_id};
         let header = SessionHeader::new("test".into(), "model".into(), "/tmp".into());
-        let entries = vec![SessionEntry::Compaction(CompactionEntry {
+        let entries = vec![SessionEntry::Compaction(Box::new(CompactionEntry {
             id: generate_entry_id(),
             parent_id: None,
             timestamp: chrono::Utc::now(),
             summary: "Discussed authentication strategy".into(),
             first_kept_entry_id: "abc".into(),
             tokens_before: 5000,
-            files_read: None,
-            files_modified: None,
-        })];
+            files_read: vec![],
+            files_modified: vec![],
+        }))];
         let html = export_html(&header, &entries, &[]);
         assert!(html.contains("上下文压缩"));
         assert!(html.contains("authentication strategy"));
@@ -298,13 +298,13 @@ mod tests {
     fn test_export_html_with_branch_summary() {
         use uncode_core::session::{BranchSummaryEntry, generate_entry_id};
         let header = SessionHeader::new("test".into(), "model".into(), "/tmp".into());
-        let entries = vec![SessionEntry::BranchSummary(BranchSummaryEntry {
+        let entries = vec![SessionEntry::BranchSummary(Box::new(BranchSummaryEntry {
             id: generate_entry_id(),
             parent_id: None,
             timestamp: chrono::Utc::now(),
             from_id: "old".into(),
             summary: "Explored caching approach".into(),
-        })];
+        }))];
         let html = export_html(&header, &entries, &[]);
         assert!(html.contains("分支摘要"));
         assert!(html.contains("caching approach"));
@@ -314,13 +314,13 @@ mod tests {
     fn test_export_html_with_model_change() {
         use uncode_core::session::{ModelChangeEntry, generate_entry_id};
         let header = SessionHeader::new("test".into(), "model".into(), "/tmp".into());
-        let entries = vec![SessionEntry::ModelChange(ModelChangeEntry {
+        let entries = vec![SessionEntry::ModelChange(Box::new(ModelChangeEntry {
             id: generate_entry_id(),
             parent_id: None,
             timestamp: chrono::Utc::now(),
             provider: "openai".into(),
             model_id: "gpt-4o".into(),
-        })];
+        }))];
         let html = export_html(&header, &entries, &[]);
         assert!(html.contains("模型切换"));
         assert!(html.contains("gpt-4o"));

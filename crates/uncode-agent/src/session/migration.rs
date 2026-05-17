@@ -62,7 +62,7 @@ mod tests {
         let mut by_id = HashMap::new();
         by_id.insert(
             id1.clone(),
-            SessionEntry::Message(MessageEntry {
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: id1.clone(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
@@ -71,11 +71,11 @@ mod tests {
                     text: "first".into(),
                 }],
                 usage: None,
-            }),
+            })),
         );
         by_id.insert(
             id2.clone(),
-            SessionEntry::Message(MessageEntry {
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: id2.clone(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
@@ -84,11 +84,11 @@ mod tests {
                     text: "second".into(),
                 }],
                 usage: None,
-            }),
+            })),
         );
         by_id.insert(
             id3.clone(),
-            SessionEntry::Message(MessageEntry {
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: id3.clone(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
@@ -97,7 +97,7 @@ mod tests {
                     text: "third".into(),
                 }],
                 usage: None,
-            }),
+            })),
         );
 
         let order = vec![id1.clone(), id2.clone(), id3.clone()];
@@ -146,7 +146,7 @@ mod tests {
         let mut by_id = HashMap::new();
         by_id.insert(
             id1.clone(),
-            SessionEntry::Message(MessageEntry {
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: id1.clone(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
@@ -155,11 +155,11 @@ mod tests {
                     text: "first".into(),
                 }],
                 usage: None,
-            }),
+            })),
         );
         by_id.insert(
             id2.clone(),
-            SessionEntry::Message(MessageEntry {
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: id2.clone(),
                 parent_id: Some(id1.clone()),
                 timestamp: chrono::Utc::now(),
@@ -168,11 +168,11 @@ mod tests {
                     text: "second".into(),
                 }],
                 usage: None,
-            }),
+            })),
         );
         by_id.insert(
             id3.clone(),
-            SessionEntry::Message(MessageEntry {
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: id3.clone(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
@@ -181,7 +181,7 @@ mod tests {
                     text: "third".into(),
                 }],
                 usage: None,
-            }),
+            })),
         );
 
         let order = vec![id1.clone(), id2.clone(), id3.clone()];

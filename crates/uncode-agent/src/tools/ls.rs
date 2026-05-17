@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use std::fs;
-use uncode_core::error::UncodeResult;
+use uncode_core::error::{UncodeError, UncodeResult};
 use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
 
 #[derive(Default)]
@@ -24,31 +23,37 @@ impl ToolExecutor for LsTool {
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
-        let raw = arguments["path"].as_str().unwrap_or(".");
-        let resolved = super::resolve_path(raw).map_err(uncode_core::error::UncodeError::Tool)?;
+        let raw = arguments["path"].as_str().unwrap_or(".").to_string();
+        let resolved = super::resolve_path(&raw).map_err(UncodeError::Tool)?;
         let display = resolved.display().to_string();
 
-        let entries = fs::read_dir(&resolved)
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("ls {display}: {e}")))?;
+        tokio::task::spawn_blocking(move || list_dir(&display))
+            .await
+            .map_err(|e| UncodeError::Tool(format!("ls task failed: {e}")))?
+    }
+}
 
-        let mut results: Vec<String> = entries
-            .flatten()
-            .take(500)
-            .map(|e| {
-                let name = e.file_name().to_string_lossy().to_string();
-                if e.file_type().is_ok_and(|t| t.is_dir()) {
-                    format!("{name}/")
-                } else {
-                    name
-                }
-            })
-            .collect();
+fn list_dir(path: &str) -> UncodeResult<String> {
+    let entries =
+        std::fs::read_dir(path).map_err(|e| UncodeError::Tool(format!("ls {path}: {e}")))?;
 
-        if results.is_empty() {
-            Ok("(empty)".into())
-        } else {
-            results.sort();
-            Ok(results.join("\n"))
-        }
+    let mut results: Vec<String> = entries
+        .flatten()
+        .take(500)
+        .map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            if e.file_type().is_ok_and(|t| t.is_dir()) {
+                format!("{name}/")
+            } else {
+                name
+            }
+        })
+        .collect();
+
+    if results.is_empty() {
+        Ok("(empty)".into())
+    } else {
+        results.sort();
+        Ok(results.join("\n"))
     }
 }

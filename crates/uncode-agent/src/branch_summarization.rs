@@ -30,13 +30,13 @@ pub fn branch_with_summary(
         if old_id != target_id {
             if let Ok(path) = store.get_path_to_root(session_id, &old_id) {
                 let summary = summarize_branch_entries(&path, reason);
-                let entry = SessionEntry::BranchSummary(BranchSummaryEntry {
+                let entry = SessionEntry::BranchSummary(Box::new(BranchSummaryEntry {
                     id: generate_entry_id(),
                     parent_id: None,
                     timestamp: chrono::Utc::now(),
                     from_id: old_id,
                     summary,
-                });
+                }));
                 store.append_entry(session_id, &entry)?;
             }
         }
@@ -47,9 +47,9 @@ pub fn branch_with_summary(
 
 /// Generate a structured summary from a list of branch entries.
 fn summarize_branch_entries(entries: &[SessionEntry], reason: &str) -> String {
-    let mut goals = Vec::new();
-    let mut progress = Vec::new();
-    let mut decisions = Vec::new();
+    let mut goals = Vec::with_capacity(entries.len());
+    let mut progress = Vec::with_capacity(entries.len());
+    let mut decisions = Vec::with_capacity(entries.len());
 
     for entry in entries {
         if let SessionEntry::Message(me) = entry {
@@ -157,7 +157,7 @@ mod tests {
         store
             .append_entry(
                 "test-session",
-                &SessionEntry::Message(MessageEntry {
+                &SessionEntry::Message(Box::new(MessageEntry {
                     id: msg1_id.clone(),
                     parent_id: None,
                     timestamp: chrono::Utc::now(),
@@ -166,7 +166,7 @@ mod tests {
                         text: "implement auth".into(),
                     }],
                     usage: None,
-                }),
+                })),
             )
             .unwrap();
 
@@ -174,7 +174,7 @@ mod tests {
         store
             .append_entry(
                 "test-session",
-                &SessionEntry::Message(MessageEntry {
+                &SessionEntry::Message(Box::new(MessageEntry {
                     id: msg2_id.clone(),
                     parent_id: None,
                     timestamp: chrono::Utc::now(),
@@ -183,7 +183,7 @@ mod tests {
                         text: "added JWT tokens".into(),
                     }],
                     usage: None,
-                }),
+                })),
             )
             .unwrap();
 
@@ -191,7 +191,7 @@ mod tests {
         store
             .append_entry(
                 "test-session",
-                &SessionEntry::Message(MessageEntry {
+                &SessionEntry::Message(Box::new(MessageEntry {
                     id: msg3_id.clone(),
                     parent_id: None,
                     timestamp: chrono::Utc::now(),
@@ -200,7 +200,7 @@ mod tests {
                         text: "try different approach".into(),
                     }],
                     usage: None,
-                }),
+                })),
             )
             .unwrap();
 
@@ -241,7 +241,7 @@ mod tests {
         store
             .append_entry(
                 "test-session",
-                &SessionEntry::Message(MessageEntry {
+                &SessionEntry::Message(Box::new(MessageEntry {
                     id: msg1_id.clone(),
                     parent_id: None,
                     timestamp: chrono::Utc::now(),
@@ -250,7 +250,7 @@ mod tests {
                         text: "hello".into(),
                     }],
                     usage: None,
-                }),
+                })),
             )
             .unwrap();
 
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn test_summarize_branch_entries() {
         let entries = vec![
-            SessionEntry::Message(MessageEntry {
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: "u1".into(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
@@ -279,8 +279,8 @@ mod tests {
                     text: "implement caching".into(),
                 }],
                 usage: None,
-            }),
-            SessionEntry::Message(MessageEntry {
+            })),
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: "a1".into(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
@@ -289,7 +289,7 @@ mod tests {
                     text: "added Redis cache layer".into(),
                 }],
                 usage: None,
-            }),
+            })),
         ];
 
         let summary = summarize_branch_entries(&entries, "performance issue");

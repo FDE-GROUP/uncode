@@ -159,7 +159,7 @@ pub async fn compact_session(
     };
 
     // Collect message entries before cut point for summarization
-    let mut to_summarize: Vec<&MessageEntry> = Vec::new();
+    let mut to_summarize: Vec<&MessageEntry> = Vec::with_capacity(entries.len());
     for entry in &entries {
         if let SessionEntry::Message(me) = entry {
             if me.id == cut_id {
@@ -206,20 +206,15 @@ pub async fn compact_session(
         summary,
         first_kept_entry_id: cut_id,
         tokens_before,
-        files_read: if files_read.is_empty() {
-            None
-        } else {
-            Some(files_read)
-        },
-        files_modified: if files_modified.is_empty() {
-            None
-        } else {
-            Some(files_modified)
-        },
+        files_read,
+        files_modified,
     };
 
     store
-        .append_entry(session_id, &SessionEntry::Compaction(compaction.clone()))
+        .append_entry(
+            session_id,
+            &SessionEntry::Compaction(Box::new(compaction.clone())),
+        )
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     tracing::info!(
@@ -241,8 +236,8 @@ pub(crate) fn find_cut_point(entries: &[SessionEntry], keep_recent_tokens: u64) 
     let mut accumulated: u64 = 0;
     let mut threshold_idx: Option<usize> = None;
 
-    for i in (0..entries.len()).rev() {
-        if let SessionEntry::Message(me) = &entries[i] {
+    for (i, entry) in entries.iter().enumerate().rev() {
+        if let SessionEntry::Message(me) = entry {
             accumulated += estimate_message_entry_tokens(me);
             if accumulated >= keep_recent_tokens {
                 threshold_idx = Some(i);
@@ -254,8 +249,8 @@ pub(crate) fn find_cut_point(entries: &[SessionEntry], keep_recent_tokens: u64) 
     let threshold_idx = threshold_idx?;
 
     // Walk forward from threshold to find a User message (clean turn boundary)
-    for i in threshold_idx..entries.len() {
-        if let SessionEntry::Message(me) = &entries[i] {
+    for entry in &entries[threshold_idx..] {
+        if let SessionEntry::Message(me) = entry {
             if me.role == Role::User {
                 return Some(me.id.clone());
             }
@@ -371,8 +366,8 @@ fn estimate_entry_tokens(entries: &[SessionEntry]) -> u64 {
 }
 
 fn extract_files_from_entries(entries: &[&MessageEntry]) -> (Vec<String>, Vec<String>) {
-    let mut files_read = Vec::new();
-    let mut files_modified = Vec::new();
+    let mut files_read = Vec::with_capacity(entries.len());
+    let mut files_modified = Vec::with_capacity(entries.len());
 
     for me in entries {
         if me.role == Role::Assistant {
@@ -474,7 +469,7 @@ async fn generate_summary(
     };
 
     let mut stream = uncode_ai::stream(model, &context, &options, api_registry).await?;
-    let mut summary = String::new();
+    let mut summary = String::with_capacity(512);
     while let Some(event) = stream.next().await {
         if let StreamEvent::TextDelta(text) = event {
             summary.push_str(&text);
@@ -493,7 +488,7 @@ mod tests {
     // ── find_cut_point tests ──
 
     fn make_msg_entry(id: &str, role: Role, text: &str) -> SessionEntry {
-        SessionEntry::Message(MessageEntry {
+        SessionEntry::Message(Box::new(MessageEntry {
             id: id.to_string(),
             parent_id: None,
             timestamp: chrono::Utc::now(),
@@ -502,7 +497,7 @@ mod tests {
                 text: text.to_string(),
             }],
             usage: None,
-        })
+        }))
     }
 
     #[test]
@@ -538,30 +533,30 @@ mod tests {
     fn test_find_cut_point_tool_result_boundary() {
         let entries = vec![
             make_msg_entry("u1", Role::User, &"x".repeat(200)),
-            SessionEntry::Message(MessageEntry {
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: "a1".into(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
                 role: Role::Assistant,
-                content: vec![ContentBlock::ToolCall(ToolCall {
+                content: vec![ContentBlock::ToolCall(Box::new(ToolCall {
                     id: "tc1".into(),
                     name: "read".into(),
                     arguments: serde_json::json!({"path": "/test.rs"}),
-                })],
+                }))],
                 usage: None,
-            }),
-            SessionEntry::Message(MessageEntry {
+            })),
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: "t1".into(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
                 role: Role::Tool,
-                content: vec![ContentBlock::ToolResult(ToolResult {
+                content: vec![ContentBlock::ToolResult(Box::new(ToolResult {
                     tool_call_id: "tc1".into(),
                     content: "file contents".into(),
                     is_error: false,
-                })],
+                }))],
                 usage: None,
-            }),
+            })),
             make_msg_entry("u2", Role::User, &"y".repeat(200)),
             make_msg_entry("a2", Role::Assistant, &"z".repeat(200)),
         ];
@@ -611,11 +606,11 @@ mod tests {
             parent_id: None,
             timestamp: chrono::Utc::now(),
             role: Role::Assistant,
-            content: vec![ContentBlock::ToolCall(ToolCall {
+            content: vec![ContentBlock::ToolCall(Box::new(ToolCall {
                 id: "tc1".into(),
                 name: "read".into(),
                 arguments: serde_json::json!({"path": "/src/main.rs"}),
-            })],
+            }))],
             usage: None,
         }];
 
@@ -632,16 +627,16 @@ mod tests {
             timestamp: chrono::Utc::now(),
             role: Role::Assistant,
             content: vec![
-                ContentBlock::ToolCall(ToolCall {
+                ContentBlock::ToolCall(Box::new(ToolCall {
                     id: "tc1".into(),
                     name: "edit".into(),
                     arguments: serde_json::json!({"path": "/src/lib.rs"}),
-                }),
-                ContentBlock::ToolCall(ToolCall {
+                })),
+                ContentBlock::ToolCall(Box::new(ToolCall {
                     id: "tc2".into(),
                     name: "write".into(),
                     arguments: serde_json::json!({"path": "/src/new.rs"}),
-                }),
+                })),
             ],
             usage: None,
         }];
@@ -660,11 +655,11 @@ mod tests {
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
                 role: Role::Assistant,
-                content: vec![ContentBlock::ToolCall(ToolCall {
+                content: vec![ContentBlock::ToolCall(Box::new(ToolCall {
                     id: "tc1".into(),
                     name: "read".into(),
                     arguments: serde_json::json!({"path": "/src/main.rs"}),
-                })],
+                }))],
                 usage: None,
             },
             MessageEntry {
@@ -672,11 +667,11 @@ mod tests {
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
                 role: Role::Assistant,
-                content: vec![ContentBlock::ToolCall(ToolCall {
+                content: vec![ContentBlock::ToolCall(Box::new(ToolCall {
                     id: "tc2".into(),
                     name: "read".into(),
                     arguments: serde_json::json!({"path": "/src/main.rs"}),
-                })],
+                }))],
                 usage: None,
             },
         ];
@@ -766,30 +761,30 @@ mod tests {
     fn test_is_split_turn_true() {
         let entries = vec![
             make_msg_entry("u1", Role::User, "hello"),
-            SessionEntry::Message(MessageEntry {
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: "a1".into(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
                 role: Role::Assistant,
-                content: vec![ContentBlock::ToolCall(ToolCall {
+                content: vec![ContentBlock::ToolCall(Box::new(ToolCall {
                     id: "tc1".into(),
                     name: "read".into(),
                     arguments: serde_json::json!({"path": "/test.rs"}),
-                })],
+                }))],
                 usage: None,
-            }),
-            SessionEntry::Message(MessageEntry {
+            })),
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: "t1".into(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
                 role: Role::Tool,
-                content: vec![ContentBlock::ToolResult(ToolResult {
+                content: vec![ContentBlock::ToolResult(Box::new(ToolResult {
                     tool_call_id: "tc1".into(),
                     content: "file contents".into(),
                     is_error: false,
-                })],
+                }))],
                 usage: None,
-            }),
+            })),
             make_msg_entry("u2", Role::User, "next"),
         ];
         // cut at t1 (idx=2): a1 has tool call, t1 is Tool → split turn
@@ -811,30 +806,30 @@ mod tests {
     fn test_adjust_for_split_turn_moves_back() {
         let entries = vec![
             make_msg_entry("u1", Role::User, "read this"),
-            SessionEntry::Message(MessageEntry {
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: "a1".into(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
                 role: Role::Assistant,
-                content: vec![ContentBlock::ToolCall(ToolCall {
+                content: vec![ContentBlock::ToolCall(Box::new(ToolCall {
                     id: "tc1".into(),
                     name: "read".into(),
                     arguments: serde_json::json!({"path": "/test.rs"}),
-                })],
+                }))],
                 usage: None,
-            }),
-            SessionEntry::Message(MessageEntry {
+            })),
+            SessionEntry::Message(Box::new(MessageEntry {
                 id: "t1".into(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
                 role: Role::Tool,
-                content: vec![ContentBlock::ToolResult(ToolResult {
+                content: vec![ContentBlock::ToolResult(Box::new(ToolResult {
                     tool_call_id: "tc1".into(),
                     content: "contents".into(),
                     is_error: false,
-                })],
+                }))],
                 usage: None,
-            }),
+            })),
             make_msg_entry("u2", Role::User, "continue"),
         ];
         // cut at t1 (idx=2): split detected → move back to u1

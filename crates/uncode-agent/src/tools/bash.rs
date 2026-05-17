@@ -114,8 +114,8 @@ impl ToolExecutor for BashTool {
             .spawn()
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("spawn: {e}")))?;
 
-        let stdout = child.stdout.take().unwrap();
-        let stderr = child.stderr.take().unwrap();
+        let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take().expect("stderr piped");
         let stdout_reader = BufReader::new(stdout);
         let stderr_reader = BufReader::new(stderr);
 

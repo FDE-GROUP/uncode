@@ -379,7 +379,8 @@ impl TuiEngine {
                                 "terminal poll failed",
                             ));
                         }
-                        if poll_ok.unwrap() {
+                        let has_event = poll_ok.expect("is_err already handled");
+                        if has_event {
                             let ev = event::read().unwrap_or(Event::Key(
                                 event::KeyEvent::new(KeyCode::Null, event::KeyModifiers::empty())
                             ));
@@ -951,7 +952,7 @@ impl TuiEngine {
             "jsonl" => match store.load_entries(&self.session_id) {
                 Ok(entries) => {
                     let filename = format!("uncode-export-{sid_short}.jsonl");
-                    let mut out = String::new();
+                    let mut out = String::with_capacity(entries.len() * 128);
                     for entry in &entries {
                         if let Ok(line) = serde_json::to_string(entry) {
                             out.push_str(&line);
@@ -1333,10 +1334,10 @@ impl TuiEngine {
                 self.footer.end_turn();
                 self.footer.update_usage(usage);
             }
-            AgentEvent::SessionEnd { total_tokens, .. } => {
+            AgentEvent::SessionEnd { data } => {
                 self.agent_busy = false;
                 self.footer.end_turn();
-                self.footer.update_usage(total_tokens);
+                self.footer.update_usage(&data.total_tokens);
             }
             AgentEvent::AgentInterrupted { .. } => {
                 self.agent_busy = false;
@@ -1619,9 +1620,9 @@ fn base64_encode(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let b0 = u32::from(chunk[0]);
+        let b1 = u32::from(chunk.get(1).copied().unwrap_or(0));
+        let b2 = u32::from(chunk.get(2).copied().unwrap_or(0));
         let triple = (b0 << 16) | (b1 << 8) | b2;
         out.push(TABLE[((triple >> 18) & 0x3F) as usize] as char);
         out.push(TABLE[((triple >> 12) & 0x3F) as usize] as char);
@@ -1640,7 +1641,7 @@ fn base64_encode(input: &str) -> String {
 }
 
 fn render_export_html(entries: &[uncode_core::session::SessionEntry]) -> String {
-    let mut body = String::new();
+    let mut body = String::with_capacity(entries.len() * 256);
     for entry in entries {
         if let uncode_core::session::SessionEntry::Message(msg) = entry {
             let role = &msg.role;
@@ -1730,6 +1731,7 @@ fn slash_commands() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uncode_core::event::SessionEndData;
 
     #[test]
     fn test_format_tokens() {
@@ -1884,14 +1886,16 @@ mod tests {
         let mut engine = TuiEngine::new();
         engine.agent_busy = true;
         engine.handle_event(AgentEvent::SessionEnd {
-            session_id: "sess123".into(),
-            total_turns: 5,
-            total_tokens: UsageInfo {
-                input_tokens: 100_000,
-                output_tokens: 50_000,
-                cost: None,
-            },
-            exit_reason: "done".into(),
+            data: Box::new(SessionEndData {
+                session_id: "sess123".into(),
+                total_turns: 5,
+                total_tokens: UsageInfo {
+                    input_tokens: 100_000,
+                    output_tokens: 50_000,
+                    cost: None,
+                },
+                exit_reason: "done".into(),
+            }),
         });
         assert!(!engine.agent_busy);
         assert_eq!(engine.footer.input_tokens, 100_000);

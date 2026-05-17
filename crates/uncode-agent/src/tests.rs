@@ -19,6 +19,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use uncode_ai::Api;
     use uncode_ai::StreamEvent;
+    use uncode_ai::ToolCallEndData;
     use uncode_core::api_types::{Context, StreamOptions};
     use uncode_core::error::UncodeError;
     use uncode_core::model::Model;
@@ -192,16 +193,16 @@ mod tests {
                 ContentBlock::Thinking {
                     text: "reasoning".into(),
                 },
-                ContentBlock::ToolCall(ToolCall {
+                ContentBlock::ToolCall(Box::new(ToolCall {
                     id: "c1".into(),
                     name: "read".into(),
                     arguments: serde_json::json!({}),
-                }),
-                ContentBlock::ToolResult(ToolResult {
+                })),
+                ContentBlock::ToolResult(Box::new(ToolResult {
                     tool_call_id: "c1".into(),
                     content: "file contents here".into(),
                     is_error: false,
-                }),
+                })),
             ],
         );
         let tokens = estimate_context_tokens(&[msg]);
@@ -240,11 +241,11 @@ mod tests {
         let chinese = "你".repeat(100);
         let msg = Message::new(
             Role::Tool,
-            vec![ContentBlock::ToolResult(ToolResult {
+            vec![ContentBlock::ToolResult(Box::new(ToolResult {
                 tool_call_id: "c1".into(),
                 content: chinese,
                 is_error: false,
-            })],
+            }))],
         );
         let text = extract_text(&msg.content);
         assert!(!text.is_empty());
@@ -368,11 +369,11 @@ mod tests {
     fn test_token_estimate_message_with_tool_call() {
         let msg = Message::new(
             Role::Assistant,
-            vec![ContentBlock::ToolCall(ToolCall {
+            vec![ContentBlock::ToolCall(Box::new(ToolCall {
                 id: "call_1".into(),
                 name: "bash".into(),
                 arguments: serde_json::json!({"command": "ls"}),
-            })],
+            }))],
         );
         let tokens = token::estimate_message_tokens(&msg);
         assert!(tokens > 0);
@@ -458,11 +459,11 @@ mod tests {
                     id: "tc1".into(),
                     arguments: r#"{"text":"world"}"#.into(),
                 },
-                StreamEvent::ToolCallEnd {
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
                     id: "tc1".into(),
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "world"}),
-                },
+                })),
                 StreamEvent::Usage(uncode_ai::LlmUsageInfo {
                     input_tokens: 20,
                     output_tokens: 10,
@@ -537,20 +538,20 @@ mod tests {
                     id: "tc1".into(),
                     name: "echo".into(),
                 },
-                StreamEvent::ToolCallEnd {
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
                     id: "tc1".into(),
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "a"}),
-                },
+                })),
                 StreamEvent::ToolCallStart {
                     id: "tc2".into(),
                     name: "echo".into(),
                 },
-                StreamEvent::ToolCallEnd {
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
                     id: "tc2".into(),
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "b"}),
-                },
+                })),
                 StreamEvent::Done {
                     reason: uncode_core::api_types::StopReason::Stop,
                 },
@@ -604,11 +605,11 @@ mod tests {
                     id: "tc1".into(),
                     name: "nonexistent".into(),
                 },
-                StreamEvent::ToolCallEnd {
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
                     id: "tc1".into(),
                     name: "nonexistent".into(),
                     arguments: serde_json::json!({}),
-                },
+                })),
                 StreamEvent::Done {
                     reason: uncode_core::api_types::StopReason::Stop,
                 },
@@ -650,11 +651,11 @@ mod tests {
                     id: "tc1".into(),
                     name: "echo".into(),
                 },
-                StreamEvent::ToolCallEnd {
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
                     id: "tc1".into(),
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "x"}),
-                },
+                })),
                 StreamEvent::Done {
                     reason: uncode_core::api_types::StopReason::Stop,
                 },
@@ -763,11 +764,11 @@ mod tests {
                     id: "tc1".into(),
                     name: "echo".into(),
                 },
-                StreamEvent::ToolCallEnd {
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
                     id: "tc1".into(),
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "hello"}),
-                },
+                })),
                 StreamEvent::Done {
                     reason: StopReason::Stop,
                 },
@@ -811,11 +812,11 @@ mod tests {
                     id: "tc1".into(),
                     name: "echo".into(),
                 },
-                StreamEvent::ToolCallEnd {
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
                     id: "tc1".into(),
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "x"}),
-                },
+                })),
                 StreamEvent::Done {
                     reason: StopReason::Stop,
                 },
@@ -859,11 +860,11 @@ mod tests {
                     id: "tc1".into(),
                     name: "echo".into(),
                 },
-                StreamEvent::ToolCallEnd {
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
                     id: "tc1".into(),
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "x"}),
-                },
+                })),
                 StreamEvent::Done {
                     reason: StopReason::Stop,
                 },
@@ -1028,11 +1029,11 @@ mod tests {
                     id: "tc1".into(),
                     name: "echo".into(),
                 },
-                StreamEvent::ToolCallEnd {
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
                     id: "tc1".into(),
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "bye"}),
-                },
+                })),
                 StreamEvent::Done {
                     reason: StopReason::Stop,
                 },

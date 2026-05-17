@@ -60,29 +60,29 @@ impl SessionHeader {
 #[non_exhaustive]
 pub enum SessionEntry {
     #[serde(rename = "message")]
-    Message(MessageEntry),
+    Message(Box<MessageEntry>),
     #[serde(rename = "system")]
-    System(SystemEntry),
+    System(Box<SystemEntry>),
     #[serde(rename = "branch")]
-    Branch(BranchEntry),
+    Branch(Box<BranchEntry>),
     #[serde(rename = "leaf")]
-    Leaf(LeafEntry),
+    Leaf(Box<LeafEntry>),
     #[serde(rename = "compaction")]
-    Compaction(CompactionEntry),
+    Compaction(Box<CompactionEntry>),
     #[serde(rename = "model_change")]
-    ModelChange(ModelChangeEntry),
+    ModelChange(Box<ModelChangeEntry>),
     #[serde(rename = "thinking_level_change")]
-    ThinkingLevelChange(ThinkingLevelChangeEntry),
+    ThinkingLevelChange(Box<ThinkingLevelChangeEntry>),
     #[serde(rename = "branch_summary")]
-    BranchSummary(BranchSummaryEntry),
+    BranchSummary(Box<BranchSummaryEntry>),
     #[serde(rename = "custom")]
-    Custom(CustomEntry),
+    Custom(Box<CustomEntry>),
     #[serde(rename = "custom_message")]
-    CustomMessage(CustomMessageEntry),
+    CustomMessage(Box<CustomMessageEntry>),
     #[serde(rename = "label")]
-    Label(LabelEntry),
+    Label(Box<LabelEntry>),
     #[serde(rename = "session_info")]
-    SessionInfo(SessionInfoEntry),
+    SessionInfo(Box<SessionInfoEntry>),
 }
 
 impl SessionEntry {
@@ -183,6 +183,12 @@ impl From<Message> for MessageEntry {
     }
 }
 
+impl From<Message> for Box<MessageEntry> {
+    fn from(msg: Message) -> Self {
+        Box::new(MessageEntry::from(msg))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemEntry {
     #[serde(default = "generate_entry_id")]
@@ -235,10 +241,10 @@ pub struct CompactionEntry {
     pub summary: String,
     pub first_kept_entry_id: String,
     pub tokens_before: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub files_read: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub files_modified: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files_read: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files_modified: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

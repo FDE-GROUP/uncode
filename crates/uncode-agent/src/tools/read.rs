@@ -81,7 +81,7 @@ impl ToolExecutor for ReadTool {
         }
 
         // Check file size BEFORE reading into memory (#191)
-        if meta.len() as usize > self.max_size {
+        if meta.len() > self.max_size as u64 {
             return Err(uncode_core::error::UncodeError::Tool(format!(
                 "file too large ({} bytes, max {})",
                 meta.len(),

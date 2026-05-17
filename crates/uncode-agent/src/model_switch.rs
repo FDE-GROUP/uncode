@@ -11,17 +11,16 @@ pub fn switch_model(
     session_store: &Arc<SessionStore>,
     session_id: Option<&str>,
 ) -> SessionResult<()> {
-    let old = current_model_id.clone();
-    *current_model_id = new_model_id.to_string();
+    let old = std::mem::replace(current_model_id, new_model_id.to_string());
 
     if let Some(sid) = session_id {
-        let entry = SessionEntry::ModelChange(ModelChangeEntry {
+        let entry = SessionEntry::ModelChange(Box::new(ModelChangeEntry {
             id: generate_entry_id(),
             parent_id: None,
             timestamp: chrono::Utc::now(),
             provider: new_provider.to_string(),
             model_id: new_model_id.to_string(),
-        });
+        }));
         session_store.append_entry(sid, &entry)?;
     }
 

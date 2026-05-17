@@ -56,8 +56,10 @@ impl SessionManager {
             reason: reason.to_string(),
         };
 
-        self.store
-            .append_entry(&new_id, &uncode_core::session::SessionEntry::Branch(branch))?;
+        self.store.append_entry(
+            &new_id,
+            &uncode_core::session::SessionEntry::Branch(Box::new(branch)),
+        )?;
 
         self.get_metadata(&new_id)
     }
