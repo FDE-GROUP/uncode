@@ -254,6 +254,13 @@ impl TuiEngine {
         self.available_models = models;
     }
 
+    pub fn set_default_model(&mut self, model: String) {
+        if let Some(idx) = self.available_models.iter().position(|m| m == &model) {
+            self.model_index = idx;
+        }
+        self.model = model;
+    }
+
     pub fn render(&mut self, f: &mut Frame) {
         self.tick = self.tick.wrapping_add(1);
         let chunks = Layout::default()
@@ -303,9 +310,51 @@ impl TuiEngine {
             .visible_range(self.chat.scroll_offset, visible_height);
 
         // Step 4: Build viewport lines (only visible messages)
-        let lines = self
-            .chat
-            .render_viewport(first, last, self.chat.scroll_offset, visible_height);
+        let mut lines =
+            self.chat
+                .render_viewport(first, last, self.chat.scroll_offset, visible_height);
+
+        // Step 5: Show "processing" indicator when agent is busy but no output yet
+        if self.agent_busy {
+            let has_output = self.chat.messages.last().map_or(false, |m| {
+                matches!(
+                    m,
+                    chat::ChatMessage::Assistant { .. }
+                        | chat::ChatMessage::Thinking { .. }
+                        | chat::ChatMessage::ToolCall { .. }
+                        | chat::ChatMessage::BashExecution { .. }
+                )
+            });
+            if !has_output {
+                use ratatui::style::{Modifier, Style};
+                use ratatui::text::{Line, Span};
+                let phase = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis()
+                    % 800;
+                let dots = match phase {
+                    0..=199 => "●  ",
+                    200..=399 => " ● ",
+                    400..=599 => "  ●",
+                    _ => "   ",
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!(" {dots} "),
+                        Style::default()
+                            .fg(self.theme.tool_status.running)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        "Working...",
+                        Style::default()
+                            .fg(self.theme.tool_status.running)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            }
+        }
 
         let content = Paragraph::new(lines);
         f.render_widget(content, area);
@@ -353,7 +402,7 @@ impl TuiEngine {
 
     pub async fn run<F>(&mut self, mut event_rx: broadcast::Receiver<AgentEvent>, on_submit: F)
     where
-        F: Fn(String, CancellationToken),
+        F: Fn(String, CancellationToken, String),
     {
         let mut terminal = ratatui::init();
         let _ = crossterm::execute!(
@@ -497,10 +546,6 @@ impl TuiEngine {
                                                 (self.model_index + 1) % self.available_models.len();
                                         }
                                         self.model = self.available_models[self.model_index].clone();
-                                        self.chat.messages.push(chat::ChatMessage::Summary {
-                                            completed: vec![format!("model: {}", self.model)],
-                                            next_steps: vec![],
-                                        });
                                     }
                                 }
                                 // Retry: Ctrl+R
@@ -516,7 +561,7 @@ impl TuiEngine {
                                                 &std::env::current_dir().unwrap_or_default(),
                                             );
                                             let token = self.new_cancel_token();
-                                            on_submit(expanded, token);
+                                            on_submit(expanded, token, self.model.clone());
                                         } else {
                                             self.chat.messages.push(chat::ChatMessage::Summary {
                                                 completed: vec!["No messages to retry.".into()],
@@ -593,10 +638,6 @@ impl TuiEngine {
                                             self.model_index = idx;
                                         }
                                         self.model = selected.clone();
-                                        self.chat.messages.push(chat::ChatMessage::Summary {
-                                            completed: vec![format!("Model switched to: {selected}")],
-                                            next_steps: vec![],
-                                        });
                                     }
                                     self.selector.hide();
                                 }
@@ -658,6 +699,9 @@ impl TuiEngine {
                         self.flush_queue(&on_submit);
                     }
                 }
+                _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
+                    // Idle tick: re-render for status animation
+                }
             }
             if self.quit_requested {
                 break;
@@ -669,7 +713,7 @@ impl TuiEngine {
 
     fn handle_submit<F>(&mut self, text: String, on_submit: &F)
     where
-        F: Fn(String, CancellationToken),
+        F: Fn(String, CancellationToken, String),
     {
         if let Some(response) = self.slash.execute(&text) {
             self.chat.messages.push(chat::ChatMessage::Summary {
@@ -770,7 +814,7 @@ impl TuiEngine {
 
     fn submit_text<F>(&mut self, text: String, on_submit: &F)
     where
-        F: Fn(String, CancellationToken),
+        F: Fn(String, CancellationToken, String),
     {
         if self.agent_busy {
             let preview = text.clone();
@@ -788,7 +832,7 @@ impl TuiEngine {
                 &std::env::current_dir().unwrap_or_default(),
             );
             let token = self.new_cancel_token();
-            on_submit(file_expanded, token);
+            on_submit(file_expanded, token, self.model.clone());
         }
     }
 
@@ -863,15 +907,10 @@ impl TuiEngine {
             return;
         }
 
-        let old = self.model.clone();
         self.model = name.to_string();
         if let Some(idx) = self.available_models.iter().position(|m| m == name) {
             self.model_index = idx;
         }
-        self.chat.messages.push(chat::ChatMessage::Summary {
-            completed: vec![format!("Model switched: {old} -> {name}")],
-            next_steps: vec![],
-        });
     }
 
     fn handle_fork_command(&mut self, text: &str) {
@@ -903,12 +942,23 @@ impl TuiEngine {
             }
         };
         let store = uncode_agent::session::store::SessionStore::new(session_dir);
-        match uncode_agent::branch_summarization::branch_with_summary(
+        let rt = tokio::runtime::Handle::current();
+        let store = match rt.block_on(store) {
+            Ok(s) => s,
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("创建会话存储失败: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return;
+            }
+        };
+        match rt.block_on(uncode_agent::branch_summarization::branch_with_summary(
             &store,
             &self.session_id,
             &target_entry,
             "用户 fork",
-        ) {
+        )) {
             Ok(()) => {
                 let short = &target_entry[..8.min(target_entry.len())];
                 let msg = format!("已分支到条目: {short}");
@@ -947,9 +997,20 @@ impl TuiEngine {
             }
         };
         let store = uncode_agent::session::store::SessionStore::new(session_dir);
+        let rt = tokio::runtime::Handle::current();
+        let store = match rt.block_on(store) {
+            Ok(s) => s,
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("创建会话存储失败: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return;
+            }
+        };
         let sid_short = &self.session_id[..8.min(self.session_id.len())];
         match format {
-            "jsonl" => match store.load_entries(&self.session_id) {
+            "jsonl" => match rt.block_on(store.load_entries(&self.session_id)) {
                 Ok(entries) => {
                     let filename = format!("uncode-export-{sid_short}.jsonl");
                     let mut out = String::with_capacity(entries.len() * 128);
@@ -984,7 +1045,7 @@ impl TuiEngine {
                     });
                 }
             },
-            "html" => match store.load_entries(&self.session_id) {
+            "html" => match rt.block_on(store.load_entries(&self.session_id)) {
                 Ok(entries) => {
                     let filename = format!("uncode-export-{sid_short}.html");
                     let html = render_export_html(&entries);
@@ -1034,7 +1095,18 @@ impl TuiEngine {
             }
         };
         let store = uncode_agent::session::store::SessionStore::new(session_dir);
-        match store.list_sessions() {
+        let rt = tokio::runtime::Handle::current();
+        let store = match rt.block_on(store) {
+            Ok(s) => s,
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("创建会话存储失败: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return;
+            }
+        };
+        match rt.block_on(store.list_sessions()) {
             Ok(mut sessions) => {
                 if sessions.is_empty() {
                     self.chat.messages.push(chat::ChatMessage::Summary {
@@ -1098,8 +1170,19 @@ impl TuiEngine {
             }
         };
         let store = uncode_agent::session::store::SessionStore::new(session_dir);
+        let rt = tokio::runtime::Handle::current();
+        let store = match rt.block_on(store) {
+            Ok(s) => s,
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("创建会话存储失败: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return;
+            }
+        };
         let sid_short = &self.session_id[..8.min(self.session_id.len())];
-        match store.get_children(&self.session_id) {
+        match rt.block_on(store.get_children(&self.session_id)) {
             Ok(children) => {
                 let mut lines = vec![format!("当前会话: session:{sid_short}")];
                 if children.is_empty() {
@@ -1148,7 +1231,18 @@ impl TuiEngine {
                 }
             };
             let store = uncode_agent::session::store::SessionStore::new(session_dir);
-            match store.read_header(&self.session_id) {
+            let rt = tokio::runtime::Handle::current();
+            let store = match rt.block_on(store) {
+                Ok(s) => s,
+                Err(e) => {
+                    self.chat.messages.push(chat::ChatMessage::Error {
+                        message: format!("创建会话存储失败: {e}"),
+                        category: uncode_core::event::ErrorCategory::Config,
+                    });
+                    return;
+                }
+            };
+            match rt.block_on(store.read_header(&self.session_id)) {
                 Ok(header) => {
                     let current = header.title.as_deref().unwrap_or("(无标题)");
                     self.chat.messages.push(chat::ChatMessage::Summary {
@@ -1165,29 +1259,14 @@ impl TuiEngine {
             }
             return;
         }
-        let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
-            Ok(d) => d,
-            Err(_) => return,
-        };
-        let store = uncode_agent::session::store::SessionStore::new(session_dir);
-        if let Ok(mut header) = store.read_header(&self.session_id) {
-            header.title = Some(title.to_string());
-            let header_path = store.session_path(&self.session_id);
-            let entries = store.load_entries(&self.session_id).unwrap_or_default();
-            if let Ok(mut file) = std::fs::File::create(&header_path) {
-                use std::io::Write;
-                if let Ok(json) = serde_json::to_string(&header) {
-                    let _ = writeln!(file, "{json}");
-                }
-                for entry in &entries {
-                    if let Ok(json) = serde_json::to_string(entry) {
-                        let _ = writeln!(file, "{json}");
-                    }
-                }
-            }
-        }
+        // TODO: async store backend does not yet support update_title;
+        // the /name <title> setter is deferred until a write-header API is added.
+        let _ = title;
         self.chat.messages.push(chat::ChatMessage::Summary {
-            completed: vec![format!("Title set: {title}")],
+            completed: vec![
+                "Title rename pending — async store backend does not yet support write_header."
+                    .into(),
+            ],
             next_steps: vec![],
         });
     }
@@ -1425,8 +1504,19 @@ impl TuiEngine {
             }
         };
         let store = uncode_agent::session::store::SessionStore::new(session_dir);
+        let rt = tokio::runtime::Handle::current();
+        let store = match rt.block_on(store) {
+            Ok(s) => s,
+            Err(e) => {
+                self.chat.messages.push(chat::ChatMessage::Error {
+                    message: format!("创建会话存储失败: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return;
+            }
+        };
 
-        match store.build_tree(&self.session_id) {
+        match rt.block_on(store.build_tree(&self.session_id)) {
             Ok(tree) => {
                 let lines = render_session_tree(&tree.root, "", true);
                 let header = format!(
@@ -1472,7 +1562,7 @@ impl TuiEngine {
 
     fn handle_skill_invoke<F>(&mut self, skill_name: &str, args_str: &str, on_submit: &F)
     where
-        F: Fn(String, CancellationToken),
+        F: Fn(String, CancellationToken, String),
     {
         use uncode_core::skill::SkillRegistry;
         let registry = SkillRegistry::load();
@@ -1511,7 +1601,7 @@ impl TuiEngine {
         self.chat
             .push_user_message(format!("[skill: {skill_name}] {args_str}"));
         let token = self.new_cancel_token();
-        on_submit(prompt, token);
+        on_submit(prompt, token, self.model.clone());
     }
 
     fn handle_theme_command(&mut self, text: &str) {
@@ -1562,13 +1652,13 @@ impl TuiEngine {
 
     fn flush_queue<F>(&mut self, on_submit: &F)
     where
-        F: Fn(String, CancellationToken),
+        F: Fn(String, CancellationToken, String),
     {
         if let Some(text) = self.queue.drain_follow_up().into_iter().next() {
             self.agent_busy = true;
             self.chat.push_user_message(text.clone());
             let token = self.new_cancel_token();
-            on_submit(text, token);
+            on_submit(text, token, self.model.clone());
         }
     }
 }
@@ -1900,6 +1990,153 @@ mod tests {
         assert!(!engine.agent_busy);
         assert_eq!(engine.footer.input_tokens, 100_000);
         assert_eq!(engine.footer.output_tokens, 50_000);
+    }
+
+    #[test]
+    fn test_set_default_model_sets_model_and_index() {
+        let mut engine = TuiEngine::new();
+        engine.set_available_models(vec![
+            "deepseek-v3".into(),
+            "glm-4-flash".into(),
+            "ollama".into(),
+        ]);
+
+        // 设置存在的模型
+        engine.set_default_model("glm-4-flash".into());
+        assert_eq!(engine.model, "glm-4-flash");
+        assert_eq!(engine.model_index, 1);
+
+        // 设置不在列表中的模型
+        engine.set_default_model("unknown-model".into());
+        assert_eq!(engine.model, "unknown-model");
+        // model_index 不变（仍为上次的 1）
+        assert_eq!(engine.model_index, 1);
+    }
+
+    #[test]
+    fn test_set_default_model_empty_list() {
+        let mut engine = TuiEngine::new();
+        engine.set_default_model("deepseek-v3".into());
+        assert_eq!(engine.model, "deepseek-v3");
+        assert_eq!(engine.model_index, 0);
+    }
+
+    #[test]
+    fn test_handle_model_command_switches_model() {
+        let mut engine = TuiEngine::new();
+        engine.set_available_models(vec![
+            "deepseek-v3".into(),
+            "glm-4-flash".into(),
+            "ollama".into(),
+        ]);
+        engine.set_default_model("deepseek-v3".into());
+
+        engine.handle_model_command("/model glm-4-flash");
+
+        assert_eq!(engine.model, "glm-4-flash");
+        assert_eq!(engine.model_index, 1);
+        // 不产生 Summary 消息
+        assert_eq!(engine.chat.messages.len(), 0);
+    }
+
+    #[test]
+    fn test_handle_model_command_unknown_model_still_switches() {
+        let mut engine = TuiEngine::new();
+        engine.set_available_models(vec!["deepseek-v3".into()]);
+        engine.set_default_model("deepseek-v3".into());
+
+        engine.handle_model_command("/model my-custom-model");
+
+        assert_eq!(engine.model, "my-custom-model");
+        // 不在列表中，model_index 不变
+        assert_eq!(engine.model_index, 0);
+        assert_eq!(engine.chat.messages.len(), 0);
+    }
+
+    #[test]
+    fn test_handle_model_command_no_name_shows_selector() {
+        let mut engine = TuiEngine::new();
+        engine.set_available_models(vec!["deepseek-v3".into()]);
+
+        engine.handle_model_command("/model");
+
+        // 不切换模型，只显示选择器
+        assert!(engine.model.is_empty());
+        assert!(engine.selector.is_visible());
+        assert_eq!(engine.chat.messages.len(), 0);
+    }
+
+    /// 模拟 Ctrl+P 模型循环切换逻辑（提取自事件处理）
+    #[test]
+    fn test_ctrl_p_cycles_model() {
+        let mut engine = TuiEngine::new();
+        engine.set_available_models(vec![
+            "deepseek-v3".into(),
+            "glm-4-flash".into(),
+            "ollama".into(),
+        ]);
+        engine.set_default_model("deepseek-v3".into());
+
+        let msg_count_before = engine.chat.messages.len();
+
+        // 模拟 Ctrl+P 正向循环
+        engine.model_index = (engine.model_index + 1) % engine.available_models.len();
+        engine.model = engine.available_models[engine.model_index].clone();
+        assert_eq!(engine.model, "glm-4-flash");
+        assert_eq!(engine.model_index, 1);
+
+        // 再次 Ctrl+P
+        engine.model_index = (engine.model_index + 1) % engine.available_models.len();
+        engine.model = engine.available_models[engine.model_index].clone();
+        assert_eq!(engine.model, "ollama");
+        assert_eq!(engine.model_index, 2);
+
+        // 循环回第一个
+        engine.model_index = (engine.model_index + 1) % engine.available_models.len();
+        engine.model = engine.available_models[engine.model_index].clone();
+        assert_eq!(engine.model, "deepseek-v3");
+        assert_eq!(engine.model_index, 0);
+
+        // 不产生 Summary 消息
+        assert_eq!(engine.chat.messages.len(), msg_count_before);
+    }
+
+    #[test]
+    fn test_on_submit_receives_current_model() {
+        let mut engine = TuiEngine::new();
+        engine.set_available_models(vec!["deepseek-v3".into(), "ollama".into()]);
+        engine.set_default_model("deepseek-v3".into());
+
+        // 切换到 ollama
+        engine.model = "ollama".into();
+        engine.model_index = 1;
+
+        let captured: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
+        let on_submit =
+            |_text: String, _token: tokio_util::sync::CancellationToken, model: String| {
+                *captured.borrow_mut() = model;
+            };
+
+        engine.submit_text("hello".into(), &on_submit);
+
+        assert_eq!(captured.borrow().as_str(), "ollama");
+    }
+
+    #[test]
+    fn test_on_submit_uses_default_model_when_not_switched() {
+        let mut engine = TuiEngine::new();
+        engine.set_available_models(vec!["deepseek-v3".into(), "ollama".into()]);
+        engine.set_default_model("deepseek-v3".into());
+
+        let captured: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
+        let on_submit =
+            |_text: String, _token: tokio_util::sync::CancellationToken, model: String| {
+                *captured.borrow_mut() = model;
+            };
+
+        engine.submit_text("hello".into(), &on_submit);
+
+        assert_eq!(captured.borrow().as_str(), "deepseek-v3");
     }
 
     #[test]

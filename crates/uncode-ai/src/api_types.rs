@@ -146,7 +146,7 @@ pub struct CompatConfig {
 impl Default for CompatConfig {
     fn default() -> Self {
         Self {
-            supports_developer_role: true,
+            supports_developer_role: false,
             supports_reasoning_effort: false,
             supports_usage_in_streaming: true,
             supports_strict_mode: false,

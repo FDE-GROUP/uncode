@@ -6,6 +6,7 @@
 pub mod api_types;
 pub mod config;
 pub mod context;
+pub mod diff;
 pub mod error;
 pub mod event;
 pub mod message;
@@ -14,6 +15,7 @@ pub mod session;
 pub mod skill;
 pub mod template;
 pub mod tool;
+pub mod workspace_graph;
 
 #[cfg(test)]
 mod tests;

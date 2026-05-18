@@ -118,6 +118,7 @@ mod tests {
 
     use crate::loop_engine::AgentLoop;
 
+    #[allow(dead_code)]
     fn test_session_dir() -> PathBuf {
         static COUNTER: AtomicUsize = AtomicUsize::new(0);
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -430,7 +431,7 @@ mod tests {
             model_reg.clone(),
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -489,7 +490,7 @@ mod tests {
             model_reg,
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -569,7 +570,7 @@ mod tests {
             model_reg,
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -627,7 +628,7 @@ mod tests {
             model_reg,
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -673,7 +674,7 @@ mod tests {
             model_reg,
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -712,7 +713,7 @@ mod tests {
             model_reg,
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -739,7 +740,7 @@ mod tests {
             model_reg,
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -787,7 +788,7 @@ mod tests {
             model_reg,
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -834,7 +835,7 @@ mod tests {
             model_reg,
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -882,7 +883,7 @@ mod tests {
             model_reg,
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -923,7 +924,7 @@ mod tests {
             model_reg,
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -967,7 +968,7 @@ mod tests {
             model_reg,
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -1001,7 +1002,7 @@ mod tests {
             model_reg,
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -1052,7 +1053,7 @@ mod tests {
             model_reg,
             api_keys,
             make_tool_registry(),
-            Arc::new(SessionStore::new(test_session_dir())),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
             "system".into(),
             "mock".into(),
         );
@@ -1080,7 +1081,7 @@ mod tests {
             },
         ]]);
         let tool_reg = Arc::new(crate::tools::registry::ToolRegistry::new());
-        let session_store = Arc::new(SessionStore::new(test_session_dir()));
+        let session_store = Arc::new(SessionStore::new_memory().await.expect("session store"));
 
         let agent = AgentLoop::new(
             api_reg,
@@ -1103,14 +1104,14 @@ mod tests {
         assert_eq!(harness.session_id(), Some("test-session"));
     }
 
-    #[test]
-    fn test_harness_pending_write_flush() {
+    #[tokio::test]
+    async fn test_harness_pending_write_flush() {
         use crate::harness::AgentHarness;
         use crate::session::store::SessionStore;
 
         let (api_reg, model_reg, _) = make_registries(vec![]);
         let tool_reg = Arc::new(crate::tools::registry::ToolRegistry::new());
-        let session_store = Arc::new(SessionStore::new(test_session_dir()));
+        let session_store = Arc::new(SessionStore::new_memory().await.expect("session store"));
 
         let agent = AgentLoop::new(
             api_reg,
@@ -1126,14 +1127,15 @@ mod tests {
         // Init session
         session_store
             .init_session("s1", "test-model", "/tmp")
+            .await
             .unwrap();
         harness.set_session_id("s1".into());
 
         // Add pending writes
-        harness.set_model("new-model", "test-provider");
+        harness.set_model("new-model", "test-provider").await;
 
         // Verify session has model change entry
-        let entries = session_store.load_entries("s1").unwrap();
+        let entries = session_store.load_entries("s1").await.unwrap();
         assert!(entries.iter().any(|e| matches!(
             e,
             uncode_core::session::SessionEntry::ModelChange(mc) if mc.model_id == "new-model"
@@ -1148,7 +1150,7 @@ mod tests {
 
         let (api_reg, model_reg, _) = make_registries(vec![]);
         let tool_reg = Arc::new(crate::tools::registry::ToolRegistry::new());
-        let session_store = Arc::new(SessionStore::new(test_session_dir()));
+        let session_store = Arc::new(SessionStore::new_memory().await.expect("session store"));
 
         let agent = AgentLoop::new(
             api_reg,
@@ -1177,7 +1179,7 @@ mod tests {
             },
         ]]);
         let tool_reg = Arc::new(crate::tools::registry::ToolRegistry::new());
-        let session_store = Arc::new(SessionStore::new(test_session_dir()));
+        let session_store = Arc::new(SessionStore::new_memory().await.expect("session store"));
 
         let agent = Arc::new(tokio::sync::Mutex::new(AgentLoop::new(
             api_reg,
@@ -1199,7 +1201,7 @@ mod tests {
     async fn test_reset_clears_state() {
         let (api_reg, model_reg, api_keys) = make_registries(vec![]);
         let tool_reg = Arc::new(crate::tools::registry::ToolRegistry::new());
-        let session_store = Arc::new(SessionStore::new(test_session_dir()));
+        let session_store = Arc::new(SessionStore::new_memory().await.expect("session store"));
 
         let agent = AgentLoop::new(
             api_reg,

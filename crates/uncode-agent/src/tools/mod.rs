@@ -4,25 +4,34 @@
 //! All tools implement the `ToolExecutor` trait and are registered via `ToolRegistry`.
 
 pub mod bash;
+pub mod diff;
 pub mod edit;
 pub mod find;
 pub mod grep;
+pub mod hashline;
 pub mod local_env;
 pub mod ls;
 pub mod read;
 pub mod registry;
+pub mod web_fetch;
+pub mod web_search;
 pub mod write;
 
 pub use bash::BashTool;
+pub use diff::unified_diff;
+pub use diff::{DiffLine, DiffStats, Hunk, Patch};
 pub use edit::EditTool;
 pub use find::FindTool;
 pub use grep::GrepTool;
+pub use hashline::{compute_line_hash, parse_anchor, validate_anchors};
 pub use local_env::{
     LocalExecutionEnv, LocalFileSystem, LocalShell, clean_binary_output, truncate_output,
 };
 pub use ls::LsTool;
 pub use read::ReadTool;
 pub use registry::ToolRegistry;
+pub use web_fetch::WebFetchTool;
+pub use web_search::WebSearchTool;
 pub use write::WriteTool;
 
 /// Find the nearest existing ancestor, canonicalize it,

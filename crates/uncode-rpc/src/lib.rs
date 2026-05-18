@@ -49,7 +49,14 @@ struct JsonRpcNotification {
 
 // ── Handler type ──
 
-pub type RpcHandler = Arc<dyn Fn(Value) -> Result<Value, String> + Send + Sync>;
+pub type RpcHandler = Arc<
+    dyn Fn(
+            Value,
+        )
+            -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, String>> + Send>>
+        + Send
+        + Sync,
+>;
 
 // ── Server ──
 
@@ -69,7 +76,13 @@ impl RpcServer {
     pub async fn register(
         &self,
         method: &str,
-        handler: impl Fn(Value) -> Result<Value, String> + Send + Sync + 'static,
+        handler: impl Fn(
+            Value,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Value, String>> + Send>,
+        > + Send
+        + Sync
+        + 'static,
     ) {
         self.handlers
             .lock()
@@ -128,10 +141,10 @@ impl RpcServer {
                     }
                 };
                 let handlers = self.handlers.lock().await;
-                let responses: Vec<JsonRpcResponse> = requests
-                    .into_iter()
-                    .map(|r| self.handle_request(r, &handlers))
-                    .collect();
+                let mut responses = Vec::with_capacity(requests.len());
+                for r in requests {
+                    responses.push(self.handle_request(r, &handlers).await);
+                }
                 drop(handlers);
                 let json = serde_json::to_string(&responses)?;
                 let mut w = writer.lock().await;
@@ -150,11 +163,11 @@ impl RpcServer {
                 // Notification (no id) — handle but don't respond
                 if request.id.is_none() {
                     let handlers = self.handlers.lock().await;
-                    self.handle_request(request, &handlers);
+                    self.handle_request(request, &handlers).await;
                     continue;
                 }
                 let handlers = self.handlers.lock().await;
-                let resp = self.handle_request(request, &handlers);
+                let resp = self.handle_request(request, &handlers).await;
                 drop(handlers);
                 let json = serde_json::to_string(&resp)?;
                 let mut w = writer.lock().await;
@@ -165,13 +178,13 @@ impl RpcServer {
         Ok(())
     }
 
-    fn handle_request(
+    async fn handle_request(
         &self,
         request: JsonRpcRequest,
         handlers: &HashMap<String, RpcHandler>,
     ) -> JsonRpcResponse {
         match handlers.get(&request.method) {
-            Some(handler) => match handler(request.params.unwrap_or(Value::Null)) {
+            Some(handler) => match handler(request.params.unwrap_or(Value::Null)).await {
                 Ok(result) => JsonRpcResponse {
                     jsonrpc: "2.0".into(),
                     id: request.id,
@@ -253,20 +266,24 @@ pub async fn register_core_commands(
     let ss = session_store.clone();
     server
         .register("session.create", move |params| {
-            let title = params.get("title").and_then(|v| v.as_str()).unwrap_or("");
-            let id = uuid::Uuid::new_v4().to_string();
-            ss.init_session_with_title(
-                &id,
-                "",
-                "",
-                if title.is_empty() {
-                    None
-                } else {
-                    Some(title.to_string())
-                },
-            )
-            .map_err(|e| e.to_string())?;
-            Ok(serde_json::json!({"session_id": id}))
+            let ss = ss.clone();
+            Box::pin(async move {
+                let title = params.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                let id = uuid::Uuid::new_v4().to_string();
+                ss.init_session_with_title(
+                    &id,
+                    "",
+                    "",
+                    if title.is_empty() {
+                        None
+                    } else {
+                        Some(title.to_string())
+                    },
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+                Ok(serde_json::json!({"session_id": id}))
+            })
         })
         .await;
 
@@ -274,8 +291,11 @@ pub async fn register_core_commands(
     let ss = session_store.clone();
     server
         .register("session.list", move |_| {
-            let sessions = ss.list_sessions().map_err(|e| e.to_string())?;
-            Ok(serde_json::to_value(sessions).map_err(|e| e.to_string())?)
+            let ss = ss.clone();
+            Box::pin(async move {
+                let sessions = ss.list_sessions().await.map_err(|e| e.to_string())?;
+                serde_json::to_value(sessions).map_err(|e| e.to_string())
+            })
         })
         .await;
 
@@ -283,18 +303,21 @@ pub async fn register_core_commands(
     let ss = session_store.clone();
     server
         .register("session.get", move |params| {
-            let id = params
-                .get("session_id")
-                .and_then(|v| v.as_str())
-                .ok_or("missing session_id")?;
-            let header = ss.read_header(id).map_err(|e| e.to_string())?;
-            let entries = ss.load_entries(id).map_err(|e| e.to_string())?;
-            let leaf_id = ss.get_leaf_id(id).map_err(|e| e.to_string())?;
-            Ok(serde_json::json!({
-                "header": header,
-                "entries": entries,
-                "leaf_id": leaf_id,
-            }))
+            let ss = ss.clone();
+            Box::pin(async move {
+                let id = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or("missing session_id")?;
+                let header = ss.read_header(id).await.map_err(|e| e.to_string())?;
+                let entries = ss.load_entries(id).await.map_err(|e| e.to_string())?;
+                let leaf_id = ss.get_leaf_id(id).await.map_err(|e| e.to_string())?;
+                Ok(serde_json::json!({
+                    "header": header,
+                    "entries": entries,
+                    "leaf_id": leaf_id,
+                }))
+            })
         })
         .await;
 
@@ -302,26 +325,33 @@ pub async fn register_core_commands(
     let ss = session_store.clone();
     server
         .register("session.branch", move |params| {
-            let session_id = params
-                .get("session_id")
-                .and_then(|v| v.as_str())
-                .ok_or("missing session_id")?;
-            let target_id = params
-                .get("target_id")
-                .and_then(|v| v.as_str())
-                .ok_or("missing target_id")?;
-            let reason = params
-                .get("reason")
-                .and_then(|v| v.as_str())
-                .unwrap_or("RPC branch");
-            uncode_agent::branch_summarization::branch_with_summary(
-                &ss, session_id, target_id, reason,
-            )
-            .map_err(|e| e.to_string())?;
-            let leaf_id = ss.get_leaf_id(session_id).map_err(|e| e.to_string())?;
-            Ok(serde_json::json!({
-                "leaf_id": leaf_id,
-            }))
+            let ss = ss.clone();
+            Box::pin(async move {
+                let session_id = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or("missing session_id")?;
+                let target_id = params
+                    .get("target_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or("missing target_id")?;
+                let reason = params
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("RPC branch");
+                uncode_agent::branch_summarization::branch_with_summary(
+                    &ss, session_id, target_id, reason,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+                let leaf_id = ss
+                    .get_leaf_id(session_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                Ok(serde_json::json!({
+                    "leaf_id": leaf_id,
+                }))
+            })
         })
         .await;
 
@@ -329,20 +359,23 @@ pub async fn register_core_commands(
     let mr = model_registry.clone();
     server
         .register("model.list", move |_| {
-            let models: Vec<serde_json::Value> = mr
-                .all_models()
-                .into_iter()
-                .map(|m| {
-                    serde_json::json!({
-                        "id": m.id,
-                        "name": m.name,
-                        "provider": m.provider,
-                        "context_window": m.context_window,
-                        "api": m.api,
+            let mr = mr.clone();
+            Box::pin(async move {
+                let models: Vec<serde_json::Value> = mr
+                    .all_models()
+                    .into_iter()
+                    .map(|m| {
+                        serde_json::json!({
+                            "id": m.id,
+                            "name": m.name,
+                            "provider": m.provider,
+                            "context_window": m.context_window,
+                            "api": m.api,
+                        })
                     })
-                })
-                .collect();
-            Ok(serde_json::to_value(models).map_err(|e| e.to_string())?)
+                    .collect();
+                serde_json::to_value(models).map_err(|e| e.to_string())
+            })
         })
         .await;
 
@@ -350,58 +383,76 @@ pub async fn register_core_commands(
     let mr = model_registry.clone();
     server
         .register("model.switch", move |params| {
-            let model = params
-                .get("model")
-                .and_then(|v| v.as_str())
-                .ok_or("missing model name")?;
-            if !mr.has(model) {
-                return Err(format!("model not found: {model}"));
-            }
-            Ok(serde_json::json!({"switched": model}))
+            let mr = mr.clone();
+            Box::pin(async move {
+                let model = params
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .ok_or("missing model name")?;
+                if !mr.has(model) {
+                    return Err(format!("model not found: {model}"));
+                }
+                Ok(serde_json::json!({"switched": model}))
+            })
         })
         .await;
 
     // tool.list
     server
         .register("tool.list", move |_| {
-            let tools = vec![
-                "read", "write", "edit", "grep", "bash", "find", "ls", "github",
-            ];
-            Ok(serde_json::to_value(tools).map_err(|e| e.to_string())?)
+            Box::pin(async move {
+                let tools = vec![
+                    "read",
+                    "write",
+                    "edit",
+                    "grep",
+                    "bash",
+                    "find",
+                    "ls",
+                    "github",
+                    "web_fetch",
+                    "web_search",
+                ];
+                serde_json::to_value(tools).map_err(|e| e.to_string())
+            })
         })
         .await;
 
     // message.send
     server
         .register("message.send", move |params| {
-            let text = params
-                .get("text")
-                .and_then(|v| v.as_str())
-                .ok_or("missing text")?;
-            let session_id = params
-                .get("session_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("default");
-            Ok(serde_json::json!({
-                "status": "queued",
-                "session_id": session_id,
-                "text": text,
-            }))
+            Box::pin(async move {
+                let text = params
+                    .get("text")
+                    .and_then(|v| v.as_str())
+                    .ok_or("missing text")?;
+                let session_id = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default");
+                Ok(serde_json::json!({
+                    "status": "queued",
+                    "session_id": session_id,
+                    "text": text,
+                }))
+            })
         })
         .await;
 
     // message.stream
     server
         .register("message.stream", move |params| {
-            let session_id = params
-                .get("session_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("default");
-            Ok(serde_json::json!({
-                "status": "subscribed",
-                "session_id": session_id,
-                "note": "events broadcast as JSON-RPC notifications (event.*)"
-            }))
+            Box::pin(async move {
+                let session_id = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("default");
+                Ok(serde_json::json!({
+                    "status": "subscribed",
+                    "session_id": session_id,
+                    "note": "events broadcast as JSON-RPC notifications (event.*)"
+                }))
+            })
         })
         .await;
 }
@@ -464,11 +515,15 @@ mod tests {
     #[tokio::test]
     async fn test_register_and_call_handler() {
         let server = RpcServer::new();
-        server.register("test.echo", |params| Ok(params)).await;
+        server
+            .register("test.echo", |params| Box::pin(async move { Ok(params) }))
+            .await;
 
         let handlers = server.handlers.lock().await;
         let handler = handlers.get("test.echo").unwrap();
-        let result = handler(serde_json::json!({"hello": "world"})).unwrap();
+        let result = handler(serde_json::json!({"hello": "world"}))
+            .await
+            .unwrap();
         assert_eq!(result["hello"], "world");
     }
 
@@ -482,7 +537,7 @@ mod tests {
             method: "nonexistent".into(),
             params: None,
         };
-        let resp = server.handle_request(request, &handlers);
+        let resp = server.handle_request(request, &handlers).await;
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, -32601);
     }

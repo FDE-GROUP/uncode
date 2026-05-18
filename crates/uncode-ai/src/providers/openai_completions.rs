@@ -85,11 +85,7 @@ fn build_chat_messages(context: &Context, compat: &CompatConfig) -> Vec<Value> {
                     }
                 });
 
-                if !thinking_parts.is_empty()
-                    && compat.thinking_format == Some(ThinkingFormat::DeepSeek)
-                {
-                    m["reasoning_content"] = Value::String(thinking_parts.join("\n"));
-                }
+                m["reasoning_content"] = Value::String(thinking_parts.join("\n"));
 
                 if !tool_calls.is_empty() {
                     m["tool_calls"] = Value::Array(tool_calls);

@@ -119,8 +119,12 @@ pub(crate) fn extract_text(content: &[ContentBlock]) -> String {
 // ── Session-aware Pi-style compaction ──
 
 /// Check if a session needs compaction based on stored entry token estimate.
-pub fn should_compact_session(store: &SessionStore, session_id: &str, context_window: u64) -> bool {
-    let entries = match store.load_entries(session_id) {
+pub async fn should_compact_session(
+    store: &SessionStore,
+    session_id: &str,
+    context_window: u64,
+) -> bool {
+    let entries = match store.load_entries(session_id).await {
         Ok(e) => e,
         Err(_) => return false,
     };
@@ -141,6 +145,7 @@ pub async fn compact_session(
 ) -> anyhow::Result<Option<CompactionEntry>> {
     let entries = store
         .load_entries(session_id)
+        .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // Find previous CompactionEntry for iterative summarization
@@ -165,7 +170,7 @@ pub async fn compact_session(
             if me.id == cut_id {
                 break;
             }
-            to_summarize.push(me);
+            to_summarize.push(&me);
         }
     }
 
@@ -215,6 +220,7 @@ pub async fn compact_session(
             session_id,
             &SessionEntry::Compaction(Box::new(compaction.clone())),
         )
+        .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     tracing::info!(
@@ -684,27 +690,23 @@ mod tests {
 
     // ── should_compact_session tests ──
 
-    #[test]
-    fn test_should_compact_session_empty() {
-        let dir = std::env::temp_dir().join(format!("uncode-test-sc-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_should_compact_session_empty() {
+        let store = SessionStore::new_memory().await.expect("store");
         store
             .init_session("test-session", "model", "/test")
+            .await
             .unwrap();
 
-        assert!(!should_compact_session(&store, "test-session", 1000));
-
-        std::fs::remove_dir_all(dir).ok();
+        assert!(!should_compact_session(&store, "test-session", 1000).await);
     }
 
-    #[test]
-    fn test_should_compact_session_small() {
-        let dir = std::env::temp_dir().join(format!("uncode-test-sc-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_should_compact_session_small() {
+        let store = SessionStore::new_memory().await.expect("store");
         store
             .init_session("test-session", "model", "/test")
+            .await
             .unwrap();
 
         store
@@ -712,20 +714,18 @@ mod tests {
                 "test-session",
                 &SessionEntry::Message(Message::user("hello").into()),
             )
+            .await
             .unwrap();
 
-        assert!(!should_compact_session(&store, "test-session", 1000));
-
-        std::fs::remove_dir_all(dir).ok();
+        assert!(!should_compact_session(&store, "test-session", 1000).await);
     }
 
-    #[test]
-    fn test_should_compact_session_large() {
-        let dir = std::env::temp_dir().join(format!("uncode-test-sc-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_should_compact_session_large() {
+        let store = SessionStore::new_memory().await.expect("store");
         store
             .init_session("test-session", "model", "/test")
+            .await
             .unwrap();
 
         // Add large messages (500 chars each ≈ 125 tokens, need > 800 for 1000 window)
@@ -735,13 +735,12 @@ mod tests {
                     "test-session",
                     &SessionEntry::Message(Message::user(&"x".repeat(500)).into()),
                 )
+                .await
                 .unwrap();
         }
 
         // 10 * 500 chars = 5000 chars ≈ 1250 tokens > 1000 * 80% = 800
-        assert!(should_compact_session(&store, "test-session", 1000));
-
-        std::fs::remove_dir_all(dir).ok();
+        assert!(should_compact_session(&store, "test-session", 1000).await);
     }
 
     // ── split-turn detection tests ──

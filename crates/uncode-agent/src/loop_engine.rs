@@ -54,6 +54,7 @@ pub struct AgentLoop {
     prepare_next_turn: Option<Arc<dyn Fn() + Send + Sync>>,
     transform_context: Option<Arc<dyn Fn(&mut Vec<Message>) + Send + Sync>>,
     active_run: Arc<AtomicBool>,
+    graph_cache: Option<Arc<crate::workspace_graph::WorkspaceGraphCache>>,
 }
 
 impl AgentLoop {
@@ -84,6 +85,7 @@ impl AgentLoop {
             prepare_next_turn: None,
             transform_context: None,
             active_run: Arc::new(AtomicBool::new(false)),
+            graph_cache: None,
         }
     }
 
@@ -115,6 +117,7 @@ impl AgentLoop {
             prepare_next_turn: None,
             transform_context: None,
             active_run: Arc::new(AtomicBool::new(false)),
+            graph_cache: None,
         }
     }
 
@@ -140,6 +143,10 @@ impl AgentLoop {
 
     pub fn set_cancel_token(&mut self, token: CancellationToken) {
         self.cancel_token = token;
+    }
+
+    pub fn set_graph_cache(&mut self, cache: Arc<crate::workspace_graph::WorkspaceGraphCache>) {
+        self.graph_cache = Some(cache);
     }
 
     pub fn set_tool_hooks(&mut self, hooks: Arc<dyn ToolHooks>) {
@@ -329,17 +336,16 @@ impl AgentLoop {
     }
 
     async fn run_inner(&self, user_message: Message) -> Result<Vec<Message>, UncodeError> {
+        let cwd = std::env::current_dir().unwrap_or_default();
         let session_id = match &self.session_id {
             Some(id) => id.clone(),
             None => {
                 let id = uuid::Uuid::new_v4().to_string();
-                let cwd = std::env::current_dir()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string();
-                if let Err(e) =
-                    self.session_store
-                        .init_session_with_title(&id, &self.model_id, &cwd, None)
+                let cwd_str = cwd.to_string_lossy().to_string();
+                if let Err(e) = self
+                    .session_store
+                    .init_session_with_title(&id, &self.model_id, &cwd_str, None)
+                    .await
                 {
                     debug!("session init skipped: {e}");
                 }
@@ -348,10 +354,14 @@ impl AgentLoop {
         };
 
         // Persist user message
-        if let Err(e) = self.session_store.append_entry(
-            &session_id,
-            &SessionEntry::Message(user_message.clone().into()),
-        ) {
+        if let Err(e) = self
+            .session_store
+            .append_entry(
+                &session_id,
+                &SessionEntry::Message(user_message.clone().into()),
+            )
+            .await
+        {
             debug!("persist user message skipped: {e}");
         }
         self.emit(AgentEvent::MessageStart {
@@ -370,6 +380,7 @@ impl AgentLoop {
 
         // Build context from session store (picks up all previous messages for resume)
         let built = crate::context_builder::build_context(&self.session_store, &session_id)
+            .await
             .map_err(|e| {
                 UncodeError::Harness(uncode_core::error::HarnessError::Other {
                     message: e.to_string(),
@@ -378,6 +389,23 @@ impl AgentLoop {
             })?;
         let mut messages = built.messages;
         let mut effective_thinking_level = built.effective_thinking_level;
+
+        // Inject workspace context bundle
+        if let Some(ref cache) = self.graph_cache {
+            let graph = cache.get_or_build(&cwd).await;
+            if !graph.nodes.is_empty() {
+                let bundle = crate::workspace_graph::select_bundle(
+                    &graph,
+                    &[],
+                    first_text(&user_message),
+                    cache.config(),
+                );
+                if !bundle.is_empty() {
+                    messages.insert(0, bundle.to_system_message());
+                }
+            }
+        }
+
         messages.insert(0, Message::system(self.system_prompt.clone()));
 
         let tools = self.tool_registry.definitions();
@@ -426,6 +454,7 @@ impl AgentLoop {
                         if let Err(e) = self
                             .session_store
                             .append_entry(&session_id, &SessionEntry::Message(msg.clone().into()))
+                            .await
                         {
                             debug!("persist pending message skipped: {e}");
                         }
@@ -446,7 +475,9 @@ impl AgentLoop {
                     &self.session_store,
                     &session_id,
                     model.context_window as u64,
-                ) {
+                )
+                .await
+                {
                     match crate::compaction::compact_session(
                         &self.session_store,
                         &session_id,
@@ -461,6 +492,7 @@ impl AgentLoop {
                                 &self.session_store,
                                 &session_id,
                             )
+                            .await
                             .map_err(|e| {
                                 UncodeError::Harness(uncode_core::error::HarnessError::Other {
                                     message: e.to_string(),
@@ -473,11 +505,29 @@ impl AgentLoop {
                                 let all = self
                                     .session_store
                                     .load_entries(&session_id)
+                                    .await
                                     .unwrap_or_default();
                                 all.len()
                             };
                             messages = rebuilt.messages;
                             effective_thinking_level = rebuilt.effective_thinking_level;
+
+                            // Re-inject workspace context bundle after compaction
+                            if let Some(ref cache) = self.graph_cache {
+                                let graph = cache.get_or_build(&cwd).await;
+                                if !graph.nodes.is_empty() {
+                                    let bundle = crate::workspace_graph::select_bundle(
+                                        &graph,
+                                        &[],
+                                        "",
+                                        cache.config(),
+                                    );
+                                    if !bundle.is_empty() {
+                                        messages.insert(0, bundle.to_system_message());
+                                    }
+                                }
+                            }
+
                             messages.insert(0, Message::system(self.system_prompt.clone()));
                             self.emit(AgentEvent::CompactionComplete {
                                 messages_replaced: entries_before,
@@ -510,7 +560,11 @@ impl AgentLoop {
                             timestamp: chrono::Utc::now(),
                             thinking_level: thinking_level.unwrap_or(ThinkingLevel::High),
                         }));
-                    if let Err(e) = self.session_store.append_entry(&session_id, &tl_entry) {
+                    if let Err(e) = self
+                        .session_store
+                        .append_entry(&session_id, &tl_entry)
+                        .await
+                    {
                         debug!("persist thinking level change skipped: {e}");
                     }
                     effective_thinking_level = thinking_level;
@@ -742,10 +796,14 @@ impl AgentLoop {
                                     message_id: msg.id.clone(),
                                 });
 
-                                if let Err(e) = self.session_store.append_entry(
-                                    &session_id,
-                                    &SessionEntry::Message(msg.clone().into()),
-                                ) {
+                                if let Err(e) = self
+                                    .session_store
+                                    .append_entry(
+                                        &session_id,
+                                        &SessionEntry::Message(msg.clone().into()),
+                                    )
+                                    .await
+                                {
                                     debug!("persist assistant message skipped: {e}");
                                 }
 
@@ -910,6 +968,13 @@ impl AgentLoop {
                                 // Persist results, emit events, check terminate
                                 let mut should_terminate = !all_outcomes.is_empty();
                                 for (id, name, tool_result) in &all_outcomes {
+                                    // Invalidate workspace graph cache after file edits
+                                    if (name == "write" || name == "edit") && !tool_result.is_error
+                                    {
+                                        if let Some(ref cache) = self.graph_cache {
+                                            cache.invalidate();
+                                        }
+                                    }
                                     let content_text = tool_result.text_content();
                                     let is_error = tool_result.is_error;
 
@@ -925,9 +990,7 @@ impl AgentLoop {
                                             },
                                             duration_ms: 0,
                                             output_size: Some(content_text.len()),
-                                            result_summary: Some(
-                                                content_text.chars().take(200).collect(),
-                                            ),
+                                            result_summary: Some(content_text.clone()),
                                             is_error,
                                         }),
                                     });
@@ -944,10 +1007,14 @@ impl AgentLoop {
                                         role: Role::Tool,
                                         message_id: tool_msg.id.clone(),
                                     });
-                                    if let Err(e) = self.session_store.append_entry(
-                                        &session_id,
-                                        &SessionEntry::Message(tool_msg.clone().into()),
-                                    ) {
+                                    if let Err(e) = self
+                                        .session_store
+                                        .append_entry(
+                                            &session_id,
+                                            &SessionEntry::Message(tool_msg.clone().into()),
+                                        )
+                                        .await
+                                    {
                                         debug!("persist tool result skipped: {e}");
                                     }
                                     self.emit(AgentEvent::MessageEnd {

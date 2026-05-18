@@ -14,21 +14,21 @@ use uncode_core::session::{BranchSummaryEntry, SessionEntry, generate_entry_id};
 ///
 /// Returns `Ok(())` on success. If no old leaf exists, just sets the new leaf
 /// without summarization.
-pub fn branch_with_summary(
+pub async fn branch_with_summary(
     store: &SessionStore,
     session_id: &str,
     target_id: &str,
     reason: &str,
 ) -> anyhow::Result<()> {
-    let old_leaf_id = store.get_leaf_id(session_id)?;
+    let old_leaf_id = store.get_leaf_id(session_id).await?;
 
     // Move the leaf
-    store.set_leaf(session_id, target_id)?;
+    store.set_leaf(session_id, target_id).await?;
 
     // Summarize the abandoned branch if there was a previous leaf
     if let Some(old_id) = old_leaf_id {
         if old_id != target_id {
-            if let Ok(path) = store.get_path_to_root(session_id, &old_id) {
+            if let Ok(path) = store.get_path_to_root(session_id, &old_id).await {
                 let summary = summarize_branch_entries(&path, reason);
                 let entry = SessionEntry::BranchSummary(Box::new(BranchSummaryEntry {
                     id: generate_entry_id(),
@@ -37,7 +37,7 @@ pub fn branch_with_summary(
                     from_id: old_id,
                     summary,
                 }));
-                store.append_entry(session_id, &entry)?;
+                store.append_entry(session_id, &entry).await?;
             }
         }
     }
@@ -138,18 +138,12 @@ mod tests {
     use super::*;
     use uncode_core::session::*;
 
-    fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("uncode-test-branch-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    #[test]
-    fn test_branch_with_summary_basic() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_branch_with_summary_basic() {
+        let store = SessionStore::new_memory().await.expect("store");
         store
             .init_session("test-session", "model", "/test")
+            .await
             .unwrap();
 
         // Create a linear chain: msg1 → msg2 → msg3
@@ -168,6 +162,7 @@ mod tests {
                     usage: None,
                 })),
             )
+            .await
             .unwrap();
 
         let msg2_id = generate_entry_id();
@@ -185,6 +180,7 @@ mod tests {
                     usage: None,
                 })),
             )
+            .await
             .unwrap();
 
         let msg3_id = generate_entry_id();
@@ -202,13 +198,16 @@ mod tests {
                     usage: None,
                 })),
             )
+            .await
             .unwrap();
 
         // Branch back to msg1 (abandon msg2 and msg3)
-        branch_with_summary(&store, "test-session", &msg1_id, "try alternative").unwrap();
+        branch_with_summary(&store, "test-session", &msg1_id, "try alternative")
+            .await
+            .unwrap();
 
         // Verify: a LeafEntry targeting msg1 should exist
-        let entries = store.load_entries("test-session").unwrap();
+        let entries = store.load_entries("test-session").await.unwrap();
         let has_leaf = entries.iter().any(|e| {
             if let SessionEntry::Leaf(l) = e {
                 l.target_id == msg1_id
@@ -219,21 +218,19 @@ mod tests {
         assert!(has_leaf, "expected a LeafEntry targeting msg1");
 
         // Verify: a BranchSummaryEntry should exist
-        let entries = store.load_entries("test-session").unwrap();
+        let entries = store.load_entries("test-session").await.unwrap();
         let has_summary = entries
             .iter()
             .any(|e| matches!(e, SessionEntry::BranchSummary(_)));
         assert!(has_summary, "expected a BranchSummaryEntry after branching");
-
-        std::fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_branch_no_previous_leaf() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_branch_no_previous_leaf() {
+        let store = SessionStore::new_memory().await.expect("store");
         store
             .init_session("test-session", "model", "/test")
+            .await
             .unwrap();
 
         // Only one entry, no previous leaf
@@ -252,19 +249,20 @@ mod tests {
                     usage: None,
                 })),
             )
+            .await
             .unwrap();
 
         // set_leaf on the same entry (no-op branch)
-        branch_with_summary(&store, "test-session", &msg1_id, "test").unwrap();
+        branch_with_summary(&store, "test-session", &msg1_id, "test")
+            .await
+            .unwrap();
 
         // No BranchSummary should be created (old leaf == new target)
-        let entries = store.load_entries("test-session").unwrap();
+        let entries = store.load_entries("test-session").await.unwrap();
         let has_summary = entries
             .iter()
             .any(|e| matches!(e, SessionEntry::BranchSummary(_)));
         assert!(!has_summary);
-
-        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

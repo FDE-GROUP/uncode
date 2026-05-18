@@ -116,7 +116,8 @@ mod tests {
         assert!(reg.has("claude-sonnet-4-6"));
         assert!(reg.has("gpt-4o"));
         assert!(reg.has("gemini-2.0-flash"));
-        assert!(reg.has("ollama"));
+        assert!(reg.has("openrouter-auto"));
+        assert!(!reg.has("ollama"));
         assert!(!reg.has("nonexistent-model"));
     }
 
@@ -194,6 +195,44 @@ mod tests {
         let model = reg.get("gpt-4o").unwrap();
         assert!(model.compat.send_session_affinity_headers);
         assert!(model.compat.supports_long_cache_retention);
+    }
+
+    #[test]
+    fn test_from_model_config_deepseek_inherits_builtin() {
+        use uncode_shared::config::ModelConfig;
+        let mc = ModelConfig {
+            id: "deepseek-v4-pro".into(),
+            provider: "deepseek".into(),
+            display_name: "My DeepSeek".into(),
+            max_tokens: 128_000,
+            supports_vision: false,
+            supports_tools: true,
+        };
+        let model = Model::from_model_config(&mc);
+        assert_eq!(model.id, "deepseek-v4-pro");
+        assert_eq!(model.name, "My DeepSeek");
+        assert_eq!(model.api, "openai-completions");
+        assert!(!model.compat.supports_developer_role);
+        assert_eq!(model.thinking_format, Some(ThinkingFormat::DeepSeek));
+        assert!(model.reasoning);
+    }
+
+    #[test]
+    fn test_from_model_config_custom_model_uses_defaults() {
+        use uncode_shared::config::ModelConfig;
+        let mc = ModelConfig {
+            id: "my-custom-model".into(),
+            provider: "deepseek".into(),
+            display_name: "Custom".into(),
+            max_tokens: 64_000,
+            supports_vision: false,
+            supports_tools: true,
+        };
+        let model = Model::from_model_config(&mc);
+        assert_eq!(model.id, "my-custom-model");
+        assert_eq!(model.api, "openai-completions");
+        assert!(!model.compat.supports_developer_role);
+        assert!(model.thinking_format.is_none());
     }
 
     #[test]

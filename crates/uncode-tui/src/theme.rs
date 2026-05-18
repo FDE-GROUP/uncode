@@ -62,6 +62,10 @@ pub struct MarkdownColors {
     pub code_bg: Color,
     pub code_text: Color,
     pub code_block_border: Color,
+    pub admonition_note: Color,
+    pub admonition_tip: Color,
+    pub admonition_warning: Color,
+    pub admonition_caution: Color,
 }
 
 #[derive(Debug, Clone)]
@@ -123,6 +127,10 @@ impl Theme {
                 code_bg: Color::DarkGray,
                 code_text: Color::Cyan,
                 code_block_border: Color::DarkGray,
+                admonition_note: Color::Blue,
+                admonition_tip: Color::Green,
+                admonition_warning: Color::Yellow,
+                admonition_caution: Color::Red,
             },
             syntax: SyntaxColors {
                 keyword: Color::Magenta,
@@ -184,6 +192,10 @@ impl Theme {
                 code_bg: Color::Gray,
                 code_text: Color::Black,
                 code_block_border: Color::Gray,
+                admonition_note: Color::Blue,
+                admonition_tip: Color::Green,
+                admonition_warning: Color::Yellow,
+                admonition_caution: Color::Red,
             },
             syntax: SyntaxColors {
                 keyword: Color::Magenta,
@@ -245,6 +257,10 @@ impl Theme {
                 code_bg: Color::Rgb(55, 56, 48),
                 code_text: Color::Rgb(248, 248, 242),
                 code_block_border: Color::Rgb(73, 74, 66),
+                admonition_note: Color::Rgb(102, 217, 239),
+                admonition_tip: Color::Rgb(166, 226, 46),
+                admonition_warning: Color::Rgb(230, 219, 116),
+                admonition_caution: Color::Rgb(249, 38, 114),
             },
             syntax: SyntaxColors {
                 keyword: Color::Rgb(249, 38, 114),
@@ -306,6 +322,10 @@ impl Theme {
                 code_bg: Color::Rgb(7, 54, 66),
                 code_text: Color::Rgb(147, 161, 161),
                 code_block_border: Color::Rgb(88, 110, 117),
+                admonition_note: Color::Rgb(38, 139, 210),
+                admonition_tip: Color::Rgb(133, 153, 0),
+                admonition_warning: Color::Rgb(181, 137, 0),
+                admonition_caution: Color::Rgb(220, 50, 47),
             },
             syntax: SyntaxColors {
                 keyword: Color::Rgb(108, 113, 196),
@@ -508,6 +528,10 @@ fn parse_markdown(raw: &serde_json::Value, defaults: &MarkdownColors) -> Markdow
         code_bg: get_color(obj, "code_bg", defaults.code_bg),
         code_text: get_color(obj, "code_text", defaults.code_text),
         code_block_border: get_color(obj, "code_block_border", defaults.code_block_border),
+        admonition_note: get_color(obj, "admonition_note", defaults.admonition_note),
+        admonition_tip: get_color(obj, "admonition_tip", defaults.admonition_tip),
+        admonition_warning: get_color(obj, "admonition_warning", defaults.admonition_warning),
+        admonition_caution: get_color(obj, "admonition_caution", defaults.admonition_caution),
     }
 }
 

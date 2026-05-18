@@ -1,6 +1,6 @@
 use markdown::mdast::{self, Node};
 use markdown::to_mdast;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -64,6 +64,72 @@ fn truncate_lines(
 struct Prefix {
     text: String,
     width: usize,
+}
+
+#[derive(Clone, Copy)]
+enum AdmonitionKind {
+    Note,
+    Tip,
+    Important,
+    Warning,
+    Caution,
+}
+
+impl AdmonitionKind {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Note => "NOTE",
+            Self::Tip => "TIP",
+            Self::Important => "IMPORTANT",
+            Self::Warning => "WARNING",
+            Self::Caution => "CAUTION",
+        }
+    }
+
+    fn color(self, theme: &Theme) -> Color {
+        match self {
+            Self::Note | Self::Important => theme.markdown.admonition_note,
+            Self::Tip => theme.markdown.admonition_tip,
+            Self::Warning => theme.markdown.admonition_warning,
+            Self::Caution => theme.markdown.admonition_caution,
+        }
+    }
+}
+
+fn detect_admonition(bq: &mdast::Blockquote) -> Option<AdmonitionKind> {
+    let first = bq.children.first()?;
+    let Node::Paragraph(para) = first else {
+        return None;
+    };
+    let first_child = para.children.first()?;
+    let Node::Text(text) = first_child else {
+        return None;
+    };
+    let val = text.value.trim_start();
+    if !val.starts_with('[') {
+        return None;
+    }
+    let end = val.find(']')?;
+    let tag = &val[1..end];
+    match tag.to_uppercase().as_str() {
+        "!NOTE" => Some(AdmonitionKind::Note),
+        "!TIP" => Some(AdmonitionKind::Tip),
+        "!IMPORTANT" => Some(AdmonitionKind::Important),
+        "!WARNING" => Some(AdmonitionKind::Warning),
+        "!CAUTION" | "!ERROR" => Some(AdmonitionKind::Caution),
+        _ => None,
+    }
+}
+
+fn strip_admonition_marker(text: &str) -> String {
+    let trimmed = text.trim_start();
+    if trimmed.starts_with('[') {
+        if let Some(end) = trimmed.find(']') {
+            let after = trimmed.get(end + 1..).unwrap_or("");
+            return after.trim_start().to_string();
+        }
+    }
+    text.to_string()
 }
 
 struct RenderContext<'a> {
@@ -157,22 +223,40 @@ impl<'a> RenderContext<'a> {
             }
 
             Node::Heading(heading) => {
-                let mod_flag = match heading.depth {
-                    1 => Modifier::BOLD | Modifier::SLOW_BLINK,
-                    _ => Modifier::BOLD,
-                };
                 self.current_style = Style::default()
                     .fg(self.theme.markdown.heading)
-                    .add_modifier(mod_flag);
+                    .add_modifier(Modifier::BOLD);
                 for child in &heading.children {
                     self.render_inline(child);
                 }
+                let w = self.current_width;
                 self.flush_line();
+                match heading.depth {
+                    1 => {
+                        let n = w.max(3).min(60);
+                        self.lines.push(Line::from(Span::styled(
+                            "═".repeat(n),
+                            Style::default().fg(self.theme.markdown.heading),
+                        )));
+                    }
+                    2 => {
+                        let n = w.max(3).min(60);
+                        self.lines.push(Line::from(Span::styled(
+                            "─".repeat(n),
+                            Style::default().fg(self.theme.markdown.heading),
+                        )));
+                    }
+                    _ => {}
+                }
                 self.lines.push(Line::from(""));
                 self.current_style = Style::default();
             }
 
             Node::Blockquote(bq) => {
+                if let Some(kind) = detect_admonition(bq) {
+                    self.render_admonition(bq, kind);
+                    return;
+                }
                 let depth = self
                     .prefix_stack
                     .iter()
@@ -182,7 +266,6 @@ impl<'a> RenderContext<'a> {
                     text: "▎ ".to_string(),
                     width: 2,
                 });
-                // Add blockquote prefix to current line
                 self.current_line.push(Span::styled(
                     "▎ ".to_string(),
                     Style::default().fg(self.theme.markdown.code_block_border),
@@ -248,6 +331,10 @@ impl<'a> RenderContext<'a> {
 
             Node::ThematicBreak(_) => {
                 self.flush_line();
+                self.lines.push(Line::from(Span::styled(
+                    "─".repeat(40),
+                    Style::default().fg(self.theme.markdown.code_block_border),
+                )));
                 self.lines.push(Line::from(""));
             }
 
@@ -348,17 +435,17 @@ impl<'a> RenderContext<'a> {
     fn render_code_block(&mut self, lang: Option<&str>, code: &str) {
         self.flush_line();
         let lang_str = lang.unwrap_or("");
-        let header = if lang_str.is_empty() {
-            String::new()
+        let border_style = Style::default().fg(self.theme.markdown.code_block_border);
+
+        // Top border: ┌─ lang ────┐
+        let top_border = if lang_str.is_empty() {
+            "┌──────────────┐".to_string()
         } else {
-            format!(" {lang_str}")
+            let pad = 8usize.saturating_sub(lang_str.len()).max(2);
+            format!("┌─ {lang_str} {}┐", "─".repeat(pad))
         };
-        if !header.is_empty() {
-            self.lines.push(Line::from(Span::styled(
-                header,
-                Style::default().fg(self.theme.markdown.code_block_border),
-            )));
-        }
+        self.lines
+            .push(Line::from(Span::styled(top_border, border_style)));
 
         let code_max = self.max_width;
 
@@ -373,16 +460,78 @@ impl<'a> RenderContext<'a> {
                     .iter()
                     .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
                     .sum();
-                if line_w > max {
-                    for wrapped in wrap_spans(&highlighted.spans, max) {
-                        self.lines.push(Line::from(wrapped));
+                if line_w + 2 > max {
+                    for wrapped in wrap_spans(&highlighted.spans, max.saturating_sub(2)) {
+                        let mut spans: Vec<Span<'static>> = vec![Span::styled("│ ", border_style)];
+                        spans.extend(wrapped);
+                        self.lines.push(Line::from(spans));
                     }
                     continue;
                 }
             }
 
-            self.lines.push(Line::from(highlighted.spans));
+            let mut spans: Vec<Span<'static>> = vec![Span::styled("│ ", border_style)];
+            spans.extend(highlighted.spans);
+            self.lines.push(Line::from(spans));
         }
+
+        // Bottom border: └──────────────┘
+        self.lines
+            .push(Line::from(Span::styled("└──────────────┘", border_style)));
+        self.lines.push(Line::from(""));
+    }
+
+    fn render_admonition(&mut self, bq: &mdast::Blockquote, kind: AdmonitionKind) {
+        let color = kind.color(self.theme);
+        let border_style = Style::default().fg(color);
+        let label = kind.label();
+
+        // Top border: ╭─ NOTE ──╮
+        let pad = 8usize.saturating_sub(label.len()).max(2);
+        let top = format!("╭─ {label} {}╮", "─".repeat(pad));
+        self.lines.push(Line::from(Span::styled(top, border_style)));
+
+        // Content lines with │ prefix
+        self.prefix_stack.push(Prefix {
+            text: "│ ".to_string(),
+            width: 2,
+        });
+
+        for (i, child) in bq.children.iter().enumerate() {
+            if i == 0 {
+                if let Node::Paragraph(para) = child {
+                    self.current_line
+                        .push(Span::styled("│ ".to_string(), border_style));
+                    self.current_width += 2;
+                    for (j, inline) in para.children.iter().enumerate() {
+                        if j == 0 {
+                            if let Node::Text(text) = inline {
+                                let remaining = strip_admonition_marker(&text.value);
+                                if !remaining.is_empty() {
+                                    self.push_wrapped(&remaining, self.current_style);
+                                }
+                            } else {
+                                self.render_inline(inline);
+                            }
+                        } else {
+                            self.render_inline(inline);
+                        }
+                    }
+                    self.flush_line();
+                }
+            } else {
+                self.current_line
+                    .push(Span::styled("│ ".to_string(), border_style));
+                self.current_width += 2;
+                self.render_node(child);
+            }
+        }
+
+        self.prefix_stack.pop();
+
+        // Bottom border: ╰──────────╯
+        self.lines
+            .push(Line::from(Span::styled("╰──────────────╯", border_style)));
         self.lines.push(Line::from(""));
     }
 
@@ -673,5 +822,95 @@ mod tests {
         };
         let text = collect_inline_text(&para.children);
         assert_eq!(text, "hello world  code ");
+    }
+
+    #[test]
+    fn test_code_block_borders() {
+        let md = "```rust\nfn main() {}\n```\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains('┌'), "code block should have top border");
+        assert!(
+            combined.contains('└'),
+            "code block should have bottom border"
+        );
+        assert!(combined.contains('│'), "code lines should have │ prefix");
+    }
+
+    #[test]
+    fn test_heading_h1_separator() {
+        let md = "# Title\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains('═'), "H1 should have ═ separator");
+    }
+
+    #[test]
+    fn test_heading_h2_separator() {
+        let md = "## Section\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains('─'), "H2 should have ─ separator");
+    }
+
+    #[test]
+    fn test_horizontal_rule() {
+        let md = "above\n\n---\n\nbelow\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(
+            combined.contains("────────────────────────────────────────"),
+            "horizontal rule should render as dashes"
+        );
+    }
+
+    #[test]
+    fn test_admonition_note() {
+        let md = "> [!NOTE]\n> This is a note.\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains('╭'), "admonition should have top border");
+        assert!(
+            combined.contains('╰'),
+            "admonition should have bottom border"
+        );
+        assert!(combined.contains("NOTE"), "admonition should show title");
+        assert!(combined.contains("note"), "admonition should show content");
+    }
+
+    #[test]
+    fn test_admonition_warning() {
+        let md = "> [!WARNING] Be careful!\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains("WARNING"), "should show WARNING title");
+        assert!(combined.contains("careful"), "should show content");
+    }
+
+    #[test]
+    fn test_admonition_error() {
+        let md = "> [!ERROR]\n> Something went wrong.\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains("CAUTION"), "ERROR maps to CAUTION title");
+    }
+
+    #[test]
+    fn test_regular_blockquote_unchanged() {
+        let md = "> This is a regular quote.\n";
+        let lines = render_markdown_with_theme(md, &test_theme(), None);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains('▎'), "regular blockquote uses ▎ prefix");
+        assert!(
+            !combined.contains('╭'),
+            "regular blockquote has no admonition border"
+        );
+    }
+
+    #[test]
+    fn test_strip_admonition_marker() {
+        assert_eq!(strip_admonition_marker("[!NOTE] text"), "text");
+        assert_eq!(strip_admonition_marker("[!NOTE]"), "");
+        assert_eq!(strip_admonition_marker("no marker"), "no marker");
     }
 }

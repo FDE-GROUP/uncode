@@ -53,11 +53,9 @@ fn build_chat_messages(context: &Context) -> Vec<Value> {
                         ContentBlock::Text { text } => text_parts.push(text.clone()),
                         ContentBlock::ToolCall(tc) => {
                             tool_calls.push(serde_json::json!({
-                                "id": tc.id,
-                                "type": "function",
                                 "function": {
                                     "name": tc.name,
-                                    "arguments": tc.arguments.to_string()
+                                    "arguments": tc.arguments
                                 }
                             }));
                         }
@@ -83,7 +81,6 @@ fn build_chat_messages(context: &Context) -> Vec<Value> {
                     if let ContentBlock::ToolResult(tr) = block {
                         messages.push(serde_json::json!({
                             "role": "tool",
-                            "tool_call_id": tr.tool_call_id,
                             "content": tr.content
                         }));
                     }
@@ -147,6 +144,17 @@ fn parse_ollama_chunk(text: &str, state: &mut OllamaToolState) -> Vec<StreamEven
             continue;
         }
         if let Ok(event) = serde_json::from_str::<Value>(line) {
+            // Ollama stream error
+            if let Some(err) = event["error"].as_str() {
+                if !err.is_empty() {
+                    events.push(StreamEvent::Error {
+                        reason: crate::api_types::StopReason::Error,
+                        message: err.to_string(),
+                    });
+                    continue;
+                }
+            }
+
             if let Some(content) = event["message"]["content"].as_str() {
                 if !content.is_empty() {
                     events.push(StreamEvent::TextDelta(content.to_string()));
@@ -249,11 +257,24 @@ impl Api for OllamaNativeApi {
         }
 
         let state = OllamaToolState::new();
+        let buf = String::new();
         let stream = response
             .bytes_stream()
-            .scan(state, |state, chunk| {
+            .scan((state, buf), |(state, buf), chunk| {
                 let events: Vec<StreamEvent> = match chunk {
-                    Ok(c) => parse_ollama_chunk(&String::from_utf8_lossy(&c), state),
+                    Ok(c) => {
+                        buf.push_str(&String::from_utf8_lossy(&c));
+                        let mut all_events = Vec::new();
+                        while let Some(pos) = buf.find('\n') {
+                            let line = buf[..pos].trim().to_string();
+                            buf.drain(..=pos);
+                            if line.is_empty() {
+                                continue;
+                            }
+                            all_events.extend(parse_ollama_chunk(&line, state));
+                        }
+                        all_events
+                    }
                     Err(e) => vec![StreamEvent::Error {
                         reason: crate::api_types::StopReason::Error,
                         message: e.to_string(),

@@ -34,7 +34,8 @@ impl ToolExecutor for ReadTool {
                 "properties": {
                     "path": {"type": "string", "description": "文件路径（相对或绝对）"},
                     "offset": {"type": "integer", "description": "起始行号"},
-                    "limit": {"type": "integer", "description": "读取行数"}
+                    "limit": {"type": "integer", "description": "读取行数"},
+                    "hashline": {"type": "boolean", "description": "If true, prepend LINE#HASH anchor to each line for use with edit tool"}
                 },
                 "required": ["path"]
             }),
@@ -95,20 +96,41 @@ impl ToolExecutor for ReadTool {
 
         let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
         let limit = arguments["limit"].as_u64().map(|l| l as usize);
+        let hashline = arguments["hashline"].as_bool().unwrap_or(false);
 
-        let result = content
-            .lines()
-            .skip(offset)
-            .take(limit.unwrap_or(usize::MAX))
-            .enumerate()
-            .fold(
-                String::with_capacity(limit.unwrap_or(0).min(content.len()).saturating_mul(80)),
-                |mut acc, (i, line)| {
-                    use std::fmt::Write;
-                    let _ = writeln!(acc, "{:>6}: {line}", offset + i + 1);
-                    acc
-                },
-            );
+        let result = if hashline {
+            content
+                .lines()
+                .skip(offset)
+                .take(limit.unwrap_or(usize::MAX))
+                .enumerate()
+                .fold(
+                    String::with_capacity(
+                        limit.unwrap_or(0).min(content.len()).saturating_mul(100),
+                    ),
+                    |mut acc, (i, line)| {
+                        use std::fmt::Write;
+                        let hash = super::hashline::compute_line_hash(line);
+                        let hash_str = std::str::from_utf8(&hash).unwrap_or("??");
+                        let _ = writeln!(acc, "{:>6}#{hash_str} {line}", offset + i + 1);
+                        acc
+                    },
+                )
+        } else {
+            content
+                .lines()
+                .skip(offset)
+                .take(limit.unwrap_or(usize::MAX))
+                .enumerate()
+                .fold(
+                    String::with_capacity(limit.unwrap_or(0).min(content.len()).saturating_mul(80)),
+                    |mut acc, (i, line)| {
+                        use std::fmt::Write;
+                        let _ = writeln!(acc, "{:>6}: {line}", offset + i + 1);
+                        acc
+                    },
+                )
+        };
 
         Ok(result)
     }

@@ -118,7 +118,7 @@ async fn list_sessions(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<SessionQuery>,
 ) -> Result<Json<SessionListResponse>, StatusCode> {
-    let sessions = state.store.list_sessions().map_err(|e| {
+    let sessions = state.store.list_sessions().await.map_err(|e| {
         tracing::error!("list sessions: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
@@ -192,14 +192,19 @@ async fn get_session(
     State(state): State<AppState>,
     axum::extract::Path(session_id): axum::extract::Path<String>,
 ) -> Result<Json<SessionDetail>, StatusCode> {
-    let entries = state.store.load_entries(&session_id).map_err(|e| match e {
-        SessionError::NotFound(_) => StatusCode::NOT_FOUND,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
-    })?;
+    let entries = state
+        .store
+        .load_entries(&session_id)
+        .await
+        .map_err(|e| match e {
+            SessionError::NotFound(_) => StatusCode::NOT_FOUND,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        })?;
 
     let header = state
         .store
         .read_header(&session_id)
+        .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
 
     let json_entries: Vec<serde_json::Value> = entries
@@ -223,11 +228,16 @@ async fn get_session_metrics(
     let header = state
         .store
         .read_header(&session_id)
+        .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
-    let entries = state.store.load_entries(&session_id).map_err(|e| match e {
-        SessionError::NotFound(_) => StatusCode::NOT_FOUND,
-        _ => StatusCode::INTERNAL_SERVER_ERROR,
-    })?;
+    let entries = state
+        .store
+        .load_entries(&session_id)
+        .await
+        .map_err(|e| match e {
+            SessionError::NotFound(_) => StatusCode::NOT_FOUND,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        })?;
 
     let mut total_messages: u64 = 0;
     let mut total_tool_calls: u64 = 0;
@@ -308,7 +318,7 @@ async fn get_session_metrics(
 }
 
 async fn get_metrics(State(state): State<AppState>) -> Result<Json<MetricsResponse>, StatusCode> {
-    let mut sessions = state.store.list_sessions().map_err(|e| {
+    let mut sessions = state.store.list_sessions().await.map_err(|e| {
         tracing::error!("list sessions for metrics: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
@@ -326,7 +336,7 @@ async fn get_metrics(State(state): State<AppState>) -> Result<Json<MetricsRespon
     for s in &sessions {
         *model_counts.entry(s.model.clone()).or_default() += 1;
 
-        if let Ok(entries) = state.store.load_entries(&s.id) {
+        if let Ok(entries) = state.store.load_entries(&s.id).await {
             for entry in &entries {
                 if let SessionEntry::Message(me) = entry {
                     total_messages += 1;
@@ -448,7 +458,7 @@ struct SuggestionsResponse {
 async fn get_suggestions(
     State(state): State<AppState>,
 ) -> Result<Json<SuggestionsResponse>, StatusCode> {
-    let sessions = state.store.list_sessions().map_err(|e| {
+    let sessions = state.store.list_sessions().await.map_err(|e| {
         tracing::error!("list sessions for suggestions: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
@@ -468,7 +478,7 @@ async fn get_suggestions(
     let mut high_turn_sessions: Vec<String> = Vec::new();
 
     for s in &sessions {
-        if let Ok(entries) = state.store.load_entries(&s.id) {
+        if let Ok(entries) = state.store.load_entries(&s.id).await {
             let mut session_input: u64 = 0;
             let mut session_output: u64 = 0;
             let mut turn_count: u64 = 0;
@@ -757,7 +767,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let dir = SessionStore::default_dir()?;
-    let store = Arc::new(SessionStore::new(dir));
+    let store = Arc::new(SessionStore::new(dir).await?);
 
     let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
 

@@ -35,8 +35,8 @@ pub struct BuiltContext {
 ///    - ThinkingLevelChangeEntry → track effective thinking level
 ///    - MessageEntry → convert to Message
 ///    - Other entries → skip
-pub fn build_context(store: &SessionStore, session_id: &str) -> SessionResult<BuiltContext> {
-    let entries = store.load_entries(session_id)?;
+pub async fn build_context(store: &SessionStore, session_id: &str) -> SessionResult<BuiltContext> {
+    let entries = store.load_entries(session_id).await?;
 
     let mut messages = Vec::with_capacity(entries.len());
     let mut effective_model: Option<String> = None;
@@ -110,59 +110,51 @@ mod tests {
     use super::*;
     use uncode_core::session::*;
 
-    fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("uncode-test-ctx-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    #[test]
-    fn test_build_context_empty_session() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_build_context_empty_session() {
+        let store = SessionStore::new_memory().await.expect("store");
         store
             .init_session("test-session", "model", "/test")
+            .await
             .unwrap();
 
-        let ctx = build_context(&store, "test-session").unwrap();
+        let ctx = build_context(&store, "test-session").await.unwrap();
         assert!(ctx.messages.is_empty());
         assert!(ctx.effective_model.is_none());
-
-        std::fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_build_context_linear_chain() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_build_context_linear_chain() {
+        let store = SessionStore::new_memory().await.expect("store");
         store
             .init_session("test-session", "model", "/test")
+            .await
             .unwrap();
 
         let user_msg = Message::user("hello");
         store
             .append_entry("test-session", &SessionEntry::Message(user_msg.into()))
+            .await
             .unwrap();
 
         let asst_msg = Message::assistant("world");
         store
             .append_entry("test-session", &SessionEntry::Message(asst_msg.into()))
+            .await
             .unwrap();
 
-        let ctx = build_context(&store, "test-session").unwrap();
+        let ctx = build_context(&store, "test-session").await.unwrap();
         assert_eq!(ctx.messages.len(), 2);
         assert_eq!(ctx.messages[0].role, Role::User);
         assert_eq!(ctx.messages[1].role, Role::Assistant);
-
-        std::fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_build_context_with_compaction() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_build_context_with_compaction() {
+        let store = SessionStore::new_memory().await.expect("store");
         store
             .init_session("test-session", "model", "/test")
+            .await
             .unwrap();
 
         // Old messages (will be compacted away)
@@ -181,6 +173,7 @@ mod tests {
                     usage: None,
                 })),
             )
+            .await
             .unwrap();
 
         let msg2_id = generate_entry_id();
@@ -198,6 +191,7 @@ mod tests {
                     usage: None,
                 })),
             )
+            .await
             .unwrap();
 
         // CompactionEntry — keeps from msg2_id onward
@@ -215,6 +209,7 @@ mod tests {
                     files_modified: vec![],
                 })),
             )
+            .await
             .unwrap();
 
         // Recent message (should be included)
@@ -233,9 +228,10 @@ mod tests {
                     usage: None,
                 })),
             )
+            .await
             .unwrap();
 
-        let ctx = build_context(&store, "test-session").unwrap();
+        let ctx = build_context(&store, "test-session").await.unwrap();
         // Summary + msg2 (first_kept) + msg3
         assert_eq!(ctx.messages.len(), 3);
         assert_eq!(ctx.messages[0].role, Role::System);
@@ -245,16 +241,14 @@ mod tests {
         ));
         assert_eq!(ctx.messages[1].role, Role::Assistant);
         assert_eq!(ctx.messages[2].role, Role::User);
-
-        std::fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_build_context_model_change() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_build_context_model_change() {
+        let store = SessionStore::new_memory().await.expect("store");
         store
             .init_session("test-session", "model-a", "/test")
+            .await
             .unwrap();
 
         store
@@ -268,20 +262,19 @@ mod tests {
                     model_id: "gpt-4".into(),
                 })),
             )
+            .await
             .unwrap();
 
-        let ctx = build_context(&store, "test-session").unwrap();
+        let ctx = build_context(&store, "test-session").await.unwrap();
         assert_eq!(ctx.effective_model.as_deref(), Some("gpt-4"));
-
-        std::fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_build_context_branch_summary() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_build_context_branch_summary() {
+        let store = SessionStore::new_memory().await.expect("store");
         store
             .init_session("test-session", "model", "/test")
+            .await
             .unwrap();
 
         store
@@ -295,27 +288,26 @@ mod tests {
                     summary: "Explored alternative approach".into(),
                 })),
             )
+            .await
             .unwrap();
 
-        let ctx = build_context(&store, "test-session").unwrap();
+        let ctx = build_context(&store, "test-session").await.unwrap();
         assert_eq!(ctx.messages.len(), 1);
         assert_eq!(ctx.messages[0].role, Role::System);
         assert!(matches!(
             &ctx.messages[0].content[0],
             ContentBlock::Text { text } if text.contains("Explored alternative")
         ));
-
-        std::fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_build_context_thinking_level_change() {
+    #[tokio::test]
+    async fn test_build_context_thinking_level_change() {
         use uncode_core::api_types::ThinkingLevel;
 
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+        let store = SessionStore::new_memory().await.expect("store");
         store
             .init_session("test-session", "model", "/test")
+            .await
             .unwrap();
 
         store
@@ -328,11 +320,10 @@ mod tests {
                     thinking_level: ThinkingLevel::High,
                 })),
             )
+            .await
             .unwrap();
 
-        let ctx = build_context(&store, "test-session").unwrap();
+        let ctx = build_context(&store, "test-session").await.unwrap();
         assert_eq!(ctx.effective_thinking_level, Some(ThinkingLevel::High));
-
-        std::fs::remove_dir_all(dir).ok();
     }
 }
