@@ -1,316 +1,257 @@
 #[cfg(test)]
 mod tests {
-    use std::fs;
-
     use uncode_core::message::Message;
     use uncode_core::session::{MessageEntry, SessionEntry};
 
     use crate::session::manager::SessionManager;
     use crate::session::store::SessionStore;
 
-    fn temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("uncode-test-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        dir
+    async fn new_store() -> SessionStore {
+        SessionStore::new_memory().await.unwrap()
     }
 
-    #[test]
-    fn test_store_init_and_list() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_store_init_and_list() {
+        let store = new_store().await;
 
         store
             .init_session("test-session", "deepseek-v3", "/test")
+            .await
             .unwrap();
-        let sessions = store.list_sessions().unwrap();
+        let sessions = store.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, "test-session");
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_store_init_idempotent() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_store_init_idempotent() {
+        let store = new_store().await;
 
-        store.init_session("s1", "model", "/test").unwrap();
-        store.init_session("s1", "model", "/test").unwrap();
-        let sessions = store.list_sessions().unwrap();
+        store.init_session("s1", "model", "/test").await.unwrap();
+        store.init_session("s1", "model", "/test").await.unwrap();
+        let sessions = store.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_store_append_and_load() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_store_append_and_load() {
+        let store = new_store().await;
         store
             .init_session("test-session", "deepseek-v3", "/test")
+            .await
             .unwrap();
 
         let msg = Message::user("hello world");
         let entry = SessionEntry::Message(Box::new(MessageEntry::from(msg)));
-        store.append_entry("test-session", &entry).unwrap();
+        store.append_entry("test-session", &entry).await.unwrap();
 
-        let entries = store.load_entries("test-session").unwrap();
+        let entries = store.load_entries("test-session").await.unwrap();
         assert_eq!(entries.len(), 1);
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_store_multiple_entries() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_store_multiple_entries() {
+        let store = new_store().await;
         store
             .init_session("multi-session", "deepseek-v3", "/test")
+            .await
             .unwrap();
 
         for i in 0..5 {
             let msg = Message::user(format!("message {i}"));
             let entry = SessionEntry::Message(Box::new(MessageEntry::from(msg)));
-            store.append_entry("multi-session", &entry).unwrap();
+            store.append_entry("multi-session", &entry).await.unwrap();
         }
 
-        let entries = store.load_entries("multi-session").unwrap();
+        let entries = store.load_entries("multi-session").await.unwrap();
         assert_eq!(entries.len(), 5);
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_store_not_found() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
-        assert!(store.load_entries("nonexistent").is_err());
-        assert!(store.read_header("nonexistent").is_err());
+    #[tokio::test]
+    async fn test_store_not_found() {
+        let store = new_store().await;
+        assert!(store.load_entries("nonexistent").await.is_err());
+        assert!(store.read_header("nonexistent").await.is_err());
         assert!(
             store
                 .append_entry(
                     "nonexistent",
                     &SessionEntry::Message(Box::new(MessageEntry::from(Message::user("x")))),
                 )
+                .await
                 .is_err()
         );
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_store_read_header() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_store_read_header() {
+        let store = new_store().await;
         store
             .init_session("test-session", "deepseek-v3", "/test")
+            .await
             .unwrap();
 
-        let header = store.read_header("test-session").unwrap();
+        let header = store.read_header("test-session").await.unwrap();
         assert_eq!(header.id, "test-session");
         assert_eq!(header.model, "deepseek-v3");
         assert_eq!(header.entry_type, "session");
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_store_corrupted_jsonl() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_store_nonexistent_session() {
+        let store = new_store().await;
 
-        // 写一个损坏的 JSONL 文件
-        let path = dir.join("corrupted.jsonl");
-        fs::write(&path, "this is not valid json\n").unwrap();
+        // For SurrealDB, reading a nonexistent session should return NotFound
+        assert!(store.read_header("nonexistent").await.is_err());
+        assert!(store.load_entries("nonexistent").await.is_err());
+    }
 
-        // list_sessions 应该跳过损坏的文件，不 panic
-        let sessions = store.list_sessions().unwrap();
+    #[tokio::test]
+    async fn test_store_empty_list() {
+        let store = new_store().await;
+
+        // Empty store lists zero sessions
+        let sessions = store.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 0);
-
-        // read_header 对损坏文件应返回错误
-        assert!(store.read_header("corrupted").is_err());
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_store_empty_jsonl() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_store_list_only_real_sessions() {
+        let store = new_store().await;
 
-        let path = dir.join("empty.jsonl");
-        fs::write(&path, "").unwrap();
-
-        // 空文件无法读取 header
-        assert!(store.read_header("empty").is_err());
-        // 空文件加载 entries 也是错误（无有效 header）
-        assert!(store.load_entries("empty").is_err());
-
-        fs::remove_dir_all(dir).ok();
-    }
-
-    #[test]
-    fn test_store_list_skips_non_jsonl() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
-
-        // 非 .jsonl 文件不应出现在列表中
-        fs::write(dir.join("readme.txt"), "not a session").unwrap();
         store
             .init_session("real-session", "model", "/test")
+            .await
             .unwrap();
 
-        let sessions = store.list_sessions().unwrap();
+        let sessions = store.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].id, "real-session");
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_manager_create_and_list() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_manager_create_and_list() {
+        let store = new_store().await;
         let manager = SessionManager::new(store);
 
         let meta = manager
             .create_session("deepseek-v3", "/test", Some("my session".into()))
+            .await
             .unwrap();
         assert!(meta.title.as_deref() == Some("my session"));
 
-        let sessions = manager.list_sessions().unwrap();
+        let sessions = manager.list_sessions().await.unwrap();
         assert_eq!(sessions.len(), 1);
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_manager_create_without_title() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_manager_create_without_title() {
+        let store = new_store().await;
         let manager = SessionManager::new(store);
 
         let meta = manager
             .create_session("deepseek-v3", "/test", None)
+            .await
             .unwrap();
         assert!(meta.title.is_none());
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_manager_branch_session() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_manager_branch_session() {
+        let store = new_store().await;
         let manager = SessionManager::new(store);
 
         let parent = manager
             .create_session("deepseek-v3", "/test", Some("parent".into()))
+            .await
             .unwrap();
 
         let branch = manager
             .branch_session(&parent.id, "try alternative approach")
+            .await
             .unwrap();
 
         assert_ne!(branch.id, parent.id);
         assert_eq!(branch.model, "deepseek-v3");
 
-        let entries = manager.load_entries(&branch.id).unwrap();
+        let entries = manager.load_entries(&branch.id).await.unwrap();
         assert_eq!(entries.len(), 1);
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_manager_get_metadata() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_manager_get_metadata() {
+        let store = new_store().await;
         let manager = SessionManager::new(store);
 
         let created = manager
             .create_session("glm-5.1", "/workspace", None)
+            .await
             .unwrap();
 
-        let loaded = manager.get_metadata(&created.id).unwrap();
+        let loaded = manager.get_metadata(&created.id).await.unwrap();
         assert_eq!(loaded.id, created.id);
         assert_eq!(loaded.model, "glm-5.1");
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_find_most_recent_empty() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_find_most_recent_empty() {
+        let store = new_store().await;
 
-        let result = store.find_most_recent().unwrap();
+        let result = store.find_most_recent().await.unwrap();
         assert!(result.is_none());
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_find_most_recent_single() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_find_most_recent_single() {
+        let store = new_store().await;
 
         store
             .init_session("only-session", "deepseek-v3", "/test")
+            .await
             .unwrap();
 
-        let result = store.find_most_recent().unwrap();
+        let result = store.find_most_recent().await.unwrap();
         assert_eq!(result.unwrap().id, "only-session");
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_find_most_recent_returns_latest() {
-        use std::io::Write;
-
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_find_most_recent_returns_latest() {
+        let store = new_store().await;
 
         // 创建第一个会话
         store
             .init_session("older-session", "deepseek-v3", "/test")
+            .await
             .unwrap();
 
         // 稍等后创建第二个会话（updated_at 更新）
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         store
             .init_session("newer-session", "glm-5.1", "/test")
+            .await
             .unwrap();
 
-        // 手动 touch 第一个文件使其更新时间更晚
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        let older_path = dir.join("older-session.jsonl");
-        let content = fs::read_to_string(&older_path).unwrap();
-        {
-            let mut f = fs::File::create(&older_path).unwrap();
-            write!(f, "{content}").unwrap();
-        }
-
-        let result = store.find_most_recent().unwrap();
-        assert_eq!(result.unwrap().id, "older-session");
-
-        fs::remove_dir_all(dir).ok();
+        let result = store.find_most_recent().await.unwrap();
+        assert_eq!(result.unwrap().id, "newer-session");
     }
 
     // ── Tree operation tests ──
 
-    #[test]
-    fn test_append_entry_auto_parent_id() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
-        store.init_session("tree-test", "model", "/test").unwrap();
+    #[tokio::test]
+    async fn test_append_entry_auto_parent_id() {
+        let store = new_store().await;
+        store
+            .init_session("tree-test", "model", "/test")
+            .await
+            .unwrap();
 
         let e1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("first"))));
-        store.append_entry("tree-test", &e1).unwrap();
+        store.append_entry("tree-test", &e1).await.unwrap();
 
         let e2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("second"))));
-        store.append_entry("tree-test", &e2).unwrap();
+        store.append_entry("tree-test", &e2).await.unwrap();
 
-        let entries = store.load_entries("tree-test").unwrap();
+        let entries = store.load_entries("tree-test").await.unwrap();
         // First entry has no parent (root)
         assert!(entries[0].parent_id().is_none());
         // Second entry's parent should be first entry's id
@@ -318,64 +259,64 @@ mod tests {
             entries[1].parent_id().map(|s| s.to_string()),
             Some(entries[0].entry_id().to_string())
         );
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_get_leaf_id_initial() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
-        store.init_session("leaf-test", "model", "/test").unwrap();
+    #[tokio::test]
+    async fn test_get_leaf_id_initial() {
+        let store = new_store().await;
+        store
+            .init_session("leaf-test", "model", "/test")
+            .await
+            .unwrap();
 
         let e = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("hello"))));
-        store.append_entry("leaf-test", &e).unwrap();
+        store.append_entry("leaf-test", &e).await.unwrap();
 
-        let leaf = store.get_leaf_id("leaf-test").unwrap();
+        let leaf = store.get_leaf_id("leaf-test").await.unwrap();
         assert!(leaf.is_some());
 
-        let entries = store.load_entries("leaf-test").unwrap();
+        let entries = store.load_entries("leaf-test").await.unwrap();
         assert_eq!(leaf.as_deref(), Some(entries[0].entry_id()));
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_set_leaf_moves_pointer() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
+    #[tokio::test]
+    async fn test_set_leaf_moves_pointer() {
+        let store = new_store().await;
         store
             .init_session("set-leaf-test", "model", "/test")
+            .await
             .unwrap();
 
         let e1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("first"))));
-        store.append_entry("set-leaf-test", &e1).unwrap();
+        store.append_entry("set-leaf-test", &e1).await.unwrap();
         let e1_id = store
             .get_entry(
                 "set-leaf-test",
                 store
                     .get_leaf_id("set-leaf-test")
+                    .await
                     .unwrap()
                     .unwrap()
                     .as_str(),
             )
+            .await
             .unwrap()
             .unwrap()
             .entry_id()
             .to_string();
 
         let e2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("second"))));
-        store.append_entry("set-leaf-test", &e2).unwrap();
+        store.append_entry("set-leaf-test", &e2).await.unwrap();
 
         // Leaf should be on e2
-        let leaf = store.get_leaf_id("set-leaf-test").unwrap();
+        let leaf = store.get_leaf_id("set-leaf-test").await.unwrap();
         assert_ne!(leaf.as_deref(), Some(e1_id.as_str()));
 
         // Move leaf back to e1
-        store.set_leaf("set-leaf-test", &e1_id).unwrap();
+        store.set_leaf("set-leaf-test", &e1_id).await.unwrap();
 
         // Verify a LeafEntry was created targeting e1
-        let entries = store.load_entries("set-leaf-test").unwrap();
+        let entries = store.load_entries("set-leaf-test").await.unwrap();
         let has_leaf = entries.iter().any(|e| {
             if let SessionEntry::Leaf(l) = e {
                 l.target_id == e1_id
@@ -384,84 +325,82 @@ mod tests {
             }
         });
         assert!(has_leaf);
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_get_entry_found_and_missing() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
-        store.init_session("entry-test", "model", "/test").unwrap();
+    #[tokio::test]
+    async fn test_get_entry_found_and_missing() {
+        let store = new_store().await;
+        store
+            .init_session("entry-test", "model", "/test")
+            .await
+            .unwrap();
 
         let e = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("hello"))));
-        store.append_entry("entry-test", &e).unwrap();
+        store.append_entry("entry-test", &e).await.unwrap();
 
-        let entries = store.load_entries("entry-test").unwrap();
+        let entries = store.load_entries("entry-test").await.unwrap();
         let id = entries[0].entry_id().to_string();
 
-        assert!(store.get_entry("entry-test", &id).unwrap().is_some());
+        assert!(store.get_entry("entry-test", &id).await.unwrap().is_some());
         assert!(
             store
                 .get_entry("entry-test", "nonexistent")
+                .await
                 .unwrap()
                 .is_none()
         );
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_get_path_to_root_linear() {
-        let dir = temp_dir();
-        let store = SessionStore::new(dir.clone());
-        store.init_session("path-test", "model", "/test").unwrap();
+    #[tokio::test]
+    async fn test_get_path_to_root_linear() {
+        let store = new_store().await;
+        store
+            .init_session("path-test", "model", "/test")
+            .await
+            .unwrap();
 
         let e1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("a"))));
-        store.append_entry("path-test", &e1).unwrap();
+        store.append_entry("path-test", &e1).await.unwrap();
         let e2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("b"))));
-        store.append_entry("path-test", &e2).unwrap();
+        store.append_entry("path-test", &e2).await.unwrap();
         let e3 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("c"))));
-        store.append_entry("path-test", &e3).unwrap();
+        store.append_entry("path-test", &e3).await.unwrap();
 
-        let entries = store.load_entries("path-test").unwrap();
+        let entries = store.load_entries("path-test").await.unwrap();
         let e3_id = entries[2].entry_id().to_string();
 
-        let path = store.get_path_to_root("path-test", &e3_id).unwrap();
-        // Path from leaf to root: e3 → e2 → e1
+        let path = store.get_path_to_root("path-test", &e3_id).await.unwrap();
+        // Path from leaf to root: e3 -> e2 -> e1
         assert_eq!(path.len(), 3);
         assert_eq!(path[0].entry_id(), entries[2].entry_id());
         assert_eq!(path[1].entry_id(), entries[1].entry_id());
         assert_eq!(path[2].entry_id(), entries[0].entry_id());
-
-        fs::remove_dir_all(dir).ok();
     }
 
-    #[test]
-    fn test_v1_jsonl_end_to_end_migration() {
-        use std::io::Write;
+    #[tokio::test]
+    async fn test_v1_jsonl_end_to_end_migration() {
+        let store = new_store().await;
 
-        let dir = temp_dir();
-        let path = dir.join("v1-session.jsonl");
+        // For SurrealDB backend, there is no v1 JSONL migration path.
+        // Instead, verify that a freshly created session has version 2
+        // and tree operations work correctly.
+        store
+            .init_session("v1-session", "test-model", "/test")
+            .await
+            .unwrap();
 
-        // Write a v1-style JSONL: header (version=1) + entries without parent_id
-        let header_json = r#"{"type":"session","id":"v1-session","version":1,"created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z","model":"test-model","working_dir":"/test"}"#;
-        let entry1 = r#"{"type":"message","id":"aaa111","timestamp":"2025-01-01T00:00:01Z","role":"user","content":[{"type":"text","text":"hello"}]}"#;
-        let entry2 = r#"{"type":"message","id":"bbb222","timestamp":"2025-01-01T00:00:02Z","role":"assistant","content":[{"type":"text","text":"world"}]}"#;
+        let e1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("hello"))));
+        store.append_entry("v1-session", &e1).await.unwrap();
+        let e2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("world"))));
+        store.append_entry("v1-session", &e2).await.unwrap();
 
-        {
-            let mut f = std::fs::File::create(&path).unwrap();
-            writeln!(f, "{header_json}").unwrap();
-            writeln!(f, "{entry1}").unwrap();
-            writeln!(f, "{entry2}").unwrap();
-        }
+        let header = store.read_header("v1-session").await.unwrap();
+        assert_eq!(
+            header.version, 2,
+            "version should be 2 for SurrealDB backend"
+        );
 
-        // Load via SessionStore — should auto-migrate
-        let store = SessionStore::new(dir.clone());
-        let header = store.read_header("v1-session").unwrap();
-        assert_eq!(header.version, 2, "version should be migrated to 2");
-
-        let entries = store.load_entries("v1-session").unwrap();
+        let entries = store.load_entries("v1-session").await.unwrap();
         assert_eq!(entries.len(), 2);
         // First entry: no parent (root)
         assert!(entries[0].parent_id().is_none());
@@ -474,9 +413,8 @@ mod tests {
         // get_path_to_root should work
         let path = store
             .get_path_to_root("v1-session", entries[1].entry_id())
+            .await
             .unwrap();
         assert_eq!(path.len(), 2);
-
-        fs::remove_dir_all(dir).ok();
     }
 }

@@ -3,6 +3,8 @@ use std::fs;
 use uncode_core::error::UncodeResult;
 use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
 
+use super::diff::unified_diff;
+
 #[derive(Default)]
 pub struct WriteTool;
 
@@ -35,27 +37,26 @@ impl ToolExecutor for WriteTool {
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("content required".into()))?;
 
         let resolved = super::resolve_path(raw).map_err(uncode_core::error::UncodeError::Tool)?;
+        let display = resolved.display().to_string();
+
+        let old_content = fs::read_to_string(&resolved).unwrap_or_default();
 
         if let Some(parent) = resolved.parent() {
             fs::create_dir_all(parent).map_err(|e| {
-                uncode_core::error::UncodeError::Tool(format!("write {}: {e}", resolved.display()))
+                uncode_core::error::UncodeError::Tool(format!("write {}: {e}", display))
             })?;
         }
 
         // Atomic write: write to temp file then rename
         let tmp_path = resolved.with_extension("tmp");
         fs::write(&tmp_path, content).map_err(|e| {
-            uncode_core::error::UncodeError::Tool(format!("write {}: {e}", resolved.display()))
+            uncode_core::error::UncodeError::Tool(format!("write {}: {e}", display))
         })?;
         fs::rename(&tmp_path, &resolved).map_err(|e| {
             let _ = fs::remove_file(&tmp_path);
-            uncode_core::error::UncodeError::Tool(format!("write {}: {e}", resolved.display()))
+            uncode_core::error::UncodeError::Tool(format!("write {}: {e}", display))
         })?;
 
-        Ok(format!(
-            "wrote {} bytes to {}",
-            content.len(),
-            resolved.display()
-        ))
+        Ok(unified_diff(&old_content, content, &display))
     }
 }

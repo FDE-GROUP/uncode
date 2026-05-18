@@ -69,7 +69,7 @@ async fn test_write_tool() {
         .execute(serde_json::json!({"path": "output.txt", "content": "hello world"}))
         .await
         .unwrap();
-    assert!(result.contains("wrote"));
+    assert!(result.contains("bytes written"));
     assert_eq!(fs::read_to_string("output.txt").unwrap(), "hello world");
 }
 
@@ -265,4 +265,286 @@ async fn test_registry_overwrite() {
     registry.register("read".to_string(), std::sync::Arc::new(ReadTool::new()));
 
     assert_eq!(registry.definitions().len(), 1);
+}
+
+// ── Hashline tests ──
+
+fn extract_hash_from_hashline(hashline_output: &str, line_idx: usize) -> String {
+    let line = hashline_output.lines().nth(line_idx).unwrap();
+    // Format: "     5#KJ content"
+    let after_hash = line.split('#').nth(1).unwrap();
+    let hash = after_hash.split(' ').next().unwrap();
+    hash.to_string()
+}
+
+#[tokio::test]
+async fn test_read_tool_hashline_mode() {
+    let _dir = sandbox_dir();
+    fs::write("hash_test.txt", "line one\nline two\nline three\n").unwrap();
+
+    let tool = ReadTool::new();
+    let result = tool
+        .execute(serde_json::json!({"path": "hash_test.txt", "hashline": true}))
+        .await
+        .unwrap();
+
+    assert!(result.contains("#"), "hashline output should contain #");
+    assert!(result.contains("line one"));
+    let first_line = result.lines().next().unwrap();
+    assert!(first_line.contains("#"));
+    // Verify format: "     1#XX line one"
+    let parts: Vec<&str> = first_line.splitn(2, '#').collect();
+    assert_eq!(parts.len(), 2);
+    let after_hash: Vec<&str> = parts[1].splitn(2, ' ').collect();
+    assert_eq!(after_hash[0].len(), 2, "hash should be 2 chars");
+}
+
+#[tokio::test]
+async fn test_read_tool_hashline_deterministic() {
+    let _dir = sandbox_dir();
+    fs::write("det.txt", "hello world\n").unwrap();
+
+    let tool = ReadTool::new();
+    let r1 = tool
+        .execute(serde_json::json!({"path": "det.txt", "hashline": true}))
+        .await
+        .unwrap();
+    let r2 = tool
+        .execute(serde_json::json!({"path": "det.txt", "hashline": true}))
+        .await
+        .unwrap();
+    assert_eq!(r1, r2, "hashline output should be deterministic");
+}
+
+#[tokio::test]
+async fn test_edit_tool_hashline_replace() {
+    let _dir = sandbox_dir();
+    fs::write("hl_edit.txt", "alpha\nbeta\ngamma\ndelta\n").unwrap();
+
+    let read_tool = ReadTool::new();
+    let read_result = read_tool
+        .execute(serde_json::json!({"path": "hl_edit.txt", "hashline": true}))
+        .await
+        .unwrap();
+
+    let hash2 = extract_hash_from_hashline(&read_result, 1);
+
+    let edit_tool = EditTool;
+    let result = edit_tool
+        .execute(serde_json::json!({
+            "path": "hl_edit.txt",
+            "edits": [{"op": "replace", "pos": format!("2#{hash2}"), "lines": "BETA"}]
+        }))
+        .await
+        .unwrap();
+
+    assert!(result.contains("-beta") || result.contains("BETA"));
+    let content = fs::read_to_string("hl_edit.txt").unwrap();
+    assert!(content.contains("BETA"));
+    assert!(!content.contains("beta"));
+}
+
+#[tokio::test]
+async fn test_edit_tool_hashline_range_replace() {
+    let _dir = sandbox_dir();
+    fs::write("range.txt", "a\nb\nc\nd\ne\n").unwrap();
+
+    let read_tool = ReadTool::new();
+    let read_result = read_tool
+        .execute(serde_json::json!({"path": "range.txt", "hashline": true}))
+        .await
+        .unwrap();
+
+    let hash2 = extract_hash_from_hashline(&read_result, 1);
+    let hash4 = extract_hash_from_hashline(&read_result, 3);
+
+    let edit_tool = EditTool;
+    edit_tool
+        .execute(serde_json::json!({
+            "path": "range.txt",
+            "edits": [{
+                "op": "replace",
+                "pos": format!("2#{hash2}"),
+                "end": format!("4#{hash4}"),
+                "lines": "X\nY"
+            }]
+        }))
+        .await
+        .unwrap();
+
+    let content = fs::read_to_string("range.txt").unwrap();
+    assert_eq!(content, "a\nX\nY\ne\n");
+}
+
+#[tokio::test]
+async fn test_edit_tool_hashline_prepend() {
+    let _dir = sandbox_dir();
+    fs::write("prepend.txt", "first\nsecond\n").unwrap();
+
+    let read_tool = ReadTool::new();
+    let read_result = read_tool
+        .execute(serde_json::json!({"path": "prepend.txt", "hashline": true}))
+        .await
+        .unwrap();
+
+    let hash1 = extract_hash_from_hashline(&read_result, 0);
+
+    let edit_tool = EditTool;
+    edit_tool
+        .execute(serde_json::json!({
+            "path": "prepend.txt",
+            "edits": [{"op": "prepend", "pos": format!("1#{hash1}"), "lines": "zero"}]
+        }))
+        .await
+        .unwrap();
+
+    let content = fs::read_to_string("prepend.txt").unwrap();
+    assert_eq!(content, "zero\nfirst\nsecond\n");
+}
+
+#[tokio::test]
+async fn test_edit_tool_hashline_append() {
+    let _dir = sandbox_dir();
+    fs::write("append.txt", "first\nsecond\n").unwrap();
+
+    let read_tool = ReadTool::new();
+    let read_result = read_tool
+        .execute(serde_json::json!({"path": "append.txt", "hashline": true}))
+        .await
+        .unwrap();
+
+    let hash1 = extract_hash_from_hashline(&read_result, 0);
+
+    let edit_tool = EditTool;
+    edit_tool
+        .execute(serde_json::json!({
+            "path": "append.txt",
+            "edits": [{"op": "append", "pos": format!("1#{hash1}"), "lines": "inserted"}]
+        }))
+        .await
+        .unwrap();
+
+    let content = fs::read_to_string("append.txt").unwrap();
+    assert_eq!(content, "first\ninserted\nsecond\n");
+}
+
+#[tokio::test]
+async fn test_edit_tool_hashline_stale_hash() {
+    let _dir = sandbox_dir();
+    fs::write("stale.txt", "original\n").unwrap();
+
+    let edit_tool = EditTool;
+    let result = edit_tool
+        .execute(serde_json::json!({
+            "path": "stale.txt",
+            "edits": [{"op": "replace", "pos": "1#XX", "lines": "new"}]
+        }))
+        .await;
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("hash mismatch"),
+        "expected 'hash mismatch' in error, got: {err_msg}"
+    );
+}
+
+#[tokio::test]
+async fn test_edit_tool_hashline_overlapping_edits() {
+    let _dir = sandbox_dir();
+    fs::write("overlap.txt", "a\nb\nc\nd\n").unwrap();
+
+    let read_tool = ReadTool::new();
+    let rr = read_tool
+        .execute(serde_json::json!({"path": "overlap.txt", "hashline": true}))
+        .await
+        .unwrap();
+    let h1 = extract_hash_from_hashline(&rr, 0);
+    let h2 = extract_hash_from_hashline(&rr, 1);
+    let h3 = extract_hash_from_hashline(&rr, 2);
+
+    let edit_tool = EditTool;
+    let result = edit_tool
+        .execute(serde_json::json!({
+            "path": "overlap.txt",
+            "edits": [
+                {"op": "replace", "pos": format!("1#{h1}"), "end": format!("2#{h2}"), "lines": "X"},
+                {"op": "replace", "pos": format!("2#{h2}"), "end": format!("3#{h3}"), "lines": "Y"}
+            ]
+        }))
+        .await;
+    assert!(result.is_err());
+    let err_msg = result.unwrap_err().to_string();
+    assert!(
+        err_msg.contains("overlapping"),
+        "expected 'overlapping' in error, got: {err_msg}"
+    );
+}
+
+#[tokio::test]
+async fn test_edit_tool_legacy_still_works() {
+    let _dir = sandbox_dir();
+    fs::write("legacy.txt", "hello world\n").unwrap();
+
+    let tool = EditTool;
+    let result = tool
+        .execute(serde_json::json!({
+            "path": "legacy.txt",
+            "old_string": "hello world",
+            "new_string": "hi there"
+        }))
+        .await
+        .unwrap();
+
+    assert!(result.contains("-hello") || result.contains("+hi"));
+    let content = fs::read_to_string("legacy.txt").unwrap();
+    assert_eq!(content, "hi there\n");
+}
+
+#[tokio::test]
+async fn test_edit_tool_multiple_non_overlapping_edits() {
+    let _dir = sandbox_dir();
+    fs::write("multi.txt", "a\nb\nc\nd\ne\n").unwrap();
+
+    let read_tool = ReadTool::new();
+    let rr = read_tool
+        .execute(serde_json::json!({"path": "multi.txt", "hashline": true}))
+        .await
+        .unwrap();
+    let h1 = extract_hash_from_hashline(&rr, 0);
+    let h5 = extract_hash_from_hashline(&rr, 4);
+
+    let edit_tool = EditTool;
+    edit_tool
+        .execute(serde_json::json!({
+            "path": "multi.txt",
+            "edits": [
+                {"op": "replace", "pos": format!("1#{h1}"), "lines": "A"},
+                {"op": "replace", "pos": format!("5#{h5}"), "lines": "E"}
+            ]
+        }))
+        .await
+        .unwrap();
+
+    let content = fs::read_to_string("multi.txt").unwrap();
+    assert_eq!(content, "A\nb\nc\nd\nE\n");
+}
+
+#[tokio::test]
+async fn test_edit_tool_returns_diff() {
+    let _dir = sandbox_dir();
+    fs::write("difftest.txt", "old line\n").unwrap();
+
+    let tool = EditTool;
+    let result = tool
+        .execute(serde_json::json!({
+            "path": "difftest.txt",
+            "old_string": "old line",
+            "new_string": "new line"
+        }))
+        .await
+        .unwrap();
+
+    assert!(result.contains("@@") || result.contains("---") || result.contains("+++"));
+    assert!(result.contains("-old line"));
+    assert!(result.contains("+new line"));
 }

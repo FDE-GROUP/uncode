@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::api_types::{
     CompatConfig, InputModality, MaxTokensField, ThinkingFormat, ThinkingLevel,
 };
+use uncode_shared::config::ModelConfig;
 use uncode_shared::config::UserModelConfig;
 
 // ── 旧类型（Stage 7 清理前保留） ──
@@ -143,6 +144,61 @@ impl Model {
             ..Model::default()
         }
     }
+
+    pub fn from_model_config(mc: &ModelConfig) -> Self {
+        // If a builtin model with the same id exists, use it as base
+        let builtin = builtin_models().into_iter().find(|m| m.id == mc.id);
+
+        if let Some(base) = builtin {
+            // Use builtin model's full config (api, compat, pricing, etc.)
+            let mut input_modalities = base.input_modalities.clone();
+            if mc.supports_vision && !input_modalities.contains(&InputModality::Image) {
+                input_modalities.push(InputModality::Image);
+            }
+            Self {
+                name: mc.display_name.clone(),
+                context_window: mc.max_tokens,
+                input_modalities,
+                ..base
+            }
+        } else {
+            let (api, base_url) = provider_defaults(&mc.provider);
+            let mut input_modalities = vec![InputModality::Text];
+            if mc.supports_vision {
+                input_modalities.push(InputModality::Image);
+            }
+            Self {
+                id: mc.id.clone(),
+                name: mc.display_name.clone(),
+                api: api.to_string(),
+                provider: mc.provider.clone(),
+                base_url: base_url.to_string(),
+                context_window: mc.max_tokens,
+                input_modalities,
+                ..Model::default()
+            }
+        }
+    }
+}
+
+fn provider_defaults(provider: &str) -> (&'static str, &'static str) {
+    match provider {
+        "deepseek" => ("openai-completions", "https://api.deepseek.com/v1"),
+        "openai" => ("openai-completions", "https://api.openai.com/v1"),
+        "glm" => ("openai-completions", "https://open.bigmodel.cn/api/paas/v4"),
+        "anthropic" => ("anthropic-messages", "https://api.anthropic.com/v1"),
+        "gemini" => (
+            "google-generative-ai",
+            "https://generativelanguage.googleapis.com/v1beta",
+        ),
+        "ollama" => ("ollama-native", "http://localhost:11434"),
+        "openrouter" => ("openai-completions", "https://openrouter.ai/api/v1"),
+        "groq" => ("openai-completions", "https://api.groq.com/openai/v1"),
+        "cerebras" => ("openai-completions", "https://api.cerebras.ai/v1"),
+        "mistral" => ("openai-completions", "https://api.mistral.ai/v1"),
+        "xai" => ("openai-completions", "https://api.x.ai/v1"),
+        _ => ("openai-completions", ""),
+    }
 }
 
 /// 每百万 token 定价（USD）
@@ -204,6 +260,36 @@ pub fn builtin_models() -> Vec<Model> {
         Model {
             id: "deepseek-chat".into(),
             name: "DeepSeek V3".into(),
+            api: "openai-completions".into(),
+            provider: "deepseek".into(),
+            base_url: "https://api.deepseek.com/v1".into(),
+            context_window: 128_000,
+            max_output_tokens: 8192,
+            reasoning: true,
+            thinking_format: Some(ThinkingFormat::DeepSeek),
+            input_modalities: vec![InputModality::Text],
+            pricing: ModelPricingPerMillion {
+                input: 0.27,
+                output: 1.10,
+                cache_read: 0.07,
+                cache_write: 0.27,
+            },
+            compat: CompatConfig {
+                supports_developer_role: false,
+                ..CompatConfig::default()
+            },
+            thinking_level_map: HashMap::from([
+                (ThinkingLevel::Minimal, None),
+                (ThinkingLevel::Low, None),
+                (ThinkingLevel::Medium, None),
+                (ThinkingLevel::High, Some("high".into())),
+                (ThinkingLevel::XHigh, Some("max".into())),
+            ]),
+            ..Model::default()
+        },
+        Model {
+            id: "deepseek-v4-pro".into(),
+            name: "DeepSeek V4 Pro".into(),
             api: "openai-completions".into(),
             provider: "deepseek".into(),
             base_url: "https://api.deepseek.com/v1".into(),
@@ -372,17 +458,6 @@ pub fn builtin_models() -> Vec<Model> {
                 "HTTP-Referer".into(),
                 "https://github.com/FDE-GROUP/uncode".into(),
             )]),
-            ..Model::default()
-        },
-        // ── Ollama (native) ──
-        Model {
-            id: "ollama".into(),
-            name: "Ollama (local)".into(),
-            api: "ollama-native".into(),
-            provider: "ollama".into(),
-            base_url: "http://localhost:11434".into(),
-            context_window: 128_000,
-            max_output_tokens: 8192,
             ..Model::default()
         },
         // ── Groq ──

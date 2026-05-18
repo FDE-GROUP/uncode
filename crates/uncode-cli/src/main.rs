@@ -7,7 +7,8 @@ use tracing_subscriber::EnvFilter;
 
 use uncode_agent::session::store::SessionStore;
 use uncode_agent::tools::registry::ToolRegistry;
-use uncode_agent::tools::{BashTool, EditTool, GrepTool, ReadTool, WriteTool};
+use uncode_agent::tools::{BashTool, EditTool, GrepTool, ReadTool, WebFetchTool, WriteTool};
+use uncode_agent::workspace_graph::WorkspaceGraphCache;
 use uncode_agent::{AgentLoop, ContextLoader, GitHubClient, SystemPromptBuilder};
 use uncode_ai::{
     AnthropicMessagesApi, GeminiGenerativeAiApi, OllamaNativeApi, OpenAiCompletionsApi,
@@ -15,7 +16,8 @@ use uncode_ai::{
 use uncode_ai::{ApiRegistry, ModelRegistry};
 use uncode_core::config::AppConfig;
 use uncode_core::context::{expand_file_refs, expand_url_refs};
-use uncode_core::event::AgentEvent;
+use uncode_core::event::{AgentEvent, ErrorCategory};
+use uncode_core::message::UsageInfo;
 use uncode_core::message::{ContentBlock, Message, Role};
 use uncode_core::template::{TemplateStore, parse_vars};
 
@@ -119,7 +121,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(cmd) = &cli.command {
         match cmd {
             Commands::Sessions { all, json } => {
-                return run_sessions(*all, *json);
+                return run_sessions(*all, *json).await;
             }
             Commands::Templates => {
                 return run_templates();
@@ -132,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
                 output,
                 latest,
             } => {
-                return run_export(session_id, output.as_deref(), *latest);
+                return run_export(session_id, output.as_deref(), *latest).await;
             }
             Commands::Completions { shell } => {
                 clap_complete::generate(
@@ -158,14 +160,22 @@ async fn main() -> anyhow::Result<()> {
     tool_registry.register("edit".to_string(), Arc::new(EditTool));
     tool_registry.register("grep".to_string(), Arc::new(GrepTool));
     tool_registry.register("bash".to_string(), Arc::new(BashTool::new()));
+    tool_registry.register("web_fetch".to_string(), Arc::new(WebFetchTool::new()));
 
     let (api_registry, model_registry) = build_registries(&config);
     let api_registry = Arc::new(api_registry);
     let model_registry = Arc::new(model_registry);
     let api_keys = build_api_keys(&config);
 
+    // Web Search — 仅在 Tavily API Key 配置时注册
+    if let Some(key) = api_keys.get("tavily") {
+        if let Some(tool) = uncode_agent::tools::WebSearchTool::try_new(key) {
+            tool_registry.register("web_search".to_string(), Arc::new(tool));
+        }
+    }
+
     let session_dir = SessionStore::default_dir().context("session dir")?;
-    let session_store = Arc::new(SessionStore::new(session_dir));
+    let session_store = Arc::new(SessionStore::new(session_dir).await?);
 
     let cwd = std::env::current_dir()?;
     let ctx = ContextLoader::new(cwd.clone()).load();
@@ -175,8 +185,6 @@ async fn main() -> anyhow::Result<()> {
             "你是一位专业的编程助手，运行在 UnCode 编程 Agent 框架内部。",
             "UnCode 是一个面向前线部署工程师（FDE）开发的 Agent Coding 工具。",
             "你帮助用户完成代码读写、项目分析、问题排查、命令执行等工程任务。",
-            "UnCode 的开发者是一名临床医生，因此你也算是医学专业的实习生，不能回避医学问题。",
-            "当用户提问涉及医学问题时，你应该以实习生的身份给出专业建议。\n\n",
             "你可以读取和编辑文件、搜索代码库、执行 Shell 命令、管理项目，",
             "拥有丰富的工具集来完成各类软件工程任务。\n\n",
             "用中文回复。遇到需要分析代码的任务时，请主动使用工具读取文件。"
@@ -193,7 +201,7 @@ async fn main() -> anyhow::Result<()> {
         }
         cli.session.clone()
     } else if cli.continue_last {
-        match session_store.find_most_recent().context("查找会话")? {
+        match session_store.find_most_recent().await.context("查找会话")? {
             Some(session) => {
                 eprintln!(
                     "继续会话: {} ({})",
@@ -211,6 +219,21 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    // Workspace graph cache
+    let wg_config = &config.workspace_graph;
+    let graph_cache = if wg_config.enabled {
+        let bundle_config = uncode_core::workspace_graph::BundleConfig {
+            enabled: wg_config.enabled,
+            ttl_secs: wg_config.ttl_secs,
+            max_items: wg_config.max_items,
+            max_bytes: wg_config.max_bytes,
+            max_file_bytes: wg_config.max_file_bytes,
+        };
+        Some(Arc::new(WorkspaceGraphCache::new(bundle_config)))
+    } else {
+        None
+    };
+
     let mut agent = AgentLoop::new(
         api_registry.clone(),
         model_registry.clone(),
@@ -220,6 +243,10 @@ async fn main() -> anyhow::Result<()> {
         system_prompt.clone(),
         model.clone(),
     );
+
+    if let Some(cache) = graph_cache.clone() {
+        agent.set_graph_cache(cache);
+    }
 
     if let Some(session_id) = &session_opt {
         agent.set_session_id(session_id.clone());
@@ -290,7 +317,7 @@ async fn main() -> anyhow::Result<()> {
     // --fork：从指定会话原地分支
     if let Some(fork_id) = &cli.fork {
         let reason = cli.prompt.as_deref().unwrap_or("fork from CLI");
-        let leaf_id = session_store.get_leaf_id(fork_id)?;
+        let leaf_id = session_store.get_leaf_id(fork_id).await?;
         let target_entry = match &leaf_id {
             Some(id) => id.clone(),
             None => {
@@ -302,7 +329,8 @@ async fn main() -> anyhow::Result<()> {
             fork_id,
             &target_entry,
             reason,
-        )?;
+        )
+        .await?;
         eprintln!("原地分支: session:{fork_id} -> entry:{target_entry}");
         agent.set_session_id(fork_id.clone());
 
@@ -364,7 +392,8 @@ async fn main() -> anyhow::Result<()> {
             .map(|m| m.id.clone())
             .collect();
         tui.set_available_models(model_ids);
-        tui.run(event_rx, move |text, cancel_token| {
+        tui.set_default_model(model.clone());
+        tui.run(event_rx, move |text, cancel_token, current_model| {
             let ar = ar_tui.clone();
             let mr = mr_tui.clone();
             let ak = ak_tui.clone();
@@ -373,15 +402,25 @@ async fn main() -> anyhow::Result<()> {
             let tx = event_tx.clone();
             let sp = tui_system_prompt.clone();
             let sid = session_opt.clone();
-            let m = model.clone();
             tokio::spawn(async move {
                 let expanded = expand_url_refs(&text).await;
-                let mut a = AgentLoop::with_event_sender(ar, mr, ak, t, s, sp, m, tx);
+                let mut a =
+                    AgentLoop::with_event_sender(ar, mr, ak, t, s, sp, current_model, tx.clone());
                 if let Some(ref sid) = sid {
                     a.set_session_id(sid.clone());
                 }
                 a.set_cancel_token(cancel_token);
-                let _ = a.run(Message::user(expanded)).await;
+                if let Err(e) = a.run(Message::user(expanded)).await {
+                    let _ = tx.send(AgentEvent::Error {
+                        category: ErrorCategory::Llm,
+                        message: format!("{e}"),
+                        recoverable: false,
+                    });
+                    let _ = tx.send(AgentEvent::TurnEnd {
+                        turn: 0,
+                        usage: UsageInfo::default(),
+                    });
+                }
             });
         })
         .await;
@@ -491,15 +530,16 @@ fn run_models(json_output: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_export(session_id: &str, output: Option<&str>, latest: bool) -> anyhow::Result<()> {
+async fn run_export(session_id: &str, output: Option<&str>, latest: bool) -> anyhow::Result<()> {
     use uncode_agent::session::export::export_html;
 
     let session_dir = SessionStore::default_dir().context("session dir")?;
-    let store = SessionStore::new(session_dir);
+    let store = SessionStore::new(session_dir).await?;
 
     let sid = if latest {
         let recent = store
             .find_most_recent()
+            .await
             .context("查找会话")?
             .context("没有历史会话")?;
         eprintln!(
@@ -512,8 +552,8 @@ fn run_export(session_id: &str, output: Option<&str>, latest: bool) -> anyhow::R
         session_id.to_string()
     };
 
-    let header = store.read_header(&sid).context("读取会话头")?;
-    let entries = store.load_entries(&sid).context("读取会话内容")?;
+    let header = store.read_header(&sid).await.context("读取会话头")?;
+    let entries = store.load_entries(&sid).await.context("读取会话内容")?;
 
     let html = export_html(&header, &entries, &[]);
 
@@ -526,11 +566,11 @@ fn run_export(session_id: &str, output: Option<&str>, latest: bool) -> anyhow::R
     Ok(())
 }
 
-fn run_sessions(show_all: bool, json_output: bool) -> anyhow::Result<()> {
+async fn run_sessions(show_all: bool, json_output: bool) -> anyhow::Result<()> {
     let session_dir = SessionStore::default_dir().context("session dir")?;
-    let store = SessionStore::new(session_dir);
+    let store = SessionStore::new(session_dir).await?;
 
-    let mut sessions = store.list_sessions()?;
+    let mut sessions = store.list_sessions().await?;
     sessions.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
 
     if !show_all {
@@ -626,20 +666,54 @@ fn build_registries(config: &AppConfig) -> (ApiRegistry, ModelRegistry) {
     api_registry.register(Arc::new(GeminiGenerativeAiApi::new()));
     api_registry.register(Arc::new(OllamaNativeApi::new()));
 
-    let mut model_registry = ModelRegistry::from_builtin();
+    // config.models 非空时完全替代内置列表，否则用内置列表
+    let mut model_registry = if config.models.is_empty() {
+        ModelRegistry::from_builtin()
+    } else {
+        use uncode_core::model::Model;
+        let models: Vec<Model> = config.models.iter().map(Model::from_model_config).collect();
+        ModelRegistry::from_models(models)
+    };
 
     // Override Ollama host if configured
     if let Some(ref oc) = config.providers.ollama {
-        if let Some(ollama_model) = model_registry.get("ollama").cloned() {
-            let mut updated = ollama_model;
-            // Strip trailing /v1 if present — Ollama native API uses base host
-            let base = oc.host.trim_end_matches("/v1").to_string();
-            updated.base_url = base;
-            model_registry.register(updated);
+        let base = oc.host.trim_end_matches("/v1").to_string();
+        model_registry.override_base_url("ollama", &base);
+    }
+
+    // Override provider base URLs from config
+    if let Some(ref pc) = config.providers.deepseek {
+        if let Some(ref url) = pc.base_url {
+            model_registry.override_base_url("deepseek", url);
+        }
+    }
+    if let Some(ref pc) = config.providers.glm {
+        if let Some(ref url) = pc.base_url {
+            model_registry.override_base_url("glm", url);
+        }
+    }
+    if let Some(ref pc) = config.providers.openai {
+        if let Some(ref url) = pc.base_url {
+            model_registry.override_base_url("openai", url);
+        }
+    }
+    if let Some(ref pc) = config.providers.anthropic {
+        if let Some(ref url) = pc.base_url {
+            model_registry.override_base_url("anthropic", url);
+        }
+    }
+    if let Some(ref pc) = config.providers.gemini {
+        if let Some(ref url) = pc.base_url {
+            model_registry.override_base_url("gemini", url);
+        }
+    }
+    if let Some(ref pc) = config.providers.openrouter {
+        if let Some(ref url) = pc.base_url {
+            model_registry.override_base_url("openrouter", url);
         }
     }
 
-    // Merge user-defined models from config
+    // Merge user_models (advanced config with api/compat overrides)
     if !config.user_models.is_empty() {
         use uncode_core::model::Model;
         let user_models: Vec<Model> = config
@@ -672,6 +746,9 @@ fn build_api_keys(config: &AppConfig) -> HashMap<String, String> {
     }
     if let Some(ref pc) = config.providers.openrouter {
         keys.insert("openrouter".into(), pc.api_key.clone());
+    }
+    if let Some(ref pc) = config.providers.tavily {
+        keys.insert("tavily".into(), pc.api_key.clone());
     }
 
     // Extract api_keys from user-defined models

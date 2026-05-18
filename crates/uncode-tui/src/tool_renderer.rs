@@ -17,6 +17,8 @@ enum ToolKind {
     Bash,
     Find,
     Ls,
+    WebFetch,
+    WebSearch,
 }
 
 impl ToolKind {
@@ -29,6 +31,8 @@ impl ToolKind {
             "bash" => Some(Self::Bash),
             "find" => Some(Self::Find),
             "ls" => Some(Self::Ls),
+            "web_fetch" => Some(Self::WebFetch),
+            "web_search" => Some(Self::WebSearch),
             _ => None,
         }
     }
@@ -57,6 +61,8 @@ impl ToolRendererRegistry {
             Some(ToolKind::Bash) => &STATIC_BASH,
             Some(ToolKind::Find) => &STATIC_FIND,
             Some(ToolKind::Ls) => &STATIC_LS,
+            Some(ToolKind::WebFetch) => &STATIC_WEB_FETCH,
+            Some(ToolKind::WebSearch) => &STATIC_WEB_SEARCH,
             None => &STATIC_FALLBACK,
         }
     }
@@ -77,6 +83,8 @@ static STATIC_GREP: GrepRenderer = GrepRenderer;
 static STATIC_BASH: BashRenderer = BashRenderer;
 static STATIC_FIND: FindRenderer = FindRenderer;
 static STATIC_LS: LsRenderer = LsRenderer;
+static STATIC_WEB_FETCH: WebFetchRenderer = WebFetchRenderer;
+static STATIC_WEB_SEARCH: WebSearchRenderer = WebSearchRenderer;
 static STATIC_FALLBACK: FallbackRenderer = FallbackRenderer;
 
 struct ReadRenderer;
@@ -127,18 +135,29 @@ impl ToolRenderer for WriteRenderer {
     }
 
     fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
-        let bytes = result.len();
-        let mut out = vec![Line::from(Span::styled(
-            format!("{bytes} bytes written"),
-            Style::default().fg(theme.tool_status.success),
-        ))];
-        let code_style = Style::default().fg(theme.markdown.code_text);
-        out.extend(
-            result
-                .lines()
-                .take(10)
-                .map(|line| Line::from(Span::styled(line.to_string(), code_style))),
-        );
+        let all_lines: Vec<&str> = result.lines().collect();
+        let mut out: Vec<Line<'static>> = all_lines
+            .iter()
+            .take(50)
+            .map(|line| {
+                let style = if line.starts_with('+') && !line.starts_with("++") {
+                    theme.diff.added_text
+                } else if line.starts_with('-') && !line.starts_with("--") {
+                    theme.diff.removed_text
+                } else if line.starts_with("@@") {
+                    theme.diff.header
+                } else {
+                    theme.diff.context
+                };
+                Line::from(Span::styled(line.to_string(), Style::default().fg(style)))
+            })
+            .collect();
+        if all_lines.len() > 50 {
+            out.push(Line::from(Span::styled(
+                "...",
+                Style::default().fg(theme.ui.footer_text),
+            )));
+        }
         out
     }
 }
@@ -304,6 +323,63 @@ impl ToolRenderer for LsRenderer {
     }
 }
 
+struct WebFetchRenderer;
+
+impl ToolRenderer for WebFetchRenderer {
+    fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
+        let url = extract_url(args);
+        vec![Line::from(vec![
+            Span::styled("└ ", Style::default().fg(theme.ui.footer_text)),
+            Span::styled(
+                format!("GET {url}"),
+                Style::default().fg(theme.tool_status.running),
+            ),
+        ])]
+    }
+
+    fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
+        let lines: Vec<&str> = result.lines().collect();
+        let code_style = Style::default().fg(theme.markdown.code_text);
+        let mut out: Vec<Line<'static>> = lines
+            .iter()
+            .take(30)
+            .map(|l| Line::from(Span::styled(l.to_string(), code_style)))
+            .collect();
+        if lines.len() > 30 {
+            out.push(Line::from(Span::styled(
+                format!("... ({} more lines)", lines.len() - 30),
+                Style::default().fg(theme.ui.footer_text),
+            )));
+        }
+        out
+    }
+}
+
+struct WebSearchRenderer;
+
+impl ToolRenderer for WebSearchRenderer {
+    fn render_call(&self, args: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
+        let query = extract_quoted_value(args, &["\"query\""]).unwrap_or_else(|| args.to_string());
+        vec![Line::from(vec![
+            Span::styled("└ ", Style::default().fg(theme.ui.footer_text)),
+            Span::styled(query, Style::default().fg(theme.tool_status.running)),
+        ])]
+    }
+
+    fn render_result(&self, result: &str, _width: u16, theme: &Theme) -> Vec<Line<'static>> {
+        result
+            .lines()
+            .take(20)
+            .map(|l| {
+                Line::from(Span::styled(
+                    l.to_string(),
+                    Style::default().fg(theme.markdown.code_text),
+                ))
+            })
+            .collect()
+    }
+}
+
 // --- Fallback ---
 
 struct FallbackRenderer;
@@ -373,6 +449,15 @@ fn extract_command(args: &str) -> String {
     extract_quoted_value(args, &["\"command\""]).unwrap_or_else(|| args.to_string())
 }
 
+fn extract_url(args: &str) -> String {
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(args) {
+        if let Some(url) = val.get("url").and_then(|v| v.as_str()) {
+            return url.to_string();
+        }
+    }
+    extract_quoted_value(args, &["\"url\""]).unwrap_or_else(|| args.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -385,7 +470,17 @@ mod tests {
     fn test_registry_has_all_tools() {
         let reg = ToolRendererRegistry::new();
         let theme = test_theme();
-        for tool in &["read", "write", "edit", "grep", "bash", "find", "ls"] {
+        for tool in &[
+            "read",
+            "write",
+            "edit",
+            "grep",
+            "bash",
+            "find",
+            "ls",
+            "web_fetch",
+            "web_search",
+        ] {
             let lines = reg.get(tool).render_call("test", 80, &theme);
             assert!(!lines.is_empty());
         }

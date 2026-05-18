@@ -124,7 +124,7 @@ impl AgentHarness {
     pub async fn prompt(&mut self, user_message: Message) -> Result<Vec<Message>, UncodeError> {
         self.enter_phase(AgentHarnessPhase::Turn)?;
         let result = self.agent.run(user_message).await;
-        self.flush_pending_writes();
+        self.flush_pending_writes().await;
         self.exit_phase();
         result
     }
@@ -155,7 +155,7 @@ impl AgentHarness {
     // ── 运行时配置 ──
 
     /// 切换 LLM 模型（缓存在 pending_writes，turn 边界 flush）
-    pub fn set_model(&mut self, model_id: &str, provider: &str) {
+    pub async fn set_model(&mut self, model_id: &str, provider: &str) {
         self.pending_writes.push(PendingSessionWrite::ModelChange {
             model_id: model_id.to_string(),
         });
@@ -169,7 +169,9 @@ impl AgentHarness {
                 provider,
                 &self.session_store,
                 Some(session_id),
-            ) {
+            )
+            .await
+            {
                 debug!("model switch persist skipped: {e}");
             }
         }
@@ -209,7 +211,7 @@ impl AgentHarness {
 
     // ── 内部方法 ──
 
-    fn flush_pending_writes(&mut self) {
+    async fn flush_pending_writes(&mut self) {
         if self.pending_writes.is_empty() {
             return;
         }
@@ -241,7 +243,7 @@ impl AgentHarness {
                         }))
                     }
                 };
-                if let Err(e) = self.session_store.append_entry(session_id, &entry) {
+                if let Err(e) = self.session_store.append_entry(session_id, &entry).await {
                     debug!("flush pending write skipped: {e}");
                 }
             }

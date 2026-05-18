@@ -17,6 +17,7 @@ pub mod stop;
 pub mod system_prompt;
 pub mod token;
 pub mod tools;
+pub mod workspace_graph;
 
 pub use compaction::{
     compact_messages, compact_session, estimate_context_tokens, should_compact,

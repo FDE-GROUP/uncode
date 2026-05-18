@@ -528,12 +528,16 @@ impl ChatState {
                             status: s,
                             duration_ms: d,
                             arguments_summary: args,
+                            result,
                             ..
                         } => {
                             *s = render_status;
                             *d = Some(duration_ms);
                             if args.is_empty() {
                                 *args = arguments.clone();
+                            }
+                            if let Some(ref summary) = data.result_summary {
+                                *result = Some(summary.clone());
                             }
                         }
                         ChatMessage::BashExecution {

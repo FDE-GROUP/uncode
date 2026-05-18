@@ -12,11 +12,11 @@ impl SessionManager {
         Self { store }
     }
 
-    pub fn list_sessions(&self) -> std::io::Result<Vec<SessionMetadata>> {
-        self.store.list_sessions()
+    pub async fn list_sessions(&self) -> SessionResult<Vec<SessionMetadata>> {
+        self.store.list_sessions().await
     }
 
-    pub fn create_session(
+    pub async fn create_session(
         &self,
         model: &str,
         working_dir: &str,
@@ -24,29 +24,35 @@ impl SessionManager {
     ) -> SessionResult<SessionMetadata> {
         let session_id = Uuid::new_v4().to_string();
         self.store
-            .init_session_with_title(&session_id, model, working_dir, title)?;
-        let header = self.store.read_header(&session_id)?;
+            .init_session_with_title(&session_id, model, working_dir, title)
+            .await?;
+        let header = self.store.read_header(&session_id).await?;
         Ok(SessionMetadata::from(header))
     }
 
-    pub fn append_entry(&self, session_id: &str, entry: SessionEntry) -> SessionResult<()> {
-        self.store.append_entry(session_id, &entry)
+    pub async fn append_entry(&self, session_id: &str, entry: SessionEntry) -> SessionResult<()> {
+        self.store.append_entry(session_id, &entry).await
     }
 
-    pub fn load_entries(&self, session_id: &str) -> SessionResult<Vec<SessionEntry>> {
-        self.store.load_entries(session_id)
+    pub async fn load_entries(&self, session_id: &str) -> SessionResult<Vec<SessionEntry>> {
+        self.store.load_entries(session_id).await
     }
 
-    pub fn get_metadata(&self, session_id: &str) -> SessionResult<SessionMetadata> {
-        let header = self.store.read_header(session_id)?;
+    pub async fn get_metadata(&self, session_id: &str) -> SessionResult<SessionMetadata> {
+        let header = self.store.read_header(session_id).await?;
         Ok(SessionMetadata::from(header))
     }
 
-    pub fn branch_session(&self, parent_id: &str, reason: &str) -> SessionResult<SessionMetadata> {
+    pub async fn branch_session(
+        &self,
+        parent_id: &str,
+        reason: &str,
+    ) -> SessionResult<SessionMetadata> {
         let new_id = Uuid::new_v4().to_string();
-        let parent = self.store.read_header(parent_id)?;
+        let parent = self.store.read_header(parent_id).await?;
         self.store
-            .init_session(&new_id, &parent.model, &parent.working_dir)?;
+            .init_session(&new_id, &parent.model, &parent.working_dir)
+            .await?;
 
         let branch = uncode_core::session::BranchEntry {
             id: uncode_core::session::generate_entry_id(),
@@ -56,11 +62,13 @@ impl SessionManager {
             reason: reason.to_string(),
         };
 
-        self.store.append_entry(
-            &new_id,
-            &uncode_core::session::SessionEntry::Branch(Box::new(branch)),
-        )?;
+        self.store
+            .append_entry(
+                &new_id,
+                &uncode_core::session::SessionEntry::Branch(Box::new(branch)),
+            )
+            .await?;
 
-        self.get_metadata(&new_id)
+        self.get_metadata(&new_id).await
     }
 }

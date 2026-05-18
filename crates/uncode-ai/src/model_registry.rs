@@ -45,6 +45,19 @@ impl ModelRegistry {
             self.models.insert(m.id.clone(), m);
         }
     }
+
+    pub fn from_models(models: Vec<Model>) -> Self {
+        let models = models.into_iter().map(|m| (m.id.clone(), m)).collect();
+        Self { models }
+    }
+
+    pub fn override_base_url(&mut self, provider: &str, base_url: &str) {
+        for model in self.models.values_mut() {
+            if model.provider == provider {
+                model.base_url = base_url.to_string();
+            }
+        }
+    }
 }
 
 impl Default for ModelRegistry {

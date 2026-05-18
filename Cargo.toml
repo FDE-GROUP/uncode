@@ -68,13 +68,19 @@ ratatui = "0.30"
 crossterm = "0.28"
 
 # ── Database ──
-rusqlite = { version = "0.32", features = ["bundled"] }
+surrealdb = { version = "3.0", features = ["kv-rocksdb", "kv-mem"] }
 
 # ── Time ──
 chrono = { version = "0.4", features = ["serde"] }
 
 # ── IDs ──
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
+
+# ── Diff ──
+similar = { version = "2", features = ["text"] }
+
+# ── System ──
+libc = "0.2"
 
 # ── Crypto ──
 sha2 = "0.10"
@@ -95,6 +101,9 @@ unicode-segmentation = "1"
 
 # ── Code parsing ──
 syntect = "5"
+
+# ── HTML ──
+html2text = "0.14"
 
 # ── Markdown ──
 markdown = "1.0"

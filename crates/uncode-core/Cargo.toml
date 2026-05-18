@@ -24,6 +24,7 @@ reqwest.workspace = true
 dirs.workspace = true
 tokio-util.workspace = true
 futures.workspace = true
+similar.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -9,10 +9,12 @@ pub struct AppConfig {
     pub temperature: f32,
     #[serde(default)]
     pub providers: ProviderConfigs,
-    #[serde(default = "default_models")]
+    #[serde(default)]
     pub models: Vec<ModelConfig>,
     #[serde(default)]
     pub user_models: Vec<UserModelConfig>,
+    #[serde(default)]
+    pub workspace_graph: WorkspaceGraphConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +39,7 @@ pub struct ProviderConfigs {
     pub openai: Option<ProviderConfig>,
     pub anthropic: Option<ProviderConfig>,
     pub gemini: Option<ProviderConfig>,
+    pub tavily: Option<ProviderConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +64,7 @@ impl Default for AppConfig {
             providers: ProviderConfigs::default(),
             models: default_models(),
             user_models: vec![],
+            workspace_graph: WorkspaceGraphConfig::default(),
         }
     }
 }
@@ -105,14 +109,6 @@ fn default_models() -> Vec<ModelConfig> {
             display_name: "GLM 5.1".into(),
             max_tokens: 128_000,
             supports_vision: true,
-            supports_tools: true,
-        },
-        ModelConfig {
-            id: "ollama".into(),
-            provider: "ollama".into(),
-            display_name: "Ollama (local)".into(),
-            max_tokens: 128_000,
-            supports_vision: false,
             supports_tools: true,
         },
     ]
@@ -170,4 +166,48 @@ pub struct UserCompatConfig {
     pub supports_eager_tool_input_streaming: Option<bool>,
     #[serde(default)]
     pub supports_cache_control_on_tools: Option<bool>,
+}
+
+// ── Workspace Graph 配置 ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkspaceGraphConfig {
+    #[serde(default = "default_wg_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_wg_ttl_secs")]
+    pub ttl_secs: u64,
+    #[serde(default = "default_wg_max_items")]
+    pub max_items: usize,
+    #[serde(default = "default_wg_max_bytes")]
+    pub max_bytes: usize,
+    #[serde(default = "default_wg_max_file_bytes")]
+    pub max_file_bytes: usize,
+}
+
+impl Default for WorkspaceGraphConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_wg_enabled(),
+            ttl_secs: default_wg_ttl_secs(),
+            max_items: default_wg_max_items(),
+            max_bytes: default_wg_max_bytes(),
+            max_file_bytes: default_wg_max_file_bytes(),
+        }
+    }
+}
+
+fn default_wg_enabled() -> bool {
+    true
+}
+fn default_wg_ttl_secs() -> u64 {
+    21600
+}
+fn default_wg_max_items() -> usize {
+    16
+}
+fn default_wg_max_bytes() -> usize {
+    16384
+}
+fn default_wg_max_file_bytes() -> usize {
+    100_000
 }

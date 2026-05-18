@@ -29,6 +29,22 @@ impl Default for BashTool {
     }
 }
 
+/// Kill an entire process group by sending SIGKILL to `-pgid`.
+/// Requires the child to have been spawned with `process_group(0)`.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn kill_process_group(pgid: u32) {
+    // Negative PID signals the entire process group
+    unsafe {
+        libc::kill(-(pgid as i32), libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(_pgid: u32) {
+    // Non-Unix: fallback — no process group support
+}
+
 #[async_trait]
 impl ToolExecutor for BashTool {
     fn definition(&self) -> ToolDefinition {
@@ -59,17 +75,16 @@ impl ToolExecutor for BashTool {
             .as_u64()
             .unwrap_or(self.default_timeout_secs);
 
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout),
-            tokio::process::Command::new("sh")
-                .arg("-c")
-                .arg(command)
-                .current_dir(workdir)
-                .output(),
-        )
-        .await
-        .map_err(|_| uncode_core::error::UncodeError::Tool("timeout".into()))?
-        .map_err(|e| uncode_core::error::UncodeError::Tool(format!("bash: {e}")))?;
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.arg("-c").arg(command).current_dir(workdir);
+
+        #[cfg(unix)]
+        cmd.process_group(0);
+
+        let output = tokio::time::timeout(std::time::Duration::from_secs(timeout), cmd.output())
+            .await
+            .map_err(|_| uncode_core::error::UncodeError::Tool("timeout".into()))?
+            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("bash: {e}")))?;
 
         let stdout = clean_binary_output(&output.stdout);
         let stderr = clean_binary_output(&output.stderr);
@@ -105,14 +120,21 @@ impl ToolExecutor for BashTool {
             .as_u64()
             .unwrap_or(self.default_timeout_secs);
 
-        let mut child = tokio::process::Command::new("sh")
-            .arg("-c")
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.arg("-c")
             .arg(command)
             .current_dir(&workdir)
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+
+        #[cfg(unix)]
+        cmd.process_group(0);
+
+        let mut child = cmd
             .spawn()
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("spawn: {e}")))?;
+
+        let pgid = child.id().unwrap_or(0);
 
         let stdout = child.stdout.take().expect("stdout piped");
         let stderr = child.stderr.take().expect("stderr piped");
@@ -126,12 +148,12 @@ impl ToolExecutor for BashTool {
         let mut stdout_lines = stdout_reader.lines();
         loop {
             if ctx.cancel_token.is_cancelled() {
-                child.kill().await.ok();
+                kill_process_group(pgid);
                 return Ok(ToolResult::err("cancelled"));
             }
             tokio::select! {
                 _ = ctx.cancel_token.cancelled() => {
-                    child.kill().await.ok();
+                    kill_process_group(pgid);
                     return Ok(ToolResult::err("cancelled"));
                 }
                 line = stdout_lines.next_line() => {
@@ -155,7 +177,7 @@ impl ToolExecutor for BashTool {
         loop {
             tokio::select! {
                 _ = ctx.cancel_token.cancelled() => {
-                    child.kill().await.ok();
+                    kill_process_group(pgid);
                     return Ok(ToolResult::err("cancelled"));
                 }
                 line = stderr_lines.next_line() => {
@@ -176,7 +198,7 @@ impl ToolExecutor for BashTool {
             {
                 Ok(Ok(s)) => s,
                 _ => {
-                    child.kill().await.ok();
+                    kill_process_group(pgid);
                     return Ok(ToolResult::err("timeout"));
                 }
             };

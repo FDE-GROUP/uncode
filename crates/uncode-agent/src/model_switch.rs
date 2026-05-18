@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::session::store::{SessionResult, SessionStore};
 use uncode_core::session::{ModelChangeEntry, SessionEntry, generate_entry_id};
 
-/// 运行时切换 LLM 模型并记录 ModelChange 到会话 JSONL
-pub fn switch_model(
+/// 运行时切换 LLM 模型并记录 ModelChange 到会话
+pub async fn switch_model(
     current_model_id: &mut String,
     new_model_id: &str,
     new_provider: &str,
@@ -21,7 +21,7 @@ pub fn switch_model(
             provider: new_provider.to_string(),
             model_id: new_model_id.to_string(),
         }));
-        session_store.append_entry(sid, &entry)?;
+        session_store.append_entry(sid, &entry).await?;
     }
 
     tracing::info!("model switched: {old} -> {new_model_id}");

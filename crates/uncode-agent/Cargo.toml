@@ -27,9 +27,13 @@ reqwest.workspace = true
 dirs.workspace = true
 uuid.workspace = true
 parking_lot.workspace = true
+surrealdb.workspace = true
 regex.workspace = true
 glob.workspace = true
 walkdir.workspace = true
+libc.workspace = true
+html2text.workspace = true
+tempfile = "3"
 
 [lints]
 workspace = true
