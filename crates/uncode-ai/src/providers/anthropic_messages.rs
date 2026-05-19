@@ -72,7 +72,7 @@ fn build_anthropic_body(model: &Model, context: &Context, options: &StreamOption
                 for block in &msg.content {
                     if let ContentBlock::ToolResult(tr) = block {
                         content.push(serde_json::json!({
-                            "type": if tr.is_error { "tool_result" } else { "tool_result" },
+                            "type": "tool_result",
                             "tool_use_id": tr.tool_call_id,
                             "content": tr.content
                         }));
@@ -190,96 +190,96 @@ fn parse_anthropic_chunk(text: &str, state: &mut AnthropicToolState) -> Vec<Stre
         if line.is_empty() {
             continue;
         }
-        if let Some(json_str) = line.strip_prefix("data: ") {
-            if let Ok(event) = serde_json::from_str::<Value>(json_str) {
-                match event["type"].as_str() {
-                    Some("content_block_start") => {
-                        let idx = event["index"].as_u64().unwrap_or(0) as usize;
-                        if event["content_block"]["type"].as_str() == Some("tool_use") {
-                            let id = event["content_block"]["id"]
-                                .as_str()
-                                .unwrap_or("")
-                                .to_string();
-                            let name = event["content_block"]["name"]
-                                .as_str()
-                                .unwrap_or("")
-                                .to_string();
-                            state.active_tools.insert(idx, (id.clone(), name.clone()));
-                            events.push(StreamEvent::ToolCallStart { id, name });
-                        } else if let Some(text) = event["content_block"]["text"].as_str() {
-                            if !text.is_empty() {
-                                events.push(StreamEvent::TextDelta(text.to_string()));
-                            }
-                        }
+        if let Some(json_str) = line.strip_prefix("data: ")
+            && let Ok(event) = serde_json::from_str::<Value>(json_str)
+        {
+            match event["type"].as_str() {
+                Some("content_block_start") => {
+                    let idx = event["index"].as_u64().unwrap_or(0) as usize;
+                    if event["content_block"]["type"].as_str() == Some("tool_use") {
+                        let id = event["content_block"]["id"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string();
+                        let name = event["content_block"]["name"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string();
+                        state.active_tools.insert(idx, (id.clone(), name.clone()));
+                        events.push(StreamEvent::ToolCallStart { id, name });
+                    } else if let Some(text) = event["content_block"]["text"].as_str()
+                        && !text.is_empty()
+                    {
+                        events.push(StreamEvent::TextDelta(text.to_string()));
                     }
-                    Some("content_block_delta") => {
-                        let idx = event["index"].as_u64().unwrap_or(0) as usize;
-                        if event["delta"]["type"].as_str() == Some("input_json_delta") {
-                            if let Some(partial) = event["delta"]["partial_json"].as_str() {
-                                if state.active_tools.contains_key(&idx) {
-                                    state.pending_args.entry(idx).or_default().push_str(partial);
-                                    if let Some(entry) = state.active_tools.get(&idx) {
-                                        events.push(StreamEvent::ToolCallDelta {
-                                            id: entry.0.clone(),
-                                            arguments: partial.to_string(),
-                                        });
-                                    }
-                                }
-                            }
-                        } else if let Some(text) = event["delta"]["text"].as_str() {
-                            if !text.is_empty() {
-                                events.push(StreamEvent::TextDelta(text.to_string()));
-                            }
-                        }
-                    }
-                    Some("content_block_stop") => {
-                        let idx = event["index"].as_u64().unwrap_or(0) as usize;
-                        if let Some((id, name)) = state.active_tools.remove(&idx) {
-                            let args_str = state.pending_args.remove(&idx).unwrap_or_default();
-                            let parsed = match serde_json::from_str::<Value>(&args_str) {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    events.push(StreamEvent::Error {
-                                        reason: crate::api_types::StopReason::Error,
-                                        message: format!("tool args JSON parse failed: {e}"),
-                                    });
-                                    Value::Object(Default::default())
-                                }
-                            };
-                            events.push(StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
-                                id,
-                                name,
-                                arguments: parsed,
-                            })));
-                        }
-                    }
-                    Some("message_delta") => {
-                        if let Some(usage) = event.get("usage") {
-                            events.push(StreamEvent::Usage(UsageInfo {
-                                input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
-                                output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
-                            }));
-                        }
-                        if let Some(stop) = event["delta"]["stop_reason"].as_str() {
-                            let reason = match stop {
-                                "end_turn" | "stop_sequence" => StopReason::Stop,
-                                "tool_use" => StopReason::ToolUse,
-                                "max_tokens" => StopReason::Length,
-                                _ => StopReason::Stop,
-                            };
-                            events.push(StreamEvent::Done { reason });
-                        }
-                    }
-                    Some("message_start") => {
-                        if let Some(usage) = event["message"].get("usage") {
-                            events.push(StreamEvent::Usage(UsageInfo {
-                                input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
-                                output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
-                            }));
-                        }
-                    }
-                    _ => {}
                 }
+                Some("content_block_delta") => {
+                    let idx = event["index"].as_u64().unwrap_or(0) as usize;
+                    if event["delta"]["type"].as_str() == Some("input_json_delta") {
+                        if let Some(partial) = event["delta"]["partial_json"].as_str()
+                            && state.active_tools.contains_key(&idx)
+                        {
+                            state.pending_args.entry(idx).or_default().push_str(partial);
+                            if let Some(entry) = state.active_tools.get(&idx) {
+                                events.push(StreamEvent::ToolCallDelta {
+                                    id: entry.0.clone(),
+                                    arguments: partial.to_string(),
+                                });
+                            }
+                        }
+                    } else if let Some(text) = event["delta"]["text"].as_str()
+                        && !text.is_empty()
+                    {
+                        events.push(StreamEvent::TextDelta(text.to_string()));
+                    }
+                }
+                Some("content_block_stop") => {
+                    let idx = event["index"].as_u64().unwrap_or(0) as usize;
+                    if let Some((id, name)) = state.active_tools.remove(&idx) {
+                        let args_str = state.pending_args.remove(&idx).unwrap_or_default();
+                        match serde_json::from_str::<Value>(&args_str) {
+                            Ok(parsed) => {
+                                events.push(StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
+                                    id,
+                                    name,
+                                    arguments: parsed,
+                                })));
+                            }
+                            Err(e) => {
+                                events.push(StreamEvent::Error {
+                                    reason: crate::api_types::StopReason::Error,
+                                    message: format!("tool args JSON parse failed: {e}"),
+                                });
+                            }
+                        }
+                    }
+                }
+                Some("message_delta") => {
+                    if let Some(usage) = event.get("usage") {
+                        events.push(StreamEvent::Usage(UsageInfo {
+                            input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
+                            output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
+                        }));
+                    }
+                    if let Some(stop) = event["delta"]["stop_reason"].as_str() {
+                        let reason = match stop {
+                            "end_turn" | "stop_sequence" => StopReason::Stop,
+                            "tool_use" => StopReason::ToolUse,
+                            "max_tokens" => StopReason::Length,
+                            _ => StopReason::Stop,
+                        };
+                        events.push(StreamEvent::Done { reason });
+                    }
+                }
+                Some("message_start") => {
+                    if let Some(usage) = event["message"].get("usage") {
+                        events.push(StreamEvent::Usage(UsageInfo {
+                            input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
+                            output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
+                        }));
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -314,10 +314,16 @@ impl Api for AnthropicMessagesApi {
             req = req.header(k.as_str(), v.as_str());
         }
 
-        let response = req
-            .send()
-            .await
-            .map_err(|e| UncodeError::Network(e.to_string()))?;
+        let send_future = req.send();
+        let response = match options.timeout_ms {
+            Some(ms) => tokio::time::timeout(std::time::Duration::from_millis(ms), send_future)
+                .await
+                .map_err(|_| UncodeError::Llm("request timed out".into()))?
+                .map_err(|e| UncodeError::Network(e.to_string()))?,
+            None => send_future
+                .await
+                .map_err(|e| UncodeError::Network(e.to_string()))?,
+        };
 
         if !response.status().is_success() {
             let status = response.status();

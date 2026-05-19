@@ -170,7 +170,7 @@ pub async fn compact_session(
             if me.id == cut_id {
                 break;
             }
-            to_summarize.push(&me);
+            to_summarize.push(me);
         }
     }
 
@@ -256,10 +256,10 @@ pub(crate) fn find_cut_point(entries: &[SessionEntry], keep_recent_tokens: u64) 
 
     // Walk forward from threshold to find a User message (clean turn boundary)
     for entry in &entries[threshold_idx..] {
-        if let SessionEntry::Message(me) = entry {
-            if me.role == Role::User {
-                return Some(me.id.clone());
-            }
+        if let SessionEntry::Message(me) = entry
+            && me.role == Role::User
+        {
+            return Some(me.id.clone());
         }
     }
 

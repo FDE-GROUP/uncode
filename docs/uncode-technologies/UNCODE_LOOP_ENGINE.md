@@ -4,6 +4,8 @@
 
 uncode 的核心是一个双标签循环（outer `'outer` + inner `while`），与 Pi 的双层 while 同构。外层处理 followUp（会话延续），内层处理 ReAct 闭环（工具调用链）。
 
+与 Pi 的整体对齐与取舍见 [`../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`](../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md)。
+
 ---
 
 ## 双层循环架构
@@ -11,7 +13,7 @@ uncode 的核心是一个双标签循环（outer `'outer` + inner `while`），�
 ```
 AgentLoop::run_inner(user_message)
 │
-│  ① Session 初始化（自动创建 JSONL）
+│  ① Session 初始化（SurrealDB / `SessionStore`，必要时从导入的 JSONL 迁移）
 │  ② 持久化用户消息
 │  ③ build_context() 从 session 重建消息历史
 │  ④ 插入 System Prompt
@@ -149,7 +151,7 @@ if self.active_run.compare_exchange(false, true, Ordering::SeqCst, Ordering::Seq
 
 ## 压缩触发
 
-每个 turn 开始时检查是否需要压缩：
+每个 turn 结束时检查是否需要压缩（在 `compact_if_needed()` 中）：
 
 ```rust
 // loop_engine.rs — 每 turn 检查

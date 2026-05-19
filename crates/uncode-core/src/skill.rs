@@ -133,12 +133,11 @@ fn load_skills_recursive(dir: &std::path::Path, skills: &mut HashMap<String, Ski
 
             if path.is_dir() && !file_name.starts_with('.') {
                 load_skills_recursive(&path, skills);
-            } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Some(skill) = parse_skill_md(&content) {
-                        skills.insert(skill.name.clone(), skill);
-                    }
-                }
+            } else if path.extension().and_then(|e| e.to_str()) == Some("md")
+                && let Ok(content) = std::fs::read_to_string(&path)
+                && let Some(skill) = parse_skill_md(&content)
+            {
+                skills.insert(skill.name.clone(), skill);
             }
         }
     }

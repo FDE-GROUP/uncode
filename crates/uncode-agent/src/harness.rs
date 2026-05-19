@@ -162,8 +162,8 @@ impl AgentHarness {
         // 立即生效到 agent
         self.agent.set_model_id(model_id.to_string());
         // 持久化到 session
-        if let Some(session_id) = self.agent.session_id() {
-            if let Err(e) = model_switch::switch_model(
+        if let Some(session_id) = self.agent.session_id()
+            && let Err(e) = model_switch::switch_model(
                 &mut model_id.to_string(),
                 model_id,
                 provider,
@@ -171,9 +171,8 @@ impl AgentHarness {
                 Some(session_id),
             )
             .await
-            {
-                debug!("model switch persist skipped: {e}");
-            }
+        {
+            debug!("model switch persist skipped: {e}");
         }
     }
 

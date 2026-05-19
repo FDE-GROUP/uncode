@@ -81,13 +81,31 @@ impl HookRegistry {
         let hook_name = hook.name();
         if let Some(ext_names) = self.hooks.get(hook_name) {
             for ext_name in ext_names.value() {
-                if let Some(ext) = self.extensions.get(ext_name).as_deref() {
-                    if let Err(e) = ext.on_hook(ctx).await {
-                        tracing::warn!("extension {} hook {} failed: {e}", ext.name(), hook_name);
-                    }
+                if let Some(ext) = self.extensions.get(ext_name).as_deref()
+                    && let Err(e) = ext.on_hook(ctx).await
+                {
+                    tracing::warn!("extension {} hook {} failed: {e}", ext.name(), hook_name);
                 }
             }
         }
+    }
+
+    /// Number of registered extensions (for testing)
+    #[cfg(test)]
+    pub(crate) fn extension_count(&self) -> usize {
+        self.extensions.len()
+    }
+
+    /// Number of hook registrations (for testing)
+    #[cfg(test)]
+    pub(crate) fn hook_count(&self) -> usize {
+        self.hooks.len()
+    }
+
+    /// Check if a hook has registrations (for testing)
+    #[cfg(test)]
+    pub(crate) fn has_hook(&self, hook_name: &str) -> bool {
+        self.hooks.contains_key(hook_name)
     }
 }
 

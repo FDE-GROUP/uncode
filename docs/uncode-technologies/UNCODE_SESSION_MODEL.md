@@ -1,8 +1,20 @@
 # uncode 会话模型
 
-> SessionEntry 树状模型 + JSONL 持久化 + 压缩摘要 | 基于 `crates/uncode-core/src/session.rs` + `crates/uncode-agent/src/session/` 源码分析
+> SessionEntry 树状模型 + SurrealDB 持久化 + JSONL 互操作 + 压缩摘要  
+> 基于 `crates/uncode-core/src/session.rs` + `crates/uncode-agent/src/session/` 源码分析  
+> **与 Pi 的对齐说明**：[`../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`](../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md)
 
-uncode 的会话以 JSONL 格式持久化，每行一个独立事件。12 种 Entry 类型构成树状结构，支持分支、压缩和完整回放。
+uncode 的会话在 **逻辑上** 与 Pi 终端 harness 的「树状事件流」**同构**：`SessionEntry` 构成带 `parent_id` 的树，支持分支、压缩摘要、分支摘要与完整回放。  
+**物理持久化** 默认使用 **嵌入式 SurrealDB v3**（`SurrealSessionStore`，`kv-rocksdb`），由异步 `SessionStore` 封装；**JSONL** 作为 **互操作格式**（旧版迁移导入、导出审计），而非线上主存储。
+
+---
+
+## 逻辑 vs 物理
+
+| 层面 | 内容 |
+|------|------|
+| **逻辑（对齐 Pi）** | `SessionEntry` / `SessionHeader` 的语义、插入顺序、leaf 指针、`Branch` / `Compaction` / `BranchSummary` 等与 Pi 会话树一致的设计目标 |
+| **物理（工程取舍）** | 条目以结构化文档存入 SurrealDB，支持索引与多客户端；调试可依赖 TUI/CLI **导出 JSONL** |
 
 ---
 
@@ -49,29 +61,46 @@ pub enum SessionEntry {
 
 ---
 
-## JSONL 持久化
+## SurrealDB 持久化（主路径）
 
-### 文件格式
+**位置**：`crates/uncode-agent/src/session/store.rs`、`surreal_store.rs`。
 
+`SessionStore` 为薄封装，所有方法 **`async`**，在 tokio runtime 内调用：
+
+```rust
+pub struct SessionStore {
+    inner: SurrealSessionStore,
+}
 ```
-# {base_dir}/{session_id}.jsonl
-{"type":"session","id":"0192...","version":2,"model":"deepseek-v3","working_dir":"/home/user/project",...}
-{"type":"message","id":"...","parent_id":null,"role":"user","content":[...],...}
-{"type":"message","id":"...","parent_id":"...","role":"assistant","content":[...],...}
-{"type":"model_change","id":"...","parent_id":"...","provider":"anthropic","model_id":"claude-sonnet-4-6"}
-{"type":"compaction","id":"...","summary":"...","first_kept_entry_id":"...","tokens_before":50000,...}
-```
 
-第一行是 `SessionHeader`（`"type": "session"`），后续是 `SessionEntry`。
+典型流程：`SessionStore::new(base_dir)` → `init_session` / `append_entry` / `load_entries` / `get_leaf_id` / `set_leaf` / `fork_session` / `list_sessions` 等。具体表结构与索引见 `surreal_store.rs` 与迁移模块。
 
-### SessionHeader
+---
+
+## JSONL 互操作（非主存储）
+
+### 导入
+
+`crates/uncode-agent/src/session/import.rs`：`import_jsonl_dir()` 将历史 **`sessions/*.jsonl`**（或等价布局）导入 SurrealDB，便于从早期仅 JSONL 部署迁移。
+
+### 导出
+
+TUI `/export jsonl`（见 `uncode-tui`）将会话条目序列化为 **JSON Lines**，便于 grep、外部分析或与 Pi 式工具链对接。
+
+### 序列化形状（导出或与 Pi 对照时）
+
+导出的每行仍是完整 `SessionEntry`（或头部 + 条目）的 JSON，与「若用纯 JSONL 文件作为主库」时的可读格式兼容；**线上写入路径**为 SurrealDB `append_entry`，不逐行写单一 `.jsonl` 文件。
+
+---
+
+## SessionHeader
 
 ```rust
 pub struct SessionHeader {
     #[serde(rename = "type")]
     pub entry_type: String,         // 固定 "session"
     pub id: String,
-    pub version: u32,               // 构造时设为 2
+    pub version: u32,
     pub parent_session: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -83,31 +112,16 @@ pub struct SessionHeader {
 
 ---
 
-## SessionStore
-
-```rust
-pub struct SessionStore {
-    base_dir: PathBuf,
-    states: RwLock<HashMap<String, SessionState>>,
-}
-
-pub struct SessionState {
-    pub header: SessionHeader,
-    pub by_id: HashMap<String, SessionEntry>,
-    pub order: Vec<String>,         // 插入顺序
-    pub leaf_id: Option<String>,    // 当前叶指针
-}
-```
-
-### 关键操作
+## 关键操作（SessionStore API 语义）
 
 | 操作 | 说明 |
 |------|------|
-| `ensure_loaded()` | 惰性加载：首次访问时从 JSONL 读取，v1 自动迁移到 v2 |
-| `append_entry()` | 追加到 `by_id` + `order` + 写入 JSONL 文件 |
-| `get_path_to_root()` | 从任意 Entry 沿 `parent_id` 回溯到根 |
-| `get_leaf_id()` | 获取当前叶指针（分支导航） |
-| `fork_session()` | 创建新 JSONL 文件 + BranchEntry 指向父会话 |
+| `init_session` / `init_session_with_title` | 新建会话元数据 |
+| `append_entry` | 原子追加一条 `SessionEntry` |
+| `load_entries` | 按会话加载完整条目序列（供 `build_context`） |
+| `get_path_to_root` | 从任意 Entry 沿 `parent_id` 回溯到根 |
+| `get_leaf_id` / `set_leaf` | 当前叶指针（分支导航） |
+| `fork_session` | 新建子会话并写入 `BranchEntry` 语义 |
 
 ---
 
@@ -160,7 +174,7 @@ fn should_compact_session(store, session_id, context_window) -> bool {
 
 ## 上下文重建
 
-`build_context()`（`context_builder.rs`）从 SessionStore 重建 LLM 消息数组：
+`build_context()`（`context_builder.rs`）从 `SessionStore::load_entries` 重建 LLM 消息数组：
 
 ```
 ① 预扫描：找最后一个 CompactionEntry
@@ -181,39 +195,23 @@ fn should_compact_session(store, session_id, context_window) -> bool {
 
 ### 分支操作
 
-```rust
-// session/store.rs
-fn fork_session(&self, parent_id: &str, reason: &str) -> SessionMetadata {
-    // 创建新 JSONL 文件
-    // 新 header 的 parent_session 指向父会话
-    // 第一条 Entry 是 BranchEntry { parent_session_id, reason }
-}
-```
+`fork_session(parent_id, reason)` 在 SurrealDB 中创建新会话记录，并建立与父会话的 `Branch` 语义链接（具体字段见 `surreal_store` 实现）。
 
 ### 分支摘要
 
 `branch_with_summary()` 在分支时生成被遗弃分支的结构化摘要：
 
-1. 将 leaf 指针移到目标 Entry
-2. 调用 LLM 生成摘要（目标、进展、关键决策）
-3. 持久化 `BranchSummaryEntry`
-4. 压缩后的上下文包含 `[分支摘要]`，确保 LLM 不丢失被遗弃分支的关键信息
+1. 将 leaf 指针移到目标 Entry  
+2. 调用 LLM 生成摘要（目标、进展、关键决策）  
+3. 持久化 `BranchSummaryEntry`  
+4. 压缩后的上下文包含 `[分支摘要]`，确保 LLM 不丢失被遗弃分支的关键信息  
 
 ---
 
 ## SessionManager（高级 API）
 
-包装 SessionStore，提供更简洁的接口：
-
-```rust
-impl SessionManager {
-    fn create_session(model, working_dir, title) -> SessionMetadata;
-    fn append_entry(session_id, entry);
-    fn load_entries(session_id) -> Vec<SessionEntry>;
-    fn branch_session(parent_id, reason) -> SessionMetadata;
-}
-```
+包装 `SessionStore`，提供更简洁的接口（创建会话、追加条目、列出会话、分支等）。见 `crates/uncode-agent/src/session/manager.rs`。
 
 ---
 
-*本文档基于 uncode 源码（`crates/uncode-core/src/session.rs`、`crates/uncode-agent/src/session/`、`crates/uncode-agent/src/compaction.rs`）编写。*
+*本文档基于 uncode 源码编写；物理存储以仓库中 `session/store.rs` 与 `surreal_store.rs` 为准。*

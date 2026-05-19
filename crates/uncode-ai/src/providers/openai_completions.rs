@@ -161,34 +161,35 @@ fn build_request_body(model: &Model, context: &Context, options: &StreamOptions)
     }
 
     // Thinking / reasoning parameters
-    if let Some(level) = options.thinking_level {
-        if level != ThinkingLevel::Off && model.reasoning {
-            let mapped = model
-                .thinking_level_map
-                .get(&level)
-                .and_then(|v| v.as_deref());
+    if let Some(level) = options.thinking_level
+        && level != ThinkingLevel::Off
+        && model.reasoning
+    {
+        let mapped = model
+            .thinking_level_map
+            .get(&level)
+            .and_then(|v| v.as_deref());
 
-            match model.compat.thinking_format {
-                Some(ThinkingFormat::DeepSeek) => {
-                    if let Some(effort) = mapped {
-                        body["thinking"] = serde_json::json!({"type": "enabled"});
-                        body["reasoning_effort"] = serde_json::json!(effort);
-                    }
+        match model.compat.thinking_format {
+            Some(ThinkingFormat::DeepSeek) => {
+                if let Some(effort) = mapped {
+                    body["thinking"] = serde_json::json!({"type": "enabled"});
+                    body["reasoning_effort"] = serde_json::json!(effort);
                 }
-                Some(ThinkingFormat::OpenRouter) => {
-                    let effort = mapped.unwrap_or("high");
-                    body["reasoning"] = serde_json::json!({"effort": effort});
-                }
-                _ => {
-                    if model.compat.supports_reasoning_effort {
-                        let effort = mapped.unwrap_or(match level {
-                            ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
-                            ThinkingLevel::Medium => "medium",
-                            ThinkingLevel::High | ThinkingLevel::XHigh => "high",
-                            _ => "medium",
-                        });
-                        body["reasoning_effort"] = serde_json::json!(effort);
-                    }
+            }
+            Some(ThinkingFormat::OpenRouter) => {
+                let effort = mapped.unwrap_or("high");
+                body["reasoning"] = serde_json::json!({"effort": effort});
+            }
+            _ => {
+                if model.compat.supports_reasoning_effort {
+                    let effort = mapped.unwrap_or(match level {
+                        ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
+                        ThinkingLevel::Medium => "medium",
+                        ThinkingLevel::High | ThinkingLevel::XHigh => "high",
+                        _ => "medium",
+                    });
+                    body["reasoning_effort"] = serde_json::json!(effort);
                 }
             }
         }
@@ -240,41 +241,40 @@ fn parse_sse_chunk(text: &str, state: &mut StreamState, compat: &CompatConfig) -
             }
             continue;
         }
-        if let Some(json_str) = line.strip_prefix("data: ") {
-            if let Ok(event) = serde_json::from_str::<Value>(json_str) {
-                if let Some(choice) = event["choices"][0].as_object() {
-                    events.extend(parse_tool_calls(choice, state));
+        if let Some(json_str) = line.strip_prefix("data: ")
+            && let Ok(event) = serde_json::from_str::<Value>(json_str)
+        {
+            if let Some(choice) = event["choices"][0].as_object() {
+                events.extend(parse_tool_calls(choice, state));
 
-                    if compat.thinking_format == Some(ThinkingFormat::DeepSeek) {
-                        if let Some(reasoning) = choice["delta"]["reasoning_content"].as_str() {
-                            if !reasoning.is_empty() {
-                                events.push(StreamEvent::ThinkingDelta(reasoning.to_string()));
-                            }
-                        }
-                    }
-
-                    if let Some(content) = choice["delta"]["content"].as_str() {
-                        if !content.is_empty() {
-                            events.push(StreamEvent::TextDelta(content.to_string()));
-                        }
-                    }
-
-                    if let Some(reason) = choice.get("finish_reason") {
-                        if !reason.is_null() {
-                            events.extend(flush_tool_calls(state));
-                            let stop = reason
-                                .as_str()
-                                .map(map_finish_reason)
-                                .unwrap_or(StopReason::Stop);
-                            events.push(StreamEvent::Done { reason: stop });
-                        }
-                    }
+                if compat.thinking_format == Some(ThinkingFormat::DeepSeek)
+                    && let Some(reasoning) = choice["delta"]["reasoning_content"].as_str()
+                    && !reasoning.is_empty()
+                {
+                    events.push(StreamEvent::ThinkingDelta(reasoning.to_string()));
                 }
-                if compat.supports_usage_in_streaming {
-                    if let Some(usage_event) = extract_usage(&event) {
-                        events.push(usage_event);
-                    }
+
+                if let Some(content) = choice["delta"]["content"].as_str()
+                    && !content.is_empty()
+                {
+                    events.push(StreamEvent::TextDelta(content.to_string()));
                 }
+
+                if let Some(reason) = choice.get("finish_reason")
+                    && !reason.is_null()
+                {
+                    events.extend(flush_tool_calls(state));
+                    let stop = reason
+                        .as_str()
+                        .map(map_finish_reason)
+                        .unwrap_or(StopReason::Stop);
+                    events.push(StreamEvent::Done { reason: stop });
+                }
+            }
+            if compat.supports_usage_in_streaming
+                && let Some(usage_event) = extract_usage(&event)
+            {
+                events.push(usage_event);
             }
         }
     }
@@ -331,7 +331,8 @@ fn flush_tool_calls(state: &mut StreamState) -> Vec<StreamEvent> {
                     reason: crate::api_types::StopReason::Error,
                     message: format!("tool args JSON parse failed: {e}"),
                 });
-                Value::Object(Default::default())
+                state.tool_names.remove(&id);
+                continue;
             }
         };
         let name = state.tool_names.remove(&id).unwrap_or_default();
@@ -389,11 +390,11 @@ impl Api for OpenAiCompletionsApi {
             req = req.header(k.as_str(), v.as_str());
         }
 
-        if model.compat.send_session_affinity_headers {
-            if let Some(ref sid) = options.session_id {
-                req = req.header("session_id", sid.as_str());
-                req = req.header("x-client-request-id", sid.as_str());
-            }
+        if model.compat.send_session_affinity_headers
+            && let Some(ref sid) = options.session_id
+        {
+            req = req.header("session_id", sid.as_str());
+            req = req.header("x-client-request-id", sid.as_str());
         }
 
         let send_future = req.send();

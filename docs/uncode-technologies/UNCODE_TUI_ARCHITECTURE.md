@@ -1,8 +1,8 @@
 # uncode TUI 架构
 
-> 虚拟滚动 + 增量渲染 + syntect 高亮 + Markdown | 基于 `crates/uncode-tui/` 源码分析
+> 虚拟滚动 + 增量渲染 + syntect 高亮 + Markdown + 9 工具渲染器 | 基于源码分析，2026-05 修订
 
-uncode 的 TUI 基于 ratatui + crossterm 构建，是一个全屏终端 UI。核心挑战是实时渲染流式 LLM 输出（思考 + 文本 + 工具调用），同时保持响应性。通过 AST 级别增量渲染和虚拟滚动解决。
+uncode 的 TUI 基于 ratatui + crossterm 构建，是一个全屏终端 UI。核心挑战是实时渲染流式 LLM 输出（Thinking + 文本 + 工具调用），同时保持响应性。
 
 ---
 
@@ -10,13 +10,13 @@ uncode 的 TUI 基于 ratatui + crossterm 构建，是一个全屏终端 UI。�
 
 | 模块 | 职责 |
 |------|------|
-| `lib.rs` | `TuiEngine` 主状态机：事件循环 + 渲染 + 快捷键 |
-| `chat.rs` | `ChatState` 消息列表 + 虚拟滚动缓存 |
+| `lib.rs` | `TuiEngine` 主状态机：事件循环 + 渲染 + 快捷键 + ESC 处理 |
+| `chat.rs` | `ChatState` 消息列表 + 虚拟滚动缓存 + Thinking 渲染 |
 | `highlight.rs` | syntect 语法高亮引擎 |
 | `markdown.rs` | GFM Markdown → ratatui Lines 渲染器 |
-| `input.rs` | `InputEditor` readline 输入框（历史/撤销/补全） |
+| `input.rs` | `InputEditor` 输入框（历史/撤销/补全/UTF-8 光标） |
 | `theme.rs` | `Theme` 50+ 命名颜色 + 4 内置主题 + JSON 自定义 |
-| `tool_renderer.rs` | `ToolRendererRegistry` 每工具自定义渲染器 |
+| `tool_renderer.rs` | `ToolRendererRegistry` 9 类工具自定义渲染器 + 语法高亮 |
 | `welcome.rs` | `WelcomeScreen` 欢迎覆盖层 |
 | `selector.rs` | `OverlaySelector` 模型选择弹窗 |
 | `complete.rs` | `CompletionEngine` 斜杠命令 + 文件路径补全 |
@@ -24,7 +24,6 @@ uncode 的 TUI 基于 ratatui + crossterm 构建，是一个全屏终端 UI。�
 | `message_queue.rs` | `MessageQueue` followUp/Steering 队列 |
 | `permission.rs` | `PermissionManager` 工具权限管理 |
 | `diff_viewer.rs` | `DiffViewer` 统一 diff 覆盖层 |
-| `code_detail.rs` | `CodeDetailView` 代码/差异全屏查看器 |
 
 ---
 

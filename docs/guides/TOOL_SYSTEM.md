@@ -2,14 +2,16 @@
 
 ## 概述
 
-UnCode 的工具系统是 Agent 与本地环境交互的唯一通道，遵循三层架构：
+UnCode 的工具系统是 Agent 与本地环境交互的主要通道，遵循以下分层：
 
 ```
-uncode-core  →  定义 trait、类型
-uncode-tools →  实现 8 个内置工具 + 注册表
-uncode-agent →  调度执行（查找 → 执行 → 事件广播）
-uncode-tui   →  权限拦截 + 渲染展示
+uncode-core   →  定义 ToolExecutor / ToolDefinition 等 trait 与类型
+uncode-agent  →  `crates/uncode-agent/src/tools/` 内置工具实现 + `ToolRegistry`
+uncode-cli    →  启动时向注册表 `register` 默认工具子集（见 `main.rs`）
+uncode-tui    →  权限拦截 + 渲染展示
 ```
+
+说明：历史上曾有独立 `uncode-tools` crate 的叙事；当前仓库已合并入 **`uncode-agent`**，无 `uncode-tools` 成员 crate。
 
 Agent 不直接访问文件系统或执行命令，而是通过 LLM 生成工具调用 → 注册表分发 → 工具执行 → 结果返回 → LLM 继续推理的循环完成所有操作。
 
@@ -31,7 +33,10 @@ Agent 不直接访问文件系统或执行命令，而是通过 LLM 生成工具
 
 ---
 
-## 8 个内置工具
+## 内置工具
+
+**默认 CLI 注册**（`uncode-cli/src/main.rs`）：`read`、`write`、`edit`、`grep`、`bash`、`web_fetch`；若配置 Tavily API Key 则额外注册 `web_search`。  
+**另有实现**（可按 demo/测试或自定义入口注册）：`find`、`ls` 以及 `diff`、`hashline`、`local_env` 等，见 `uncode-agent/src/tools/`。
 
 ### read — 读取文件或目录
 

@@ -1,6 +1,6 @@
 # uncode 事件系统
 
-> AgentEvent + EventRouter + HookResult | 基于 `crates/uncode-core/src/event.rs` 源码分析
+> AgentEvent（18 variants）+ EventRouter + HookResult | 基于源码分析，2026-05 修订
 
 uncode 的跨层通信通过 `AgentEvent` 枚举实现。上层（TUI / Platform / RPC）通过 `broadcast::Receiver<AgentEvent>` 订阅事件流，实现发布-订阅解耦。
 

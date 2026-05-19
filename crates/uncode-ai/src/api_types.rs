@@ -6,6 +6,15 @@ use serde::{Deserialize, Serialize};
 use crate::message::Message;
 use crate::tool_def::ToolDefinition;
 
+// ── Type aliases for complex callback types ──
+
+/// 流式 payload 回调
+pub type PayloadCallback = Arc<dyn Fn(&serde_json::Value) + Send + Sync>;
+/// HTTP 响应回调
+pub type ResponseCallback = Arc<dyn Fn(u16, &HashMap<String, String>) + Send + Sync>;
+/// 上下文变换回调
+pub type TransformContextCallback = Arc<dyn Fn(&mut Vec<Message>) + Send + Sync>;
+
 // ── Context ──
 
 /// 对话状态容器，独立于请求参数
@@ -44,8 +53,8 @@ pub struct StreamOptions {
     pub thinking_budget_tokens: Option<u32>,
     pub session_id: Option<String>,
     pub cache_retention: Option<CacheRetention>,
-    pub on_payload: Option<Arc<dyn Fn(&serde_json::Value) + Send + Sync>>,
-    pub on_response: Option<Arc<dyn Fn(u16, &HashMap<String, String>) + Send + Sync>>,
+    pub on_payload: Option<PayloadCallback>,
+    pub on_response: Option<ResponseCallback>,
     pub transport: Option<Transport>,
     pub metadata: Option<HashMap<String, String>>,
 }
@@ -103,16 +112,12 @@ pub enum InputModality {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum CacheRetention {
     None,
+    #[default]
     Short,
     Long,
-}
-
-impl Default for CacheRetention {
-    fn default() -> Self {
-        Self::Short
-    }
 }
 
 // ── CompatConfig ──

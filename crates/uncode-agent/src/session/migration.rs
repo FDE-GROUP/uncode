@@ -25,10 +25,10 @@ pub fn migrate_v1_to_v2(
     let mut prev_id: Option<String> = None;
     for id in order {
         if let Some(entry) = by_id.get_mut(id) {
-            if entry.parent_id().is_none() {
-                if let Some(ref pid) = prev_id {
-                    entry.set_parent_id(pid.clone());
-                }
+            if entry.parent_id().is_none()
+                && let Some(ref pid) = prev_id
+            {
+                entry.set_parent_id(pid.clone());
             }
             prev_id = Some(id.clone());
         }

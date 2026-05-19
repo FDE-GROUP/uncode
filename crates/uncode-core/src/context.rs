@@ -171,10 +171,10 @@ pub async fn expand_url_refs(text: &str) -> String {
 
 async fn fetch_url(client: &reqwest::Client, url: &str) -> Result<String, String> {
     // 禁止内网地址
-    if let Some(host) = url_host(url) {
-        if is_private_host(&host) {
-            return Err("不允许访问内网地址".into());
-        }
+    if let Some(host) = url_host(url)
+        && is_private_host(&host)
+    {
+        return Err("不允许访问内网地址".into());
     }
 
     let response = client.get(url).send().await.map_err(|e| e.to_string())?;
@@ -220,10 +220,10 @@ fn is_private_host(host: &str) -> bool {
                 if parts[0] == "10" {
                     return true;
                 }
-                if parts[0] == "172" {
-                    if let Ok(second) = parts[1].parse::<u8>() {
-                        return (16..=31).contains(&second);
-                    }
+                if parts[0] == "172"
+                    && let Ok(second) = parts[1].parse::<u8>()
+                {
+                    return (16..=31).contains(&second);
                 }
                 if parts[0] == "192" && parts[1] == "168" {
                     return true;

@@ -193,6 +193,17 @@ fn format_duration(d: std::time::Duration) -> String {
     }
 }
 
+#[derive(Default)]
+enum AgentActivity {
+    #[default]
+    Idle,
+    Thinking,
+    RunningTool {
+        name: String,
+    },
+    Writing,
+}
+
 pub struct TuiEngine {
     chat: ChatState,
     session_id: String,
@@ -209,6 +220,7 @@ pub struct TuiEngine {
     agent_busy: bool,
     current_cancel: Option<CancellationToken>,
     permission: PermissionManager,
+    activity: AgentActivity,
     footer: FooterState,
     theme: Theme,
     renderers: ToolRendererRegistry,
@@ -225,8 +237,11 @@ impl TuiEngine {
     }
 
     pub fn new() -> Self {
+        let footer = FooterState::new();
+        let mut chat = ChatState::new();
+        chat.workdir = footer.workdir.clone();
         Self {
-            chat: ChatState::new(),
+            chat,
             session_id: String::new(),
             model: String::new(),
             model_index: 0,
@@ -241,7 +256,8 @@ impl TuiEngine {
             agent_busy: false,
             current_cancel: None,
             permission: PermissionManager::new(),
-            footer: FooterState::new(),
+            activity: AgentActivity::default(),
+            footer,
             theme: Theme::default(),
             renderers: ToolRendererRegistry::new(),
             welcome: WelcomeScreen::new(),
@@ -261,12 +277,44 @@ impl TuiEngine {
         self.model = model;
     }
 
+    /// ESC 键处理：按优先级 — 拒绝权限 → 中断 Agent → 清除焦点 → 关闭覆盖层
+    pub fn handle_esc(&mut self) {
+        if self.permission.has_pending() {
+            self.permission.deny();
+            return;
+        }
+        if self.agent_busy {
+            if let Some(ref token) = self.current_cancel {
+                token.cancel();
+            }
+            self.agent_busy = false;
+            self.current_cancel = None;
+            self.footer.end_turn();
+            self.chat.deactivate_thinking();
+            self.chat.invalidate_all();
+            self.chat.push_message(chat::ChatMessage::Summary {
+                completed: vec!["[Interrupted] Agent stopped.".into()],
+                next_steps: vec![],
+            });
+        }
+        if self.chat.focused_card.is_some() {
+            self.chat.clear_focus();
+        }
+        if self.welcome.is_visible() {
+            self.welcome.hide();
+        }
+        if self.selector.is_visible() {
+            self.selector.hide();
+        }
+    }
+
     pub fn render(&mut self, f: &mut Frame) {
         self.tick = self.tick.wrapping_add(1);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(0),    // 对话区
+                Constraint::Length(1), // 状态行
                 Constraint::Length(3), // 输入栏
                 Constraint::Length(1), // 页脚第 1 行
                 Constraint::Length(1), // 页脚第 2 行
@@ -274,10 +322,10 @@ impl TuiEngine {
             .split(f.area());
 
         self.render_chat(f, chunks[0]);
+        self.render_status(f, chunks[1]);
+        self.editor.render(f, chunks[2], self.theme.ui.footer_text);
 
-        self.editor.render(f, chunks[1], self.theme.ui.footer_text);
-
-        self.render_footer(f, chunks[2], chunks[3]);
+        self.render_footer(f, chunks[3], chunks[4]);
 
         self.selector.render(f, f.area());
         self.welcome.render(f, f.area());
@@ -287,12 +335,15 @@ impl TuiEngine {
         let visible_height = area.height as usize;
 
         // Step 1: Update line count cache (only re-renders stale messages)
+        let workdir = self.chat.workdir.clone();
         self.chat.ensure_line_counts(
             area.width,
             &self.renderers,
             &self.theme,
             self.tick,
             self.agent_busy,
+            self.chat.tool_output_visible,
+            &workdir,
         );
 
         // Step 2: Compute total and auto_scroll
@@ -310,54 +361,41 @@ impl TuiEngine {
             .visible_range(self.chat.scroll_offset, visible_height);
 
         // Step 4: Build viewport lines (only visible messages)
-        let mut lines =
-            self.chat
-                .render_viewport(first, last, self.chat.scroll_offset, visible_height);
-
-        // Step 5: Show "processing" indicator when agent is busy but no output yet
-        if self.agent_busy {
-            let has_output = self.chat.messages.last().map_or(false, |m| {
-                matches!(
-                    m,
-                    chat::ChatMessage::Assistant { .. }
-                        | chat::ChatMessage::Thinking { .. }
-                        | chat::ChatMessage::ToolCall { .. }
-                        | chat::ChatMessage::BashExecution { .. }
-                )
-            });
-            if !has_output {
-                use ratatui::style::{Modifier, Style};
-                use ratatui::text::{Line, Span};
-                let phase = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis()
-                    % 800;
-                let dots = match phase {
-                    0..=199 => "●  ",
-                    200..=399 => " ● ",
-                    400..=599 => "  ●",
-                    _ => "   ",
-                };
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!(" {dots} "),
-                        Style::default()
-                            .fg(self.theme.tool_status.running)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        "Working...",
-                        Style::default()
-                            .fg(self.theme.tool_status.running)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-            }
-        }
+        let lines = self
+            .chat
+            .render_viewport(first, last, self.chat.scroll_offset, visible_height);
 
         let content = Paragraph::new(lines);
         f.render_widget(content, area);
+    }
+
+    fn render_status(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        if !self.agent_busy {
+            return;
+        }
+        let label = match &self.activity {
+            AgentActivity::Thinking => "Thinking".to_string(),
+            AgentActivity::RunningTool { name } => format!("Running {name}"),
+            AgentActivity::Writing => "Writing".to_string(),
+            AgentActivity::Idle => "Processing".to_string(),
+        };
+
+        let elapsed = self.footer.current_elapsed();
+        let tokens = format_tokens(self.footer.output_tokens);
+
+        let bg_color = self.theme.tool_status.running;
+        let accent = Style::default()
+            .fg(Color::Black)
+            .bg(bg_color)
+            .add_modifier(ratatui::style::Modifier::BOLD);
+        let dim = Style::default().fg(self.theme.ui.footer_text).bg(bg_color);
+
+        let line = Line::from(vec![
+            Span::styled(format!(" * {label} "), accent),
+            Span::styled(format!("({elapsed} | {tokens} tok)"), dim),
+        ]);
+
+        f.render_widget(Paragraph::new(line), area);
     }
 
     fn render_footer(
@@ -367,7 +405,7 @@ impl TuiEngine {
         line2_area: ratatui::layout::Rect,
     ) {
         let (status_icon, status_color) = if self.agent_busy {
-            let dot = if (self.tick / 4) % 2 == 0 {
+            let dot = if (self.tick / 4).is_multiple_of(2) {
                 "●"
             } else {
                 "○"
@@ -402,7 +440,7 @@ impl TuiEngine {
 
     pub async fn run<F>(&mut self, mut event_rx: broadcast::Receiver<AgentEvent>, on_submit: F)
     where
-        F: Fn(String, CancellationToken, String),
+        F: Fn(String, CancellationToken, String, String),
     {
         let mut terminal = ratatui::init();
         let _ = crossterm::execute!(
@@ -423,8 +461,7 @@ impl TuiEngine {
                     loop {
                         let poll_ok = event::poll(std::time::Duration::from_millis(50));
                         if poll_ok.is_err() {
-                            return Err::<Event, std::io::Error>(std::io::Error::new(
-                                std::io::ErrorKind::Other,
+                            return Err::<Event, std::io::Error>(std::io::Error::other(
                                 "terminal poll failed",
                             ));
                         }
@@ -434,7 +471,7 @@ impl TuiEngine {
                                 event::KeyEvent::new(KeyCode::Null, event::KeyModifiers::empty())
                             ));
                             match ev {
-                                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                                Event::Key(key) if key.kind != KeyEventKind::Release => {
                                     return Ok(Event::Key(key));
                                 }
                                 Event::Mouse(mouse) => {
@@ -442,6 +479,9 @@ impl TuiEngine {
                                 }
                                 Event::Resize(w, h) => {
                                     return Ok(Event::Resize(w, h));
+                                }
+                                Event::Paste(text) => {
+                                    return Ok(Event::Paste(text));
                                 }
                                 _ => {}
                             }
@@ -455,28 +495,9 @@ impl TuiEngine {
                     };
                     match ui_event {
                         Event::Key(key_event) => {
-                            // ESC: highest priority — interrupt agent or dismiss overlays
+                            // ESC: highest priority — interrupt agent, clear focus, dismiss overlays
                             if key_event.code == KeyCode::Esc {
-                                if self.agent_busy {
-                                    if let Some(ref token) = self.current_cancel {
-                                        token.cancel();
-                                    }
-                                    self.agent_busy = false;
-                                    self.current_cancel = None;
-                                    self.footer.end_turn();
-                                    self.chat.deactivate_thinking();
-                                    self.chat.invalidate_all();
-                                    self.chat.messages.push(chat::ChatMessage::Summary {
-                                        completed: vec!["[Interrupted] Agent stopped.".into()],
-                                        next_steps: vec![],
-                                    });
-                                }
-                                if self.welcome.is_visible() {
-                                    self.welcome.hide();
-                                }
-                                if self.selector.is_visible() {
-                                    self.selector.hide();
-                                }
+                                self.handle_esc();
                                 continue;
                             }
 
@@ -502,7 +523,7 @@ impl TuiEngine {
                                     KeyCode::Char('y') | KeyCode::Enter => {
                                         self.permission.confirm(crate::permission::ConfirmOption::Allow);
                                     }
-                                    KeyCode::Char('n') | KeyCode::Esc => {
+                                    KeyCode::Char('n') => {
                                         self.permission.deny();
                                     }
                                     KeyCode::Char('e') => {
@@ -521,9 +542,12 @@ impl TuiEngine {
                                 // Direct shortcuts
                                 KeyCode::Char('o') if ctrl => {
                                     self.chat.tool_output_visible = !self.chat.tool_output_visible;
+                                    self.chat.set_all_expanded(self.chat.tool_output_visible);
                                 }
                                 KeyCode::Char('t') if ctrl => {
                                     self.chat.thinking_visible = !self.chat.thinking_visible;
+                                    self.chat
+                                        .set_thinking_expanded(self.chat.thinking_visible);
                                 }
                                 KeyCode::Char('l') if ctrl => {
                                     self.selector.show(
@@ -561,9 +585,9 @@ impl TuiEngine {
                                                 &std::env::current_dir().unwrap_or_default(),
                                             );
                                             let token = self.new_cancel_token();
-                                            on_submit(expanded, token, self.model.clone());
+                                            on_submit(expanded, token, self.model.clone(), self.session_id.clone());
                                         } else {
-                                            self.chat.messages.push(chat::ChatMessage::Summary {
+                                            self.chat.push_message(chat::ChatMessage::Summary {
                                                 completed: vec!["No messages to retry.".into()],
                                                 next_steps: vec![],
                                             });
@@ -575,15 +599,13 @@ impl TuiEngine {
                                     if !self.agent_busy {
                                         self.session_id = uuid::Uuid::new_v4().to_string();
                                         self.chat.messages.clear();
+                                        self.chat.focused_card = None;
                                         self.chat.scroll_offset = 0;
                                         self.chat.auto_scroll = true;
-                                        self.footer.input_tokens = 0;
-                                        self.footer.output_tokens = 0;
-                                        self.footer.cost = 0.0;
                                         self.footer.context_percent = 0;
                                         self.last_user_input = None;
                                         let sid = &self.session_id[..8];
-                                        self.chat.messages.push(chat::ChatMessage::Summary {
+                                        self.chat.push_message(chat::ChatMessage::Summary {
                                             completed: vec![format!("New session created. session:{sid}")],
                                             next_steps: vec![],
                                         });
@@ -603,19 +625,23 @@ impl TuiEngine {
                                         } else {
                                             1
                                         };
-                                        self.chat.messages.push(chat::ChatMessage::Summary {
+                                        self.chat.push_message(chat::ChatMessage::Summary {
                                             completed: vec![format!("Undid {removed} messages.")],
                                             next_steps: vec![],
                                         });
+                                        // Reset focus if index is now out of bounds
+                                        if let Some(idx) = self.chat.focused_card
+                                            && idx >= self.chat.messages.len() {
+                                                self.chat.focused_card = None;
+                                            }
                                     }
                                 }
                                 // External editor: Ctrl+G
                                 KeyCode::Char('g') if ctrl => {
-                                    if let Some(content) = open_external_editor() {
-                                        if !content.is_empty() {
+                                    if let Some(content) = open_external_editor()
+                                        && !content.is_empty() {
                                             self.editor.set_buffer(content);
                                         }
-                                    }
                                 }
                                 KeyCode::BackTab => {
                                     self.chat.thinking_level = self.chat.thinking_level.cycle_next();
@@ -626,6 +652,24 @@ impl TuiEngine {
                                 }
                                 KeyCode::PageDown => {
                                     self.chat.scroll_offset = self.chat.scroll_offset.saturating_add(10);
+                                }
+                                // Card focus navigation (only when input empty & selector hidden)
+                                KeyCode::Char('j') if ctrl && !self.selector.is_visible()
+                                    && self.editor.buffer().is_empty() => {
+                                    if self.chat.focus_next_card() {
+                                        self.scroll_to_focused_card();
+                                    }
+                                }
+                                KeyCode::Char('k') if ctrl && !self.selector.is_visible()
+                                    && self.editor.buffer().is_empty() => {
+                                    if self.chat.focus_prev_card() {
+                                        self.scroll_to_focused_card();
+                                    }
+                                }
+                                // Toggle focused card expand/collapse
+                                KeyCode::Char(' ') if self.chat.focused_card.is_some()
+                                    && self.editor.buffer().is_empty() => {
+                                    self.chat.toggle_focused_card();
                                 }
                                 // Selector navigation
                                 KeyCode::Char('j') if ctrl && self.selector.is_visible() => self.selector.next(),
@@ -641,6 +685,40 @@ impl TuiEngine {
                                     }
                                     self.selector.hide();
                                 }
+                                // Enter toggles focused card (when no text in input)
+                                KeyCode::Enter if self.chat.focused_card.is_some()
+                                    && !self.selector.is_visible()
+                                    && self.editor.buffer().is_empty() => {
+                                    self.chat.toggle_focused_card();
+                                }
+                                // ESC fallback (also handled above, but crossterm may
+                                // deliver ESC differently on some terminals)
+                                KeyCode::Esc => {
+                                    if self.agent_busy {
+                                        if let Some(ref token) = self.current_cancel {
+                                            token.cancel();
+                                        }
+                                        self.agent_busy = false;
+                                        self.activity = AgentActivity::Idle;
+                                        self.current_cancel = None;
+                                        self.footer.end_turn();
+                                        self.chat.deactivate_thinking();
+                                        self.chat.invalidate_all();
+                                        self.chat.push_message(chat::ChatMessage::Summary {
+                                            completed: vec!["[Interrupted] Agent stopped.".into()],
+                                            next_steps: vec![],
+                                        });
+                                    }
+                                    if self.chat.focused_card.is_some() {
+                                        self.chat.clear_focus();
+                                    }
+                                    if self.welcome.is_visible() {
+                                        self.welcome.hide();
+                                    }
+                                    if self.selector.is_visible() {
+                                        self.selector.hide();
+                                    }
+                                }
                                 // Quit / Interrupt
                                 KeyCode::Char('c') if ctrl => {
                                     if self.agent_busy {
@@ -649,7 +727,7 @@ impl TuiEngine {
                                         }
                                         self.agent_busy = false;
                                         self.current_cancel = None;
-                                        self.chat.messages.push(chat::ChatMessage::Summary {
+                                        self.chat.push_message(chat::ChatMessage::Summary {
                                             completed: vec!["[Interrupted] Agent stopped.".into()],
                                             next_steps: vec![],
                                         });
@@ -689,6 +767,12 @@ impl TuiEngine {
                             let _ = terminal.autoresize();
                             let _ = terminal.clear();
                         }
+                        Event::Paste(text) => {
+                            self.editor.handle_paste(&text);
+                            self.editor.set_completions(
+                                self.completion.complete(self.editor.buffer())
+                            );
+                        }
                         _ => {}
                     }
                 }
@@ -713,10 +797,10 @@ impl TuiEngine {
 
     fn handle_submit<F>(&mut self, text: String, on_submit: &F)
     where
-        F: Fn(String, CancellationToken, String),
+        F: Fn(String, CancellationToken, String, String),
     {
         if let Some(response) = self.slash.execute(&text) {
-            self.chat.messages.push(chat::ChatMessage::Summary {
+            self.chat.push_message(chat::ChatMessage::Summary {
                 completed: vec![response],
                 next_steps: vec![],
             });
@@ -726,13 +810,14 @@ impl TuiEngine {
         match text.as_str() {
             "/thinking" => {
                 self.chat.thinking_visible = !self.chat.thinking_visible;
+                self.chat.set_thinking_expanded(self.chat.thinking_visible);
             }
             "/details" => {
                 self.chat.tool_output_visible = !self.chat.tool_output_visible;
             }
             "/help" => {
                 let help = "Keys: Ctrl+O tool output | Ctrl+T thinking | Ctrl+P cycle model | Ctrl+R retry | Ctrl+N new session | Ctrl+/ undo | Ctrl+G editor\nCommands: /clear | /compact | /model [name] | /new | /fork [id] | /export [fmt] | /sessions | /branch | /name [title] | /copy | /usage | /reload | /diff | /theme | /thinking | /details | /tree | /skills | /template";
-                self.chat.messages.push(chat::ChatMessage::Summary {
+                self.chat.push_message(chat::ChatMessage::Summary {
                     completed: vec![help.into()],
                     next_steps: vec![],
                 });
@@ -814,7 +899,7 @@ impl TuiEngine {
 
     fn submit_text<F>(&mut self, text: String, on_submit: &F)
     where
-        F: Fn(String, CancellationToken, String),
+        F: Fn(String, CancellationToken, String, String),
     {
         if self.agent_busy {
             let preview = text.clone();
@@ -832,15 +917,21 @@ impl TuiEngine {
                 &std::env::current_dir().unwrap_or_default(),
             );
             let token = self.new_cancel_token();
-            on_submit(file_expanded, token, self.model.clone());
+            on_submit(
+                file_expanded,
+                token,
+                self.model.clone(),
+                self.session_id.clone(),
+            );
         }
     }
 
     fn handle_clear_command(&mut self) {
         self.chat.messages.clear();
+        self.chat.focused_card = None;
         self.chat.scroll_offset = 0;
         self.chat.auto_scroll = true;
-        self.chat.messages.push(chat::ChatMessage::Summary {
+        self.chat.push_message(chat::ChatMessage::Summary {
             completed: vec!["Chat cleared.".into()],
             next_steps: vec![],
         });
@@ -865,7 +956,7 @@ impl TuiEngine {
             lines.push("Context usage low, no compaction needed.".into());
         }
 
-        self.chat.messages.push(chat::ChatMessage::Summary {
+        self.chat.push_message(chat::ChatMessage::Summary {
             completed: lines,
             next_steps: vec![],
         });
@@ -880,6 +971,7 @@ impl TuiEngine {
 
         self.session_id = uuid::Uuid::new_v4().to_string();
         self.chat.messages.clear();
+        self.chat.focused_card = None;
         self.chat.scroll_offset = 0;
         self.chat.auto_scroll = true;
         self.footer.input_tokens = 0;
@@ -888,7 +980,7 @@ impl TuiEngine {
         self.footer.context_percent = 0;
 
         let new_id = &self.session_id[..8];
-        self.chat.messages.push(chat::ChatMessage::Summary {
+        self.chat.push_message(chat::ChatMessage::Summary {
             completed: vec![format!(
                 "New session. session:{} → session:{new_id}",
                 old_id
@@ -915,7 +1007,7 @@ impl TuiEngine {
 
     fn handle_fork_command(&mut self, text: &str) {
         if self.session_id.is_empty() {
-            self.chat.messages.push(chat::ChatMessage::Error {
+            self.chat.push_message(chat::ChatMessage::Error {
                 message: "No active session to fork.".into(),
                 category: uncode_core::event::ErrorCategory::Config,
             });
@@ -925,7 +1017,7 @@ impl TuiEngine {
         let target_entry = if parts.len() > 1 && !parts[1].trim().is_empty() {
             parts[1].trim().to_string()
         } else {
-            self.chat.messages.push(chat::ChatMessage::Error {
+            self.chat.push_message(chat::ChatMessage::Error {
                 message: "用法: /fork <entry_id> — 指定要回退到的条目 ID".into(),
                 category: uncode_core::event::ErrorCategory::Config,
             });
@@ -934,7 +1026,7 @@ impl TuiEngine {
         let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
             Ok(d) => d,
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("无法获取会话目录: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -946,7 +1038,7 @@ impl TuiEngine {
         let store = match rt.block_on(store) {
             Ok(s) => s,
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("创建会话存储失败: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -962,13 +1054,13 @@ impl TuiEngine {
             Ok(()) => {
                 let short = &target_entry[..8.min(target_entry.len())];
                 let msg = format!("已分支到条目: {short}");
-                self.chat.messages.push(chat::ChatMessage::Summary {
+                self.chat.push_message(chat::ChatMessage::Summary {
                     completed: vec![msg],
                     next_steps: vec![],
                 });
             }
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("分支失败: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -978,7 +1070,7 @@ impl TuiEngine {
 
     fn handle_export_command(&mut self, text: &str) {
         if self.session_id.is_empty() {
-            self.chat.messages.push(chat::ChatMessage::Error {
+            self.chat.push_message(chat::ChatMessage::Error {
                 message: "No active session to export.".into(),
                 category: uncode_core::event::ErrorCategory::Config,
             });
@@ -989,7 +1081,7 @@ impl TuiEngine {
         let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
             Ok(d) => d,
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("无法获取会话目录: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1001,7 +1093,7 @@ impl TuiEngine {
         let store = match rt.block_on(store) {
             Ok(s) => s,
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("创建会话存储失败: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1022,7 +1114,7 @@ impl TuiEngine {
                     }
                     match std::fs::write(&filename, &out) {
                         Ok(()) => {
-                            self.chat.messages.push(chat::ChatMessage::Summary {
+                            self.chat.push_message(chat::ChatMessage::Summary {
                                 completed: vec![format!(
                                     "已导出 JSONL: {filename} ({} 条目)",
                                     entries.len()
@@ -1031,7 +1123,7 @@ impl TuiEngine {
                             });
                         }
                         Err(e) => {
-                            self.chat.messages.push(chat::ChatMessage::Error {
+                            self.chat.push_message(chat::ChatMessage::Error {
                                 message: format!("Failed to write file: {e}"),
                                 category: uncode_core::event::ErrorCategory::Config,
                             });
@@ -1039,7 +1131,7 @@ impl TuiEngine {
                     }
                 }
                 Err(e) => {
-                    self.chat.messages.push(chat::ChatMessage::Error {
+                    self.chat.push_message(chat::ChatMessage::Error {
                         message: format!("Failed to read session: {e}"),
                         category: uncode_core::event::ErrorCategory::Config,
                     });
@@ -1051,7 +1143,7 @@ impl TuiEngine {
                     let html = render_export_html(&entries);
                     match std::fs::write(&filename, &html) {
                         Ok(()) => {
-                            self.chat.messages.push(chat::ChatMessage::Summary {
+                            self.chat.push_message(chat::ChatMessage::Summary {
                                 completed: vec![format!(
                                     "已导出 HTML: {filename} ({} 条目)",
                                     entries.len()
@@ -1060,7 +1152,7 @@ impl TuiEngine {
                             });
                         }
                         Err(e) => {
-                            self.chat.messages.push(chat::ChatMessage::Error {
+                            self.chat.push_message(chat::ChatMessage::Error {
                                 message: format!("Failed to write file: {e}"),
                                 category: uncode_core::event::ErrorCategory::Config,
                             });
@@ -1068,14 +1160,14 @@ impl TuiEngine {
                     }
                 }
                 Err(e) => {
-                    self.chat.messages.push(chat::ChatMessage::Error {
+                    self.chat.push_message(chat::ChatMessage::Error {
                         message: format!("Failed to read session: {e}"),
                         category: uncode_core::event::ErrorCategory::Config,
                     });
                 }
             },
             other => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("不支持的导出格式: '{other}'。支持: jsonl, html"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1087,7 +1179,7 @@ impl TuiEngine {
         let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
             Ok(d) => d,
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("无法获取会话目录: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1099,7 +1191,7 @@ impl TuiEngine {
         let store = match rt.block_on(store) {
             Ok(s) => s,
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("创建会话存储失败: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1109,7 +1201,7 @@ impl TuiEngine {
         match rt.block_on(store.list_sessions()) {
             Ok(mut sessions) => {
                 if sessions.is_empty() {
-                    self.chat.messages.push(chat::ChatMessage::Summary {
+                    self.chat.push_message(chat::ChatMessage::Summary {
                         completed: vec!["No session history.".into()],
                         next_steps: vec![],
                     });
@@ -1137,13 +1229,13 @@ impl TuiEngine {
                     .collect();
                 let mut completed = vec![format!("Recent {} sessions:", display.len())];
                 completed.extend(display);
-                self.chat.messages.push(chat::ChatMessage::Summary {
+                self.chat.push_message(chat::ChatMessage::Summary {
                     completed,
                     next_steps: vec![],
                 });
             }
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("Failed to list sessions: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1153,7 +1245,7 @@ impl TuiEngine {
 
     fn handle_branch_command(&mut self) {
         if self.session_id.is_empty() {
-            self.chat.messages.push(chat::ChatMessage::Summary {
+            self.chat.push_message(chat::ChatMessage::Summary {
                 completed: vec!["No active session.".into()],
                 next_steps: vec![],
             });
@@ -1162,7 +1254,7 @@ impl TuiEngine {
         let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
             Ok(d) => d,
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("无法获取会话目录: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1174,7 +1266,7 @@ impl TuiEngine {
         let store = match rt.block_on(store) {
             Ok(s) => s,
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("创建会话存储失败: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1195,13 +1287,13 @@ impl TuiEngine {
                         lines.push(format!("  session:{cid}  {title}"));
                     }
                 }
-                self.chat.messages.push(chat::ChatMessage::Summary {
+                self.chat.push_message(chat::ChatMessage::Summary {
                     completed: lines,
                     next_steps: vec![],
                 });
             }
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("获取分支信息失败: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1211,7 +1303,7 @@ impl TuiEngine {
 
     fn handle_name_command(&mut self, text: &str) {
         if self.session_id.is_empty() {
-            self.chat.messages.push(chat::ChatMessage::Error {
+            self.chat.push_message(chat::ChatMessage::Error {
                 message: "No active session.".into(),
                 category: uncode_core::event::ErrorCategory::Config,
             });
@@ -1223,7 +1315,7 @@ impl TuiEngine {
             let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
                 Ok(d) => d,
                 Err(e) => {
-                    self.chat.messages.push(chat::ChatMessage::Error {
+                    self.chat.push_message(chat::ChatMessage::Error {
                         message: format!("无法获取会话目录: {e}"),
                         category: uncode_core::event::ErrorCategory::Config,
                     });
@@ -1235,7 +1327,7 @@ impl TuiEngine {
             let store = match rt.block_on(store) {
                 Ok(s) => s,
                 Err(e) => {
-                    self.chat.messages.push(chat::ChatMessage::Error {
+                    self.chat.push_message(chat::ChatMessage::Error {
                         message: format!("创建会话存储失败: {e}"),
                         category: uncode_core::event::ErrorCategory::Config,
                     });
@@ -1245,13 +1337,13 @@ impl TuiEngine {
             match rt.block_on(store.read_header(&self.session_id)) {
                 Ok(header) => {
                     let current = header.title.as_deref().unwrap_or("(无标题)");
-                    self.chat.messages.push(chat::ChatMessage::Summary {
+                    self.chat.push_message(chat::ChatMessage::Summary {
                         completed: vec![format!("Current title: {current}")],
                         next_steps: vec![],
                     });
                 }
                 Err(e) => {
-                    self.chat.messages.push(chat::ChatMessage::Error {
+                    self.chat.push_message(chat::ChatMessage::Error {
                         message: format!("Failed to read session: {e}"),
                         category: uncode_core::event::ErrorCategory::Config,
                     });
@@ -1262,7 +1354,7 @@ impl TuiEngine {
         // TODO: async store backend does not yet support update_title;
         // the /name <title> setter is deferred until a write-header API is added.
         let _ = title;
-        self.chat.messages.push(chat::ChatMessage::Summary {
+        self.chat.push_message(chat::ChatMessage::Summary {
             completed: vec![
                 "Title rename pending — async store backend does not yet support write_header."
                     .into(),
@@ -1281,13 +1373,13 @@ impl TuiEngine {
                 let encoded = base64_encode(&text);
                 let osc = format!("\x1b]52;c;{encoded}\x07");
                 let _ = std::io::Write::write_all(&mut std::io::stdout(), osc.as_bytes());
-                self.chat.messages.push(chat::ChatMessage::Summary {
+                self.chat.push_message(chat::ChatMessage::Summary {
                     completed: vec![format!("Copied to clipboard ({} chars)", text.len())],
                     next_steps: vec![],
                 });
             }
             None => {
-                self.chat.messages.push(chat::ChatMessage::Summary {
+                self.chat.push_message(chat::ChatMessage::Summary {
                     completed: vec!["No agent response to copy.".into()],
                     next_steps: vec![],
                 });
@@ -1306,7 +1398,7 @@ impl TuiEngine {
             format!("上下文使用:    {}%", self.footer.context_percent),
             format!("对话消息数:    {}", self.chat.messages.len()),
         ];
-        self.chat.messages.push(chat::ChatMessage::Summary {
+        self.chat.push_message(chat::ChatMessage::Summary {
             completed: lines,
             next_steps: vec![],
         });
@@ -1328,7 +1420,7 @@ impl TuiEngine {
             })
             .unwrap_or_default();
         self.footer.git_branch = git_branch;
-        self.chat.messages.push(chat::ChatMessage::Summary {
+        self.chat.push_message(chat::ChatMessage::Summary {
             completed: vec!["配置已重新加载。".into()],
             next_steps: vec![],
         });
@@ -1342,7 +1434,7 @@ impl TuiEngine {
             Ok(o) if o.status.success() => {
                 let stat = String::from_utf8_lossy(&o.stdout);
                 if stat.trim().is_empty() {
-                    self.chat.messages.push(chat::ChatMessage::Summary {
+                    self.chat.push_message(chat::ChatMessage::Summary {
                         completed: vec!["工作区干净，没有未提交的变更。".into()],
                         next_steps: vec![],
                     });
@@ -1363,14 +1455,14 @@ impl TuiEngine {
                     if full.lines().count() > 30 {
                         lines.push(format!("  ... ({} more lines)", full.lines().count() - 30));
                     }
-                    self.chat.messages.push(chat::ChatMessage::Summary {
+                    self.chat.push_message(chat::ChatMessage::Summary {
                         completed: lines,
                         next_steps: vec![],
                     });
                 }
             }
             _ => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: "无法获取 git diff。请确认当前目录是 git 仓库。".into(),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1410,17 +1502,34 @@ impl TuiEngine {
             }
             AgentEvent::TurnEnd { usage, .. } => {
                 self.agent_busy = false;
+                self.activity = AgentActivity::Idle;
                 self.footer.end_turn();
                 self.footer.update_usage(usage);
             }
             AgentEvent::SessionEnd { data } => {
                 self.agent_busy = false;
+                self.activity = AgentActivity::Idle;
                 self.footer.end_turn();
                 self.footer.update_usage(&data.total_tokens);
             }
             AgentEvent::AgentInterrupted { .. } => {
                 self.agent_busy = false;
+                self.activity = AgentActivity::Idle;
                 self.footer.end_turn();
+            }
+            AgentEvent::ContentDelta { delta_type, .. } => match delta_type {
+                uncode_core::event::DeltaType::Thinking => {
+                    self.activity = AgentActivity::Thinking;
+                }
+                uncode_core::event::DeltaType::Text => {
+                    self.activity = AgentActivity::Writing;
+                }
+                _ => {}
+            },
+            AgentEvent::ToolCallStart { tool_name, .. } => {
+                self.activity = AgentActivity::RunningTool {
+                    name: tool_name.clone(),
+                };
             }
             _ => {}
         }
@@ -1441,7 +1550,7 @@ impl TuiEngine {
                 .map(|t| format!("  {} — {}", t.name, t.description))
                 .collect();
             let header = "可用模板:".to_string();
-            self.chat.messages.push(chat::ChatMessage::Summary {
+            self.chat.push_message(chat::ChatMessage::Summary {
                 completed: std::iter::once(header).chain(list).collect(),
                 next_steps: vec![],
             });
@@ -1468,7 +1577,7 @@ impl TuiEngine {
                 // For TUI, we need to trigger on_submit but we're not in handle_submit's scope
                 // Instead, we emit the prompt as a user message and show it
                 self.agent_busy = false;
-                self.chat.messages.push(chat::ChatMessage::Summary {
+                self.chat.push_message(chat::ChatMessage::Summary {
                     completed: vec![format!(
                         "模板 '{name}' 已渲染。复制以下内容作为输入：\n{prompt}"
                     )],
@@ -1476,7 +1585,7 @@ impl TuiEngine {
                 });
             }
             None => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("模板 '{name}' 不存在。使用 /template 查看可用模板。"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1486,7 +1595,7 @@ impl TuiEngine {
 
     fn handle_tree_command(&mut self) {
         if self.session_id.is_empty() {
-            self.chat.messages.push(chat::ChatMessage::Summary {
+            self.chat.push_message(chat::ChatMessage::Summary {
                 completed: vec!["No active session.".into()],
                 next_steps: vec![],
             });
@@ -1496,7 +1605,7 @@ impl TuiEngine {
         let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
             Ok(d) => d,
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("无法获取会话目录: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1508,7 +1617,7 @@ impl TuiEngine {
         let store = match rt.block_on(store) {
             Ok(s) => s,
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("创建会话存储失败: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1525,13 +1634,13 @@ impl TuiEngine {
                 );
                 let mut completed = vec![header];
                 completed.extend(lines);
-                self.chat.messages.push(chat::ChatMessage::Summary {
+                self.chat.push_message(chat::ChatMessage::Summary {
                     completed,
                     next_steps: vec![],
                 });
             }
             Err(e) => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("构建会话树失败: {e}"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1544,7 +1653,7 @@ impl TuiEngine {
         let registry = SkillRegistry::load();
         let list = registry.list();
         if list.is_empty() {
-            self.chat.messages.push(chat::ChatMessage::Summary {
+            self.chat.push_message(chat::ChatMessage::Summary {
                 completed: vec!["没有可用 Skills。".into()],
                 next_steps: vec![],
             });
@@ -1554,7 +1663,7 @@ impl TuiEngine {
         let mut completed = vec!["可用 Skills:".to_string()];
         completed.extend(lines);
         completed.push("调用方式: /<skill_name> <args>".to_string());
-        self.chat.messages.push(chat::ChatMessage::Summary {
+        self.chat.push_message(chat::ChatMessage::Summary {
             completed,
             next_steps: vec![],
         });
@@ -1562,14 +1671,14 @@ impl TuiEngine {
 
     fn handle_skill_invoke<F>(&mut self, skill_name: &str, args_str: &str, on_submit: &F)
     where
-        F: Fn(String, CancellationToken, String),
+        F: Fn(String, CancellationToken, String, String),
     {
         use uncode_core::skill::SkillRegistry;
         let registry = SkillRegistry::load();
         let _skill = match registry.get(skill_name) {
             Some(s) => s,
             None => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("Skill '{skill_name}' 不存在。使用 /skills 查看可用列表。"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1589,7 +1698,7 @@ impl TuiEngine {
         let prompt = match registry.render(skill_name, &vars) {
             Some(p) => p,
             None => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("Skill '{skill_name}' 渲染失败。"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1601,7 +1710,7 @@ impl TuiEngine {
         self.chat
             .push_user_message(format!("[skill: {skill_name}] {args_str}"));
         let token = self.new_cancel_token();
-        on_submit(prompt, token, self.model.clone());
+        on_submit(prompt, token, self.model.clone(), self.session_id.clone());
     }
 
     fn handle_theme_command(&mut self, text: &str) {
@@ -1625,7 +1734,7 @@ impl TuiEngine {
             let mut completed = vec!["可用主题:".to_string()];
             completed.extend(lines);
             completed.push("使用 /theme <name> 切换".to_string());
-            self.chat.messages.push(chat::ChatMessage::Summary {
+            self.chat.push_message(chat::ChatMessage::Summary {
                 completed,
                 next_steps: vec![],
             });
@@ -1636,13 +1745,13 @@ impl TuiEngine {
             Some(theme) => {
                 let old = self.theme.name.clone();
                 self.theme = theme;
-                self.chat.messages.push(chat::ChatMessage::Summary {
+                self.chat.push_message(chat::ChatMessage::Summary {
                     completed: vec![format!("主题切换: {old} → {}", self.theme.name)],
                     next_steps: vec![],
                 });
             }
             None => {
-                self.chat.messages.push(chat::ChatMessage::Error {
+                self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("主题 '{name}' 不存在。使用 /theme 查看可用列表。"),
                     category: uncode_core::event::ErrorCategory::Config,
                 });
@@ -1652,14 +1761,23 @@ impl TuiEngine {
 
     fn flush_queue<F>(&mut self, on_submit: &F)
     where
-        F: Fn(String, CancellationToken, String),
+        F: Fn(String, CancellationToken, String, String),
     {
         if let Some(text) = self.queue.drain_follow_up().into_iter().next() {
             self.agent_busy = true;
             self.chat.push_user_message(text.clone());
             let token = self.new_cancel_token();
-            on_submit(text, token, self.model.clone());
+            on_submit(text, token, self.model.clone(), self.session_id.clone());
         }
+    }
+
+    fn scroll_to_focused_card(&mut self) {
+        let Some(idx) = self.chat.focused_card else {
+            return;
+        };
+        let start = self.chat.message_start_line(idx);
+        self.chat.scroll_offset = start;
+        self.chat.auto_scroll = false;
     }
 }
 
@@ -2112,10 +2230,12 @@ mod tests {
         engine.model_index = 1;
 
         let captured: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
-        let on_submit =
-            |_text: String, _token: tokio_util::sync::CancellationToken, model: String| {
-                *captured.borrow_mut() = model;
-            };
+        let on_submit = |_text: String,
+                         _token: tokio_util::sync::CancellationToken,
+                         model: String,
+                         _sid: String| {
+            *captured.borrow_mut() = model;
+        };
 
         engine.submit_text("hello".into(), &on_submit);
 
@@ -2129,10 +2249,12 @@ mod tests {
         engine.set_default_model("deepseek-v3".into());
 
         let captured: std::cell::RefCell<String> = std::cell::RefCell::new(String::new());
-        let on_submit =
-            |_text: String, _token: tokio_util::sync::CancellationToken, model: String| {
-                *captured.borrow_mut() = model;
-            };
+        let on_submit = |_text: String,
+                         _token: tokio_util::sync::CancellationToken,
+                         model: String,
+                         _sid: String| {
+            *captured.borrow_mut() = model;
+        };
 
         engine.submit_text("hello".into(), &on_submit);
 
@@ -2144,16 +2266,140 @@ mod tests {
         let engine = TuiEngine::new();
         let area = ratatui::layout::Rect::new(0, 0, 80, 24);
         // 空消息 — 不 panic，无提示文字
-        let lines = engine
-            .chat
-            .render_lines(area, &engine.renderers, &engine.theme, 0, false);
+        let lines =
+            engine
+                .chat
+                .render_lines(area, &engine.renderers, &engine.theme, 0, false, true);
         assert_eq!(lines.len(), 0);
 
         // 使用 light theme — 不 panic
         let light = Theme::light();
         let lines_light = engine
             .chat
-            .render_lines(area, &engine.renderers, &light, 0, false);
+            .render_lines(area, &engine.renderers, &light, 0, false, true);
         assert_eq!(lines_light.len(), 0);
+    }
+
+    // ── ESC 键测试 ──
+
+    #[test]
+    fn test_esc_denies_permission() {
+        let mut engine = TuiEngine::new();
+        engine.agent_busy = true;
+        engine.permission.request_confirmation(
+            "t1".into(),
+            "write".into(),
+            "test.rs".into(),
+            false,
+        );
+        assert!(engine.permission.has_pending());
+
+        // Simulate ESC in handle_input
+        engine.handle_esc();
+
+        assert!(
+            !engine.permission.has_pending(),
+            "ESC should deny permission"
+        );
+        // Agent should NOT be interrupted when permission was pending
+        assert!(
+            engine.agent_busy,
+            "agent should remain busy after denying permission"
+        );
+    }
+
+    #[test]
+    fn test_esc_interrupts_agent() {
+        let mut engine = TuiEngine::new();
+        let token = engine.new_cancel_token();
+        engine.agent_busy = true;
+
+        engine.handle_esc();
+
+        assert!(token.is_cancelled(), "ESC should cancel token");
+        assert!(!engine.agent_busy, "agent should be idle after ESC");
+        // Should push interruption summary
+        let has_interrupted = engine.chat.messages.iter().any(|m| {
+            if let chat::ChatMessage::Summary { completed, .. } = m {
+                completed.iter().any(|s| s.contains("Interrupted"))
+            } else {
+                false
+            }
+        });
+        assert!(has_interrupted, "should show interruption message");
+    }
+
+    #[test]
+    fn test_esc_clears_focus() {
+        let mut engine = TuiEngine::new();
+        engine.chat.messages.push(chat::ChatMessage::ToolCall {
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            arguments_summary: String::new(),
+            status: chat::ToolCallRenderStatus::Success,
+            duration_ms: None,
+            result: None,
+            expanded: false,
+        });
+        engine.chat.focused_card = Some(0);
+
+        engine.handle_esc();
+
+        assert!(engine.chat.focused_card.is_none(), "ESC should clear focus");
+    }
+
+    #[test]
+    fn test_esc_hides_welcome() {
+        let mut engine = TuiEngine::new();
+        engine.welcome.visible = true;
+        assert!(engine.welcome.is_visible());
+
+        engine.handle_esc();
+
+        assert!(!engine.welcome.is_visible(), "ESC should hide welcome");
+    }
+
+    #[test]
+    fn test_esc_hides_selector() {
+        let mut engine = TuiEngine::new();
+        engine.selector.show("title", vec!["a".into(), "b".into()]);
+        assert!(engine.selector.is_visible());
+
+        engine.handle_esc();
+
+        assert!(!engine.selector.is_visible(), "ESC should hide selector");
+    }
+
+    #[test]
+    fn test_esc_priority_permission_over_interrupt() {
+        let mut engine = TuiEngine::new();
+        let token = engine.new_cancel_token();
+        engine.agent_busy = true;
+        engine.permission.request_confirmation(
+            "t1".into(),
+            "write".into(),
+            "test.rs".into(),
+            false,
+        );
+
+        engine.handle_esc();
+
+        // Permission denied, agent NOT interrupted
+        assert!(!engine.permission.has_pending());
+        assert!(
+            !token.is_cancelled(),
+            "token should NOT be cancelled when permission had priority"
+        );
+        assert!(engine.agent_busy, "agent should still be busy");
+    }
+
+    #[test]
+    fn test_esc_idle_noop() {
+        let mut engine = TuiEngine::new();
+        // Nothing pending, not busy, no focus, no overlays
+        engine.handle_esc();
+        // Should not panic or change state
+        assert!(!engine.agent_busy);
+        assert!(engine.chat.focused_card.is_none());
     }
 }

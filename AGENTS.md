@@ -4,7 +4,7 @@
 
 uncode 是一个使用 Rust 开发的终端 AI Agent Coding 系统。参考 [earendil-works/pi](https://github.com/earendil-works/pi) 的设计理念和框架，使用 Rust 重构，不涉及 Pi 的 web-ui 部分。
 
-**架构对齐策略**：核心模块的设计对齐 Pi 的架构哲学。LLM 驱动层采用 **API-first 架构**（参考 `@docs/technologies/LLM_DRIVER_UPGRADE_FEASIBILITY.md`），以 API 协议为核心组织供应商，而非为每个供应商编写独立驱动实现。
+**架构对齐策略**：核心模块的设计对齐 Pi 的架构哲学；与 Pi 的分层映射、哲学条款（如不做 MCP 主路径等）及工程取舍的**权威对照**见 [`docs/technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`](technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md)。LLM 驱动层采用 **API-first 架构**（参考 `@docs/technologies/LLM_DRIVER_UPGRADE_FEASIBILITY.md`），以 API 协议为核心组织供应商，而非为每个供应商编写独立驱动实现。
 
 ## 项目结构
 
@@ -17,21 +17,25 @@ uncode/
 │   ├── ARCHITECTURE.md     #   架构详细设计
 │   ├── TUI_DESIGN.md       #   TUI 交互设计详案
 │   ├── PLATFORM_DESIGN.md  #   Platform 设计详案
-│   ├── SESSION_SCHEMA.md   #   会话数据 JSONL Schema
+│   ├── SESSION_SCHEMA.md   #   会话条目逻辑模型（导出 JSONL 见 docs/uncode-technologies）
 │   ├── FDE_INSIGHT.md      #   FDE 角色深度解读
-│   └── technologies/       #   技术分析与方案文档
-│       ├── AGENT_CODING_FUNDAMENTALS.md  #   Agent Coding 基本功能分析
-│       ├── LLM_DRIVER_DESIGN.md          #   LLM 驱动层技术方案
-│       ├── LLM_DRIVER_COMPARISON_PI.md   #   LLM 驱动层与 Pi 技术比对
-│       └── LLM_DRIVER_UPGRADE_FEASIBILITY.md  #  LLM 驱动层对齐 Pi 可行性分析
+│   ├── technologies/       #   技术分析与方案文档
+│   │   ├── UNCODE_PI_ALIGNMENT_AND_EVALUATION.md  # uncode 对 Pi 的复刻：深度对比与评价
+│   │   ├── AGENT_CODING_FUNDAMENTALS.md
+│   │   ├── LLM_DRIVER_DESIGN.md
+│   │   ├── LLM_DRIVER_COMPARISON_PI.md
+│   │   └── LLM_DRIVER_UPGRADE_FEASIBILITY.md
+│   └── uncode-technologies/  #   实现层技术文档（与源码同步）
+│       ├── UNCODE_OVERVIEW.md
+│       ├── UNCODE_SESSION_MODEL.md
+│       └── …
 ├── crates/                 # Rust workspace 成员
-│   ├── uncode-core/        #   共享类型、trait、错误、事件
+│   ├── uncode-shared/      #   错误类型 + 配置（叶子 crate）
 │   ├── uncode-macros/      #   过程宏（#[tool] 等）
-│   ├── uncode-llm/         #   LLM 驱动层（API-first 架构：Api trait + 4 个协议实现）
-│   ├── uncode-session/     #   会话持久化（JSONL）
-│   ├── uncode-tools/       #   内置工具集
+│   ├── uncode-ai/          #   LLM 驱动层（Api trait + 4 个协议实现）
+│   ├── uncode-core/        #   共享类型、ToolExecutor、AgentEvent、SessionEntry 等
 │   ├── uncode-extensions/  #   扩展系统（WASM 运行时 + 生命周期钩子）
-│   ├── uncode-agent/       #   代理循环引擎
+│   ├── uncode-agent/       #   循环 + SurrealDB 会话 + 工具 + 压缩 + skills
 │   ├── uncode-tui/         #   终端 UI
 │   ├── uncode-rpc/         #   JSON-RPC 外部接口（规划中）
 │   ├── uncode-platform/    #   Platform 服务端
@@ -77,10 +81,16 @@ cargo clippy             # lint 检查
 
 当需要了解项目定位、目标用户、TUI 设计理念、Platform 功能、Issues 同步策略等详细设计时，请读取 @docs/VISION.md。
 
-技术方案文档位于 @docs/technologies/：
+技术方案文档位于 @docs/technologies/；uncode **实现层**细节见 @docs/uncode-technologies/（与源码同步，含会话 SurrealDB 与 Pi 对齐说明）。
+
 - 基本功能模块分析 → `AGENT_CODING_FUNDAMENTALS.md`
 - LLM 驱动层技术方案 → `LLM_DRIVER_DESIGN.md`
 - 与 Pi 的技术比对 → `LLM_DRIVER_COMPARISON_PI.md`
 - 对齐 Pi 的升级方案 → `LLM_DRIVER_UPGRADE_FEASIBILITY.md`
+- Harness Engineering 行业综述 → `HARNESS_ENGINEERING.md`
+- Harness Engineering 术语索引（中英） → `HARNESS_ENGINEERING_GLOSSARY.md`
+- Coding Agent 工具开发指南 → `CODING_AGENT_TOOL_DEVELOPMENT.md`
+- OpenCode 与 Pi 架构/功能/哲学对比（独立技术分析） → `OPENCODE_VS_PI.md`
+- uncode 对 Pi 的 Rust 复刻：哲学/机制/存储/扩展深度评价 → `UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`
 
 后续设计文档编写时，请读取 @docs/VISION.md 确保一致性，参考 opencode 的 AGENTS.md 规范格式。

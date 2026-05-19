@@ -12,7 +12,7 @@ use crate::steering::MessageQueue;
 use crate::tools::registry::ToolRegistry;
 use uncode_ai::StreamEvent;
 use uncode_ai::{ApiRegistry, ModelRegistry};
-use uncode_core::api_types::{Context, StreamOptions, ThinkingLevel};
+use uncode_core::api_types::{Context, StreamOptions, ThinkingLevel, TransformContextCallback};
 use uncode_core::error::HarnessError;
 use uncode_core::error::UncodeError;
 use uncode_core::event::AgentEvent;
@@ -52,7 +52,7 @@ pub struct AgentLoop {
     message_queue: tokio::sync::Mutex<MessageQueue>,
     should_stop_after_turn: Option<Arc<dyn Fn(u64) -> bool + Send + Sync>>,
     prepare_next_turn: Option<Arc<dyn Fn() + Send + Sync>>,
-    transform_context: Option<Arc<dyn Fn(&mut Vec<Message>) + Send + Sync>>,
+    transform_context: Option<TransformContextCallback>,
     active_run: Arc<AtomicBool>,
     graph_cache: Option<Arc<crate::workspace_graph::WorkspaceGraphCache>>,
 }
@@ -161,7 +161,7 @@ impl AgentLoop {
         self.prepare_next_turn = Some(cb);
     }
 
-    pub fn set_transform_context(&mut self, cb: Arc<dyn Fn(&mut Vec<Message>) + Send + Sync>) {
+    pub fn set_transform_context(&mut self, cb: TransformContextCallback) {
         self.transform_context = Some(cb);
     }
 
@@ -607,6 +607,7 @@ impl AgentLoop {
                 let mut args_pushed: HashSet<String> = HashSet::new();
                 let mut turn_input_tokens: u64 = 0;
                 let mut turn_output_tokens: u64 = 0;
+                let mut tool_start_times: HashMap<String, std::time::Instant> = HashMap::new();
 
                 // ── Stream processing loop ──
                 loop {
@@ -692,6 +693,7 @@ impl AgentLoop {
                                 tool_name: name.clone(),
                                 arguments_summary: String::new(),
                             });
+                            tool_start_times.insert(id.clone(), std::time::Instant::now());
                             pending_tool_calls.push((id, name, String::new()));
                         }
                         StreamEvent::ToolCallDelta { id, arguments } => {
@@ -771,8 +773,18 @@ impl AgentLoop {
                             }
 
                             for (id, name, arguments) in &pending_tool_calls {
-                                let args: serde_json::Value =
-                                    serde_json::from_str(arguments).unwrap_or_default();
+                                let args: serde_json::Value = match serde_json::from_str(arguments)
+                                {
+                                    Ok(a) => a,
+                                    Err(e) => {
+                                        error!(
+                                            tool = %name,
+                                            error = %e,
+                                            "tool args JSON parse failed, using Null"
+                                        );
+                                        serde_json::Value::Null
+                                    }
+                                };
                                 assistant_content.push(ContentBlock::ToolCall(Box::new(
                                     uncode_core::message::ToolCall {
                                         id: id.clone(),
@@ -969,14 +981,18 @@ impl AgentLoop {
                                 let mut should_terminate = !all_outcomes.is_empty();
                                 for (id, name, tool_result) in &all_outcomes {
                                     // Invalidate workspace graph cache after file edits
-                                    if (name == "write" || name == "edit") && !tool_result.is_error
+                                    if (name == "write" || name == "edit")
+                                        && !tool_result.is_error
+                                        && let Some(ref cache) = self.graph_cache
                                     {
-                                        if let Some(ref cache) = self.graph_cache {
-                                            cache.invalidate();
-                                        }
+                                        cache.invalidate();
                                     }
                                     let content_text = tool_result.text_content();
                                     let is_error = tool_result.is_error;
+                                    let duration_ms = tool_start_times
+                                        .remove(id)
+                                        .map(|t| t.elapsed().as_millis() as u64)
+                                        .unwrap_or(0);
 
                                     self.emit(AgentEvent::ToolCallEnd {
                                         data: Box::new(ToolCallEndEventData {
@@ -988,7 +1004,7 @@ impl AgentLoop {
                                             } else {
                                                 ToolCallStatus::Success
                                             },
-                                            duration_ms: 0,
+                                            duration_ms,
                                             output_size: Some(content_text.len()),
                                             result_summary: Some(content_text.clone()),
                                             is_error,
@@ -1062,10 +1078,10 @@ impl AgentLoop {
                 }
 
                 // should_stop_after_turn callback
-                if let Some(ref cb) = self.should_stop_after_turn {
-                    if cb(turn) {
-                        break 'outer;
-                    }
+                if let Some(ref cb) = self.should_stop_after_turn
+                    && cb(turn)
+                {
+                    break 'outer;
                 }
 
                 // Drain steering messages → pending_messages (feeds inner loop condition)
@@ -1139,10 +1155,10 @@ fn has_identifiable_field(partial: &str) -> bool {
                 let after_colon = rest.get(colon + 1..).unwrap_or("").trim_start();
                 if after_colon.starts_with('"') {
                     let inner = after_colon.get(1..).unwrap_or("");
-                    if let Some(end) = inner.find('"') {
-                        if end > 0 {
-                            return true;
-                        }
+                    if let Some(end) = inner.find('"')
+                        && end > 0
+                    {
+                        return true;
                     }
                 }
             }

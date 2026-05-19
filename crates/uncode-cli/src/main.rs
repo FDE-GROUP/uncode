@@ -168,10 +168,10 @@ async fn main() -> anyhow::Result<()> {
     let api_keys = build_api_keys(&config);
 
     // Web Search — 仅在 Tavily API Key 配置时注册
-    if let Some(key) = api_keys.get("tavily") {
-        if let Some(tool) = uncode_agent::tools::WebSearchTool::try_new(key) {
-            tool_registry.register("web_search".to_string(), Arc::new(tool));
-        }
+    if let Some(key) = api_keys.get("tavily")
+        && let Some(tool) = uncode_agent::tools::WebSearchTool::try_new(key)
+    {
+        tool_registry.register("web_search".to_string(), Arc::new(tool));
     }
 
     let session_dir = SessionStore::default_dir().context("session dir")?;
@@ -393,36 +393,46 @@ async fn main() -> anyhow::Result<()> {
             .collect();
         tui.set_available_models(model_ids);
         tui.set_default_model(model.clone());
-        tui.run(event_rx, move |text, cancel_token, current_model| {
-            let ar = ar_tui.clone();
-            let mr = mr_tui.clone();
-            let ak = ak_tui.clone();
-            let t = tools_tui.clone();
-            let s = store_tui.clone();
-            let tx = event_tx.clone();
-            let sp = tui_system_prompt.clone();
-            let sid = session_opt.clone();
-            tokio::spawn(async move {
-                let expanded = expand_url_refs(&text).await;
-                let mut a =
-                    AgentLoop::with_event_sender(ar, mr, ak, t, s, sp, current_model, tx.clone());
-                if let Some(ref sid) = sid {
-                    a.set_session_id(sid.clone());
-                }
-                a.set_cancel_token(cancel_token);
-                if let Err(e) = a.run(Message::user(expanded)).await {
-                    let _ = tx.send(AgentEvent::Error {
-                        category: ErrorCategory::Llm,
-                        message: format!("{e}"),
-                        recoverable: false,
-                    });
-                    let _ = tx.send(AgentEvent::TurnEnd {
-                        turn: 0,
-                        usage: UsageInfo::default(),
-                    });
-                }
-            });
-        })
+        tui.run(
+            event_rx,
+            move |text, cancel_token, current_model, session_id| {
+                let ar = ar_tui.clone();
+                let mr = mr_tui.clone();
+                let ak = ak_tui.clone();
+                let t = tools_tui.clone();
+                let s = store_tui.clone();
+                let tx = event_tx.clone();
+                let sp = tui_system_prompt.clone();
+                tokio::spawn(async move {
+                    let expanded = expand_url_refs(&text).await;
+                    let mut a = AgentLoop::with_event_sender(
+                        ar,
+                        mr,
+                        ak,
+                        t,
+                        s,
+                        sp,
+                        current_model,
+                        tx.clone(),
+                    );
+                    if !session_id.is_empty() {
+                        a.set_session_id(session_id);
+                    }
+                    a.set_cancel_token(cancel_token);
+                    if let Err(e) = a.run(Message::user(expanded)).await {
+                        let _ = tx.send(AgentEvent::Error {
+                            category: ErrorCategory::Llm,
+                            message: format!("{e}"),
+                            recoverable: false,
+                        });
+                        let _ = tx.send(AgentEvent::TurnEnd {
+                            turn: 0,
+                            usage: UsageInfo::default(),
+                        });
+                    }
+                });
+            },
+        )
         .await;
     })
     .await?;
@@ -682,35 +692,35 @@ fn build_registries(config: &AppConfig) -> (ApiRegistry, ModelRegistry) {
     }
 
     // Override provider base URLs from config
-    if let Some(ref pc) = config.providers.deepseek {
-        if let Some(ref url) = pc.base_url {
-            model_registry.override_base_url("deepseek", url);
-        }
+    if let Some(ref pc) = config.providers.deepseek
+        && let Some(ref url) = pc.base_url
+    {
+        model_registry.override_base_url("deepseek", url);
     }
-    if let Some(ref pc) = config.providers.glm {
-        if let Some(ref url) = pc.base_url {
-            model_registry.override_base_url("glm", url);
-        }
+    if let Some(ref pc) = config.providers.glm
+        && let Some(ref url) = pc.base_url
+    {
+        model_registry.override_base_url("glm", url);
     }
-    if let Some(ref pc) = config.providers.openai {
-        if let Some(ref url) = pc.base_url {
-            model_registry.override_base_url("openai", url);
-        }
+    if let Some(ref pc) = config.providers.openai
+        && let Some(ref url) = pc.base_url
+    {
+        model_registry.override_base_url("openai", url);
     }
-    if let Some(ref pc) = config.providers.anthropic {
-        if let Some(ref url) = pc.base_url {
-            model_registry.override_base_url("anthropic", url);
-        }
+    if let Some(ref pc) = config.providers.anthropic
+        && let Some(ref url) = pc.base_url
+    {
+        model_registry.override_base_url("anthropic", url);
     }
-    if let Some(ref pc) = config.providers.gemini {
-        if let Some(ref url) = pc.base_url {
-            model_registry.override_base_url("gemini", url);
-        }
+    if let Some(ref pc) = config.providers.gemini
+        && let Some(ref url) = pc.base_url
+    {
+        model_registry.override_base_url("gemini", url);
     }
-    if let Some(ref pc) = config.providers.openrouter {
-        if let Some(ref url) = pc.base_url {
-            model_registry.override_base_url("openrouter", url);
-        }
+    if let Some(ref pc) = config.providers.openrouter
+        && let Some(ref url) = pc.base_url
+    {
+        model_registry.override_base_url("openrouter", url);
     }
 
     // Merge user_models (advanced config with api/compat overrides)

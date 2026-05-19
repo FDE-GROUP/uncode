@@ -19,6 +19,8 @@ pub enum ChatMessage {
         text: String,
         expanded: bool,
         active: bool,
+        started_at: Option<std::time::Instant>,
+        duration_ms: Option<u64>,
     },
     ToolCall {
         tool_id: String,
@@ -32,11 +34,14 @@ pub enum ChatMessage {
     BashExecution {
         tool_id: String,
         command: String,
+        description: String,
+        wd: String,
         exit_code: Option<i32>,
         stdout: String,
         stderr: String,
         duration_ms: Option<u64>,
         with_agent: bool,
+        expanded: bool,
     },
     Error {
         message: String,
@@ -158,6 +163,8 @@ pub struct ChatState {
     pub tool_output_visible: bool,
     pub thinking_visible: bool,
     pub thinking_level: ThinkingLevel,
+    pub focused_card: Option<usize>,
+    pub workdir: String,
 
     // --- Virtual scrolling cache ---
     line_counts: Vec<LineCountEntry>,
@@ -173,8 +180,10 @@ impl ChatState {
             scroll_offset: 0,
             auto_scroll: true,
             tool_output_visible: true,
-            thinking_visible: false,
+            thinking_visible: true,
             thinking_level: ThinkingLevel::default(),
+            focused_card: None,
+            workdir: String::new(),
             line_counts: Vec::new(),
             prefix_sum: vec![0],
             prefix_dirty: false,
@@ -184,8 +193,21 @@ impl ChatState {
 
     /// Deactivate the last Thinking block (stop spinner)
     pub fn deactivate_thinking(&mut self) {
-        if let Some(ChatMessage::Thinking { active, .. }) = self.messages.last_mut() {
+        if let Some(ChatMessage::Thinking {
+            active,
+            expanded,
+            text,
+            started_at,
+            duration_ms,
+        }) = self.messages.last_mut()
+        {
             *active = false;
+            if let Some(start) = started_at.take() {
+                *duration_ms = Some(start.elapsed().as_millis() as u64);
+            }
+            if !text.is_empty() {
+                *expanded = true;
+            }
         }
     }
 
@@ -207,8 +229,120 @@ impl ChatState {
         self.prefix_dirty = true;
     }
 
+    // --- Card focus navigation ---
+
+    pub fn tool_card_indices(&self) -> Vec<usize> {
+        self.messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| {
+                matches!(
+                    m,
+                    ChatMessage::ToolCall { .. }
+                        | ChatMessage::BashExecution { .. }
+                        | ChatMessage::Thinking { .. }
+                )
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    pub fn focus_next_card(&mut self) -> bool {
+        let cards = self.tool_card_indices();
+        if cards.is_empty() {
+            return false;
+        }
+        let next = match self.focused_card {
+            Some(cur) => {
+                let pos = cards.iter().position(|&c| c == cur).unwrap_or(0);
+                cards[(pos + 1) % cards.len()]
+            }
+            None => cards[0],
+        };
+        self.focused_card = Some(next);
+        true
+    }
+
+    pub fn focus_prev_card(&mut self) -> bool {
+        let cards = self.tool_card_indices();
+        if cards.is_empty() {
+            return false;
+        }
+        let prev = match self.focused_card {
+            Some(cur) => {
+                let pos = cards.iter().position(|&c| c == cur).unwrap_or(0);
+                cards[(pos + cards.len() - 1) % cards.len()]
+            }
+            None => cards[cards.len() - 1],
+        };
+        self.focused_card = Some(prev);
+        true
+    }
+
+    pub fn toggle_focused_card(&mut self) -> bool {
+        let idx = match self.focused_card {
+            Some(i) => i,
+            None => return false,
+        };
+        match &mut self.messages[idx] {
+            ChatMessage::ToolCall { expanded, .. }
+            | ChatMessage::BashExecution { expanded, .. }
+            | ChatMessage::Thinking { expanded, .. } => {
+                *expanded = !*expanded;
+            }
+            _ => return false,
+        }
+        self.invalidate(idx);
+        true
+    }
+
+    pub fn clear_focus(&mut self) {
+        if let Some(idx) = self.focused_card.take() {
+            self.invalidate(idx);
+        }
+    }
+
+    pub fn set_all_expanded(&mut self, expanded: bool) {
+        let mut changed: Vec<usize> = Vec::new();
+        for (idx, msg) in self.messages.iter_mut().enumerate() {
+            match msg {
+                ChatMessage::ToolCall { expanded: e, .. }
+                | ChatMessage::BashExecution { expanded: e, .. }
+                | ChatMessage::Thinking { expanded: e, .. }
+                    if *e != expanded =>
+                {
+                    *e = expanded;
+                    changed.push(idx);
+                }
+                _ => {}
+            }
+        }
+        for idx in changed {
+            self.invalidate(idx);
+        }
+    }
+
+    pub fn set_thinking_expanded(&mut self, expanded: bool) {
+        let mut changed: Vec<usize> = Vec::new();
+        for (idx, msg) in self.messages.iter_mut().enumerate() {
+            if let ChatMessage::Thinking { expanded: e, .. } = msg
+                && *e != expanded
+            {
+                *e = expanded;
+                changed.push(idx);
+            }
+        }
+        for idx in changed {
+            self.invalidate(idx);
+        }
+    }
+
+    pub fn message_start_line(&self, idx: usize) -> usize {
+        self.prefix_sum.get(idx).copied().unwrap_or(0)
+    }
+
     /// Push a new message, keeping cache vectors in sync
-    fn push_message(&mut self, msg: ChatMessage) {
+    pub fn push_message(&mut self, msg: ChatMessage) {
         self.messages.push(msg);
         self.line_counts.push(LineCountEntry {
             line_count: 0,
@@ -241,6 +375,7 @@ impl ChatState {
     /// Ensure all line counts are up to date for the given width.
     /// Re-renders only stale messages and caches the results.
     /// Uses incremental rendering for streaming messages (tail-only re-render).
+    #[allow(clippy::too_many_arguments)]
     pub fn ensure_line_counts(
         &mut self,
         width: u16,
@@ -248,6 +383,8 @@ impl ChatState {
         theme: &Theme,
         tick: usize,
         agent_busy: bool,
+        tool_output_visible: bool,
+        workdir: &str,
     ) {
         let width_changed = width != self.cached_width;
         if width_changed {
@@ -263,44 +400,63 @@ impl ChatState {
             let needs_recompute = self
                 .line_counts
                 .get(idx)
-                .map_or(true, |e| e.width != width || e.cached_lines.is_none());
+                .is_none_or(|e| e.width != width || e.cached_lines.is_none());
 
             if !needs_recompute {
                 continue;
             }
 
             let is_last = idx == self.messages.len() - 1;
+            let focused = self.focused_card == Some(idx);
 
             // Incremental path: streaming append, width unchanged, text grew
             let can_incremental = is_last
-                && self.line_counts.get(idx).map_or(false, |e| {
+                && self.line_counts.get(idx).is_some_and(|e| {
                     e.cached_lines.is_some()
                         && e.cached_text_len > 0
                         && message_text_len(&self.messages[idx]) > e.cached_text_len
                 });
 
             let mut msg_lines = if can_incremental {
-                self.render_incremental(idx, width, renderers, theme, tick)
+                self.render_incremental(
+                    idx,
+                    width,
+                    renderers,
+                    theme,
+                    tick,
+                    focused,
+                    tool_output_visible,
+                )
             } else {
-                render_message(&self.messages[idx], width, renderers, theme, tick)
+                render_message(
+                    &self.messages[idx],
+                    width,
+                    renderers,
+                    theme,
+                    tick,
+                    focused,
+                    tool_output_visible,
+                    workdir,
+                )
             };
 
             // Streaming cursor for active assistant
-            if is_last && agent_busy {
-                if let ChatMessage::Assistant { text } = &self.messages[idx] {
-                    if !text.is_empty() && !msg_lines.is_empty() {
-                        let show_cursor = tick % 4 < 2;
-                        if let Some(last) = msg_lines.pop() {
-                            let mut spans = last.spans;
-                            if show_cursor {
-                                spans.push(Span::styled(
-                                    "█",
-                                    Style::default().fg(theme.tool_status.running),
-                                ));
-                            }
-                            msg_lines.push(Line::from(spans));
-                        }
+            if is_last
+                && agent_busy
+                && let ChatMessage::Assistant { text } = &self.messages[idx]
+                && !text.is_empty()
+                && !msg_lines.is_empty()
+            {
+                let show_cursor = tick % 4 < 2;
+                if let Some(last) = msg_lines.pop() {
+                    let mut spans = last.spans;
+                    if show_cursor {
+                        spans.push(Span::styled(
+                            "█",
+                            Style::default().fg(theme.tool_status.running),
+                        ));
                     }
+                    msg_lines.push(Line::from(spans));
                 }
             }
 
@@ -319,6 +475,7 @@ impl ChatState {
     }
 
     /// Incremental render: keep cached prefix lines, only re-render the tail.
+    #[allow(clippy::too_many_arguments)]
     fn render_incremental(
         &mut self,
         idx: usize,
@@ -326,6 +483,8 @@ impl ChatState {
         renderers: &ToolRendererRegistry,
         theme: &Theme,
         tick: usize,
+        focused: bool,
+        tool_output_visible: bool,
     ) -> Vec<Line<'static>> {
         // Take ownership of old cached lines instead of cloning
         let old_lines = self.line_counts[idx]
@@ -335,7 +494,16 @@ impl ChatState {
         let old_count = old_lines.len();
 
         // Full render of new content
-        let new_lines = render_message(&self.messages[idx], width, renderers, theme, tick);
+        let new_lines = render_message(
+            &self.messages[idx],
+            width,
+            renderers,
+            theme,
+            tick,
+            focused,
+            tool_output_visible,
+            &self.workdir,
+        );
 
         if old_count > 2 && new_lines.len() >= old_count {
             // Keep prefix (all but last line), append new tail
@@ -386,12 +554,7 @@ impl ChatState {
 
         for idx in first..=last {
             // Add separator blank line (matching original render_lines behavior)
-            if idx > 0 && idx > first {
-                lines.push(Line::from(""));
-                if lines.len() >= visible_height {
-                    break;
-                }
-            } else if idx > first {
+            if idx > first {
                 lines.push(Line::from(""));
                 if lines.len() >= visible_height {
                     break;
@@ -451,14 +614,19 @@ impl ChatState {
                 self.finalize_assistant();
                 if tool_name == "bash" {
                     let command = extract_bash_command(&arguments_summary);
+                    let description = extract_json_str(&arguments_summary, "description");
+                    let workdir = extract_json_str(&arguments_summary, "workdir");
                     self.push_message(ChatMessage::BashExecution {
                         tool_id,
                         command,
+                        description,
+                        wd: workdir,
                         exit_code: None,
                         stdout: String::new(),
                         stderr: String::new(),
                         duration_ms: None,
                         with_agent: true,
+                        expanded: false,
                     });
                 } else {
                     self.push_message(ChatMessage::ToolCall {
@@ -499,7 +667,15 @@ impl ChatState {
                                 r.push('\n');
                             }
                         }
-                        ChatMessage::BashExecution { stdout, .. } => {
+                        ChatMessage::BashExecution {
+                            command, stdout, ..
+                        } => {
+                            if command.is_empty() {
+                                let cmd = extract_bash_command(&detail);
+                                if cmd != detail {
+                                    *command = cmd;
+                                }
+                            }
                             stdout.push_str(&detail);
                             stdout.push('\n');
                         }
@@ -529,6 +705,8 @@ impl ChatState {
                             duration_ms: d,
                             arguments_summary: args,
                             result,
+                            expanded,
+                            tool_name,
                             ..
                         } => {
                             *s = render_status;
@@ -538,15 +716,23 @@ impl ChatState {
                             }
                             if let Some(ref summary) = data.result_summary {
                                 *result = Some(summary.clone());
+                                // read 是 Agent 获取信息的环节，不自动展开
+                                if tool_name != "read" {
+                                    *expanded = true;
+                                }
                             }
                         }
                         ChatMessage::BashExecution {
                             duration_ms: d,
+                            command,
                             stdout,
                             exit_code,
                             ..
                         } => {
                             *d = Some(duration_ms);
+                            if command.is_empty() && !arguments.is_empty() {
+                                *command = extract_bash_command(arguments);
+                            }
                             if let Some(exit_pos) = stdout.rfind("exit code:") {
                                 let after = &stdout[exit_pos + 10..];
                                 if let Ok(code) = after.trim().parse::<i32>() {
@@ -654,6 +840,8 @@ impl ChatState {
                 text: content.to_string(),
                 expanded: self.thinking_visible,
                 active: true,
+                started_at: Some(std::time::Instant::now()),
+                duration_ms: None,
             });
             for idx in to_invalidate {
                 self.invalidate(idx);
@@ -674,36 +862,48 @@ impl ChatState {
         theme: &Theme,
         tick: usize,
         agent_busy: bool,
+        tool_output_visible: bool,
     ) -> Vec<Line<'static>> {
         let mut all_lines: Vec<Line<'static>> = Vec::with_capacity(self.messages.len() * 3);
 
         for (idx, msg) in self.messages.iter().enumerate() {
             let is_last = idx == self.messages.len() - 1;
+            let focused = self.focused_card == Some(idx);
 
             // Add blank line between messages
             if !all_lines.is_empty() {
                 all_lines.push(Line::from(""));
             }
 
-            let mut msg_lines = render_message(msg, area.width, renderers, theme, tick);
+            let mut msg_lines = render_message(
+                msg,
+                area.width,
+                renderers,
+                theme,
+                tick,
+                focused,
+                tool_output_visible,
+                &self.workdir,
+            );
 
             // Streaming cursor: if last message is an active Assistant text, blink cursor
-            if is_last && agent_busy {
-                if let ChatMessage::Assistant { text } = msg {
-                    if !text.is_empty() && !msg_lines.is_empty() {
-                        // Blink every 2 ticks (~100ms at 50ms poll)
-                        let show_cursor = tick % 4 < 2;
-                        if let Some(last) = msg_lines.pop() {
-                            let mut spans = last.spans;
-                            if show_cursor {
-                                spans.push(Span::styled(
-                                    "█",
-                                    Style::default().fg(theme.tool_status.running),
-                                ));
-                            }
-                            msg_lines.push(Line::from(spans));
-                        }
+            if is_last
+                && agent_busy
+                && let ChatMessage::Assistant { text } = msg
+                && !text.is_empty()
+                && !msg_lines.is_empty()
+            {
+                // Blink every 2 ticks (~100ms at 50ms poll)
+                let show_cursor = tick % 4 < 2;
+                if let Some(last) = msg_lines.pop() {
+                    let mut spans = last.spans;
+                    if show_cursor {
+                        spans.push(Span::styled(
+                            "█",
+                            Style::default().fg(theme.tool_status.running),
+                        ));
                     }
+                    msg_lines.push(Line::from(spans));
                 }
             }
 
@@ -740,12 +940,16 @@ fn message_text_len(msg: &ChatMessage) -> usize {
 }
 
 /// 渲染单条消息
+#[allow(clippy::too_many_arguments)]
 fn render_message(
     msg: &ChatMessage,
     width: u16,
     renderers: &ToolRendererRegistry,
     theme: &Theme,
     tick: usize,
+    focused: bool,
+    tool_output_visible: bool,
+    workdir: &str,
 ) -> Vec<Line<'static>> {
     let w = width.saturating_sub(2) as usize; // account for padding
     match msg {
@@ -774,41 +978,76 @@ fn render_message(
         }
         ChatMessage::Thinking {
             text,
-            expanded: _,
+            expanded,
             active,
+            duration_ms,
+            ..
         } => {
-            let icon = if *active {
-                if (tick / 4) % 2 == 0 { "●" } else { "○" }
+            let (icon, label): (&str, String) = if *active {
+                let dot = if (tick / 4).is_multiple_of(2) {
+                    "●"
+                } else {
+                    "○"
+                };
+                (dot, "Thinking...".to_string())
             } else {
-                "●"
+                let dur = match duration_ms {
+                    Some(d) => format_duration(*d),
+                    None => String::new(),
+                };
+                if dur.is_empty() {
+                    ("●", "Thought".to_string())
+                } else {
+                    ("●", format!("Thought for {dur}"))
+                }
             };
-            let icon_color = theme.tool_status.success;
+            let icon_color = if *active {
+                theme.tool_status.running
+            } else {
+                theme.tool_status.success
+            };
+            let label_color = icon_color;
+
+            let (prefix, prefix_color) = if focused {
+                if *expanded {
+                    ("▾ ", theme.tool_status.running)
+                } else {
+                    ("▸ ", theme.tool_status.running)
+                }
+            } else {
+                ("  ", icon_color)
+            };
+
             if text.is_empty() {
                 vec![Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(prefix_color)),
                     Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
-                    Span::styled("Thinking...", Style::default().fg(theme.ui.footer_text)),
+                    Span::styled(label, Style::default().fg(theme.ui.footer_text)),
                 ])]
             } else {
-                let label = if *active { "Thinking..." } else { "Thinking" };
                 let mut lines = vec![Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(prefix_color)),
                     Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
                     Span::styled(
                         label,
                         Style::default()
-                            .fg(theme.ui.footer_text)
+                            .fg(label_color)
                             .add_modifier(Modifier::BOLD),
                     ),
                 ])];
-                let mut content_lines =
-                    crate::markdown::render_markdown_with_theme(text, theme, Some(w));
-                while content_lines.last().is_some_and(|l| l.spans.is_empty()) {
-                    content_lines.pop();
+
+                if *expanded && !text.is_empty() {
+                    let mut content_lines =
+                        crate::markdown::render_markdown_with_theme(text, theme, Some(w));
+                    while content_lines.last().is_some_and(|l| l.spans.is_empty()) {
+                        content_lines.pop();
+                    }
+                    lines.extend(
+                        content_lines
+                            .into_iter()
+                            .map(|l| l.style(Style::default().fg(theme.ui.footer_text))),
+                    );
                 }
-                lines.extend(
-                    content_lines
-                        .into_iter()
-                        .map(|l| l.style(Style::default().fg(theme.ui.footer_text))),
-                );
                 lines
             }
         }
@@ -826,25 +1065,34 @@ fn render_message(
             status,
             duration_ms,
             result,
-            *expanded,
+            *expanded && tool_output_visible,
             renderers,
             theme,
             width,
             tick,
+            focused,
+            workdir,
         ),
         ChatMessage::BashExecution {
             command,
+            description,
+            wd,
             exit_code,
             stdout,
             duration_ms,
             with_agent,
+            expanded,
             ..
         } => render_bash(
             command,
+            description,
+            wd,
             exit_code,
             stdout,
             duration_ms,
             *with_agent,
+            *expanded && tool_output_visible,
+            focused,
             theme,
             tick,
         ),
@@ -962,10 +1210,16 @@ fn render_tool_call(
     theme: &Theme,
     width: u16,
     tick: usize,
+    focused: bool,
+    workdir: &str,
 ) -> Vec<Line<'static>> {
     let (icon, color) = match status {
         ToolCallRenderStatus::Running => {
-            let dot = if (tick / 4) % 2 == 0 { "●" } else { "○" };
+            let dot = if (tick / 4).is_multiple_of(2) {
+                "●"
+            } else {
+                "○"
+            };
             (dot.to_string(), theme.tool_status.success)
         }
         ToolCallRenderStatus::Success => ("●".to_string(), theme.tool_status.success),
@@ -974,94 +1228,202 @@ fn render_tool_call(
         ToolCallRenderStatus::Pending => ("○".to_string(), theme.tool_status.pending),
     };
 
-    let duration_str = duration_ms
-        .map(|d| {
-            if d < 1000 {
-                format!("{d}ms")
-            } else {
-                format!("{:.1}s", d as f64 / 1000.0)
-            }
-        })
-        .unwrap_or_default();
+    // Focus/expand indicator prefix
+    let (prefix, prefix_color) = if focused {
+        if expanded {
+            ("▾ ", theme.tool_status.running)
+        } else {
+            ("▸ ", theme.tool_status.running)
+        }
+    } else {
+        ("  ", color)
+    };
 
-    // Use custom renderer for the call header
+    // Get inline display from renderer
     let renderer = renderers.get(tool_name);
-    let call_lines = renderer.render_call(args, width, theme);
+    let inline = renderer.render_call(args, workdir);
 
+    let label = capitalize_tool(tool_name);
     let mut lines = Vec::new();
 
-    // Header line with status icon and duration
-    let header = format!("{icon} {tool_name} {duration_str}");
-    lines.push(Line::from(vec![Span::styled(
-        header,
-        Style::default().fg(color),
-    )]));
+    // Header line: ▸ ● ToolName first_line
+    let mut inline_lines = inline.lines();
+    let first_inline = inline_lines.next().unwrap_or("").to_string();
+    let header = Line::from(vec![
+        Span::styled(prefix, Style::default().fg(prefix_color)),
+        Span::styled(format!("{icon} "), Style::default().fg(color)),
+        Span::styled(
+            format!("{label} "),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(first_inline, Style::default().fg(theme.tool_status.running)),
+    ]);
+    lines.push(header);
 
-    // Renderer summary lines
-    for cl in call_lines {
-        lines.push(cl);
+    // Continuation lines (e.g. Bash $ command after # description)
+    for cont in inline_lines {
+        lines.push(Line::from(vec![
+            Span::styled("      ", Style::default().fg(theme.ui.footer_text)),
+            Span::styled(
+                cont.to_string(),
+                Style::default().fg(theme.tool_status.running),
+            ),
+        ]));
     }
 
-    if expanded {
-        if let Some(res) = result {
-            let result_lines = renderer.render_result(res, width, theme);
-            for rl in result_lines {
-                lines.push(rl);
-            }
+    // Result lines with ⎿ prefix when expanded
+    if expanded && let Some(res) = result {
+        let renderer = renderers.get(tool_name);
+        let result_lines = renderer.render_result(args, res, width, theme);
+        let prefix_span = Span::styled("  \u{23bf}  ", Style::default().fg(theme.ui.footer_text));
+        for rl in result_lines {
+            // Prepend ⎿ prefix to each result line
+            let mut spans = vec![prefix_span.clone()];
+            spans.extend(rl.spans);
+            lines.push(Line::from(spans));
         }
+    }
+
+    // Footer: ⎿ (duration) — skip for read since it's trivial
+    if tool_name != "read"
+        && let Some(d) = duration_ms
+    {
+        let dur = if *d < 1000 {
+            format!("{d}ms")
+        } else {
+            format!("{:.1}s", *d as f64 / 1000.0)
+        };
+        lines.push(Line::from(vec![
+            Span::styled("  \u{23bf} ", Style::default().fg(theme.ui.footer_text)),
+            Span::styled(
+                format!("({dur})"),
+                Style::default().fg(theme.ui.footer_text),
+            ),
+        ]));
     }
 
     lines
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_bash(
     command: &str,
+    description: &str,
+    workdir: &str,
     exit_code: &Option<i32>,
     stdout: &str,
     duration_ms: &Option<u64>,
     with_agent: bool,
+    expanded: bool,
+    focused: bool,
     theme: &Theme,
     tick: usize,
 ) -> Vec<Line<'static>> {
-    let prefix = if with_agent { "!shell" } else { "!!shell" };
-    let (icon, color) = match exit_code {
+    let status_icon = match exit_code {
         None => {
-            let dot = if (tick / 4) % 2 == 0 { "●" } else { "○" };
-            (dot.to_string(), theme.tool_status.success)
+            if (tick / 4).is_multiple_of(2) {
+                "●"
+            } else {
+                "○"
+            }
         }
-        Some(0) => ("●".to_string(), theme.tool_status.success),
-        Some(_) => ("✗".to_string(), theme.tool_status.failed),
+        Some(0) => "●",
+        Some(_) => "✗",
+    };
+    let color = match exit_code {
+        None | Some(0) => theme.tool_status.success,
+        Some(_) => theme.tool_status.failed,
+    };
+    let label = if with_agent { "Bash" } else { "Shell" };
+
+    let (fprefix, prefix_color) = if focused {
+        if expanded {
+            ("▾ ", theme.tool_status.running)
+        } else {
+            ("▸ ", theme.tool_status.running)
+        }
+    } else {
+        ("  ", color)
     };
 
-    let duration_str = duration_ms
-        .map(|d| {
-            if d < 1000 {
-                format!("{d}ms")
-            } else {
-                format!("{:.1}s", d as f64 / 1000.0)
-            }
-        })
-        .unwrap_or_default();
+    let title = if description.is_empty() {
+        "Shell".to_string()
+    } else {
+        description.to_string()
+    };
+    let dir = if workdir.is_empty() || workdir == "." {
+        String::new()
+    } else {
+        workdir.to_string()
+    };
+    let title = if dir.is_empty() || title.contains(&dir) {
+        title
+    } else {
+        format!("{title} in {dir}")
+    };
 
-    let header = format!("{icon} {prefix} {command} {duration_str}");
+    let mut lines = Vec::new();
 
-    let mut lines = vec![Line::from(vec![Span::styled(
-        header,
-        Style::default().fg(color),
-    )])];
+    // Header: ▸ ● Bash # description
+    lines.push(Line::from(vec![
+        Span::styled(fprefix, Style::default().fg(prefix_color)),
+        Span::styled(format!("{status_icon} "), Style::default().fg(color)),
+        Span::styled(
+            format!("{label} "),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("# {title}"),
+            Style::default().fg(theme.bash.command),
+        ),
+    ]));
 
-    if !stdout.is_empty() {
+    // Command line:   $ command
+    lines.push(Line::from(vec![
+        Span::styled("      ", Style::default().fg(theme.ui.footer_text)),
+        Span::styled(
+            format!("$ {command}"),
+            Style::default().fg(theme.bash.command),
+        ),
+    ]));
+
+    // Output lines: ⎿ prefix
+    if expanded && !stdout.is_empty() {
         let all_lines: Vec<&str> = stdout.lines().collect();
-        let max_show = 100;
+        let max_show = 20;
+        let prefix_span = Span::styled("  \u{23bf}  ", Style::default().fg(theme.ui.footer_text));
+
         for line in all_lines.iter().take(max_show) {
-            lines.push(Line::from(Span::raw(line.to_string())));
+            lines.push(Line::from(vec![
+                prefix_span.clone(),
+                Span::styled(line.to_string(), Style::default().fg(theme.bash.stdout)),
+            ]));
         }
         if all_lines.len() > max_show {
-            lines.push(Line::from(Span::styled(
-                format!("... ({} more lines)", all_lines.len() - max_show),
-                Style::default().fg(theme.ui.footer_text),
-            )));
+            lines.push(Line::from(vec![
+                Span::styled("     \u{2026} ", Style::default().fg(theme.ui.footer_text)),
+                Span::styled(
+                    format!("+{} lines (ctrl+o to expand)", all_lines.len() - max_show),
+                    Style::default().fg(theme.ui.footer_text),
+                ),
+            ]));
         }
+    }
+
+    // Footer: ⎿ (duration)
+    if let Some(d) = duration_ms {
+        let dur = if *d < 1000 {
+            format!("{d}ms")
+        } else {
+            format!("{:.1}s", *d as f64 / 1000.0)
+        };
+        lines.push(Line::from(vec![
+            Span::styled("  \u{23bf} ", Style::default().fg(theme.ui.footer_text)),
+            Span::styled(
+                format!("({dur})"),
+                Style::default().fg(theme.ui.footer_text),
+            ),
+        ]));
     }
 
     lines
@@ -1069,12 +1431,71 @@ fn render_bash(
 
 /// 从 bash 工具参数中提取命令
 fn extract_bash_command(args: &str) -> String {
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(args) {
-        if let Some(cmd) = val.get("command").and_then(|v| v.as_str()) {
-            return cmd.to_string();
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(args)
+        && let Some(cmd) = val.get("command").and_then(|v| v.as_str())
+    {
+        return cmd.to_string();
+    }
+    if let Some(val) = extract_quoted_value(args, &["\"command\""]) {
+        return val;
+    }
+    String::new()
+}
+
+fn extract_json_str(args: &str, key: &str) -> String {
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(args)
+        && let Some(v) = val.get(key).and_then(|v| v.as_str())
+    {
+        return v.to_string();
+    }
+    String::new()
+}
+
+/// Extract the first non-empty quoted value following any of the given keys.
+fn extract_quoted_value(s: &str, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Some(pos) = s.find(key) {
+            let rest = s.get(pos + key.len()..)?;
+            let colon = rest.find(':')?;
+            let after = rest.get(colon + 1..)?.trim_start();
+            if after.starts_with('"') {
+                let inner = after.get(1..)?;
+                let end = inner.find('"')?;
+                let val = &inner[..end];
+                if !val.is_empty() {
+                    return Some(val.to_string());
+                }
+            }
         }
     }
-    args.to_string()
+    None
+}
+
+/// Capitalize tool name: "read" → "Read", "web_fetch" → "WebFetch"
+fn format_duration(ms: u64) -> String {
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    }
+}
+
+fn capitalize_tool(name: &str) -> String {
+    match name {
+        "write" => "Write".to_string(),
+        "grep" => "Grep".to_string(),
+        "find" => "Find".to_string(),
+        "ls" => "Ls".to_string(),
+        "web_fetch" => "WebFetch".to_string(),
+        "web_search" => "WebSearch".to_string(),
+        _ => {
+            let mut chars = name.chars();
+            match chars.next() {
+                Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        }
+    }
 }
 
 /// 从用户输入中提取 @file 引用
@@ -1188,13 +1609,46 @@ mod tests {
         if let ChatMessage::ToolCall {
             status,
             duration_ms,
+            expanded,
             ..
         } = &state.messages[1]
         {
             assert_eq!(*status, ToolCallRenderStatus::Success);
             assert_eq!(*duration_ms, Some(42));
+            assert!(
+                !*expanded,
+                "read should not auto-expand — it's agent info gathering"
+            );
         } else {
             panic!("Expected ToolCall message");
+        }
+    }
+
+    #[test]
+    fn test_tool_call_auto_expand_for_non_read() {
+        let mut state = ChatState::new();
+        state.handle_event(make_text_delta("editing"));
+        state.handle_event(AgentEvent::ToolCallStart {
+            tool_id: "t1".into(),
+            tool_name: "edit".into(),
+            arguments_summary: r#"{"path":"src/main.rs"}"#.into(),
+        });
+        state.handle_event(AgentEvent::ToolCallEnd {
+            data: Box::new(ToolCallEndEventData {
+                tool_id: "t1".into(),
+                tool_name: "edit".into(),
+                arguments: r#"{"path":"src/main.rs"}"#.into(),
+                status: ToolCallStatus::Success,
+                duration_ms: 100,
+                output_size: Some(512),
+                result_summary: Some("diff...".into()),
+                is_error: false,
+            }),
+        });
+        if let ChatMessage::ToolCall { expanded, .. } = &state.messages[1] {
+            assert!(*expanded, "edit tools should auto-expand");
+        } else {
+            panic!("Expected ToolCall");
         }
     }
 
@@ -1374,7 +1828,7 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
         assert_eq!(lines.len(), 0);
     }
 
@@ -1384,7 +1838,7 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::light();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
         assert_eq!(lines.len(), 0);
     }
 
@@ -1403,14 +1857,14 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         // 验证自定义渲染器输出包含路径信息
         assert!(combined.contains("src/main.rs"));
         // 验证状态图标（完成后为空格，不显示●）
         assert!(combined.contains("●"));
-        // 验证耗时
-        assert!(combined.contains("150ms"));
+        // read 工具不显示耗时
+        assert!(!combined.contains("150ms"));
     }
 
     #[test]
@@ -1423,7 +1877,7 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("编译失败"));
         assert!(combined.contains("!"));
@@ -1439,7 +1893,7 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("Summary"));
         assert!(combined.contains("重构完成"));
@@ -1452,20 +1906,31 @@ mod tests {
         state.messages.push(ChatMessage::BashExecution {
             tool_id: "b1".into(),
             command: "cargo test".into(),
+            description: "Run tests".into(),
+            wd: String::new(),
             exit_code: Some(0),
             stdout: "running 5 tests\nall passed".into(),
             stderr: String::new(),
             duration_ms: Some(3200),
             with_agent: true,
+            expanded: true,
         });
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
-        assert!(combined.contains("cargo test"));
+        assert!(
+            combined.contains("# Run tests"),
+            "header should show Bash # description: {}",
+            combined
+        );
+        assert!(
+            combined.contains("$ cargo test"),
+            "header should show $ command"
+        );
         assert!(combined.contains("●"));
-        assert!(combined.contains("3.2s"));
+        assert!(combined.contains("3.2s"), "footer should show duration");
         assert!(combined.contains("running 5 tests"));
     }
 
@@ -1478,7 +1943,7 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("排队中"));
         assert!(combined.contains("帮我修复那个 bug"));
@@ -1491,7 +1956,7 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("分析 @Cargo.toml"));
     }
@@ -1509,18 +1974,400 @@ mod tests {
         let area = Rect::new(0, 0, 80, 24);
 
         // tick 0 — cursor visible (tick % 4 < 2)
-        let lines = state.render_lines(area, &renderers, &theme, 0, true);
+        let lines = state.render_lines(area, &renderers, &theme, 0, true, true);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("█"), "cursor should be visible at tick 0");
 
         // tick 2 — cursor hidden (tick % 4 >= 2)
-        let lines = state.render_lines(area, &renderers, &theme, 2, true);
+        let lines = state.render_lines(area, &renderers, &theme, 2, true, true);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(!combined.contains("█"), "cursor should be hidden at tick 2");
 
         // Not busy — no cursor
-        let lines = state.render_lines(area, &renderers, &theme, 0, false);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(!combined.contains("█"), "no cursor when agent not busy");
+    }
+
+    #[test]
+    fn test_tool_card_indices() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::User {
+            text: "hi".into(),
+            file_refs: vec![],
+        });
+        state.messages.push(ChatMessage::ToolCall {
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            arguments_summary: "{}".into(),
+            status: ToolCallRenderStatus::Success,
+            duration_ms: Some(100),
+            result: None,
+            expanded: false,
+        });
+        state.messages.push(ChatMessage::Assistant {
+            text: "done".into(),
+        });
+        state.messages.push(ChatMessage::BashExecution {
+            tool_id: "b1".into(),
+            command: "ls".into(),
+            description: String::new(),
+            wd: String::new(),
+            exit_code: Some(0),
+            stdout: "file.txt".into(),
+            stderr: String::new(),
+            duration_ms: Some(50),
+            with_agent: true,
+            expanded: true,
+        });
+        let indices = state.tool_card_indices();
+        assert_eq!(indices, vec![1, 3]);
+    }
+
+    #[test]
+    fn test_focus_next_prev_cycle() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::ToolCall {
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            arguments_summary: "{}".into(),
+            status: ToolCallRenderStatus::Success,
+            duration_ms: None,
+            result: None,
+            expanded: false,
+        });
+        state.messages.push(ChatMessage::ToolCall {
+            tool_id: "t2".into(),
+            tool_name: "grep".into(),
+            arguments_summary: "{}".into(),
+            status: ToolCallRenderStatus::Success,
+            duration_ms: None,
+            result: None,
+            expanded: false,
+        });
+
+        assert!(state.focus_next_card());
+        assert_eq!(state.focused_card, Some(0));
+
+        assert!(state.focus_next_card());
+        assert_eq!(state.focused_card, Some(1));
+
+        // Wrap around
+        assert!(state.focus_next_card());
+        assert_eq!(state.focused_card, Some(0));
+
+        // Prev wraps
+        assert!(state.focus_prev_card());
+        assert_eq!(state.focused_card, Some(1));
+    }
+
+    #[test]
+    fn test_toggle_focused_card() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::ToolCall {
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            arguments_summary: "{}".into(),
+            status: ToolCallRenderStatus::Success,
+            duration_ms: None,
+            result: Some("file content".into()),
+            expanded: false,
+        });
+        state.focused_card = Some(0);
+
+        assert!(state.toggle_focused_card());
+        match &state.messages[0] {
+            ChatMessage::ToolCall { expanded, .. } => assert!(expanded),
+            _ => panic!("expected ToolCall"),
+        }
+
+        assert!(state.toggle_focused_card());
+        match &state.messages[0] {
+            ChatMessage::ToolCall { expanded, .. } => assert!(!expanded),
+            _ => panic!("expected ToolCall"),
+        }
+    }
+
+    #[test]
+    fn test_set_all_expanded() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::ToolCall {
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            arguments_summary: "{}".into(),
+            status: ToolCallRenderStatus::Success,
+            duration_ms: None,
+            result: None,
+            expanded: false,
+        });
+        state.messages.push(ChatMessage::BashExecution {
+            tool_id: "b1".into(),
+            command: "ls".into(),
+            description: String::new(),
+            wd: String::new(),
+            exit_code: Some(0),
+            stdout: String::new(),
+            stderr: String::new(),
+            duration_ms: None,
+            with_agent: true,
+            expanded: false,
+        });
+
+        state.set_all_expanded(true);
+        match &state.messages[0] {
+            ChatMessage::ToolCall { expanded, .. } => assert!(expanded),
+            _ => panic!("expected ToolCall"),
+        }
+        match &state.messages[1] {
+            ChatMessage::BashExecution { expanded, .. } => assert!(expanded),
+            _ => panic!("expected BashExecution"),
+        }
+
+        state.set_all_expanded(false);
+        match &state.messages[0] {
+            ChatMessage::ToolCall { expanded, .. } => assert!(!expanded),
+            _ => panic!("expected ToolCall"),
+        }
+    }
+
+    #[test]
+    fn test_render_tool_call_collapsed_no_result() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::ToolCall {
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            arguments_summary: r#"{"path":"src/main.rs"}"#.into(),
+            status: ToolCallRenderStatus::Success,
+            duration_ms: Some(100),
+            result: Some("fn main() {}".into()),
+            expanded: false,
+        });
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(
+            combined.contains("Read → src/main.rs"),
+            "should show tool name and args: {}",
+            combined
+        );
+        assert!(
+            !combined.contains("fn main()"),
+            "collapsed should not show result content"
+        );
+    }
+
+    #[test]
+    fn test_render_tool_call_expanded_shows_result() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::ToolCall {
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            arguments_summary: r#"{"path":"src/main.rs"}"#.into(),
+            status: ToolCallRenderStatus::Success,
+            duration_ms: Some(100),
+            result: Some("fn main() {}".into()),
+            expanded: true,
+        });
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(
+            combined.contains("fn main()"),
+            "expanded should show result content"
+        );
+    }
+
+    #[test]
+    fn test_render_focused_card_has_indicator() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::ToolCall {
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            arguments_summary: r#"{"path":"src/main.rs"}"#.into(),
+            status: ToolCallRenderStatus::Success,
+            duration_ms: Some(100),
+            result: None,
+            expanded: false,
+        });
+        state.focused_card = Some(0);
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains('▸'), "focused collapsed should show ▸");
+    }
+
+    #[test]
+    fn test_render_bash_collapsed_no_stdout() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::BashExecution {
+            tool_id: "b1".into(),
+            command: "ls".into(),
+            description: String::new(),
+            wd: String::new(),
+            exit_code: Some(0),
+            stdout: "src\ntarget\nCargo.toml".into(),
+            stderr: String::new(),
+            duration_ms: Some(50),
+            with_agent: true,
+            expanded: false,
+        });
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(combined.contains("ls"), "should show command");
+        assert!(
+            !combined.contains("Cargo.toml"),
+            "collapsed should not show stdout"
+        );
+    }
+
+    #[test]
+    fn test_tool_output_visible_overrides_expanded() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::ToolCall {
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            arguments_summary: "{}".into(),
+            status: ToolCallRenderStatus::Success,
+            duration_ms: Some(100),
+            result: Some("secret content".into()),
+            expanded: true,
+        });
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        // tool_output_visible = false should hide even expanded cards
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, false);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(
+            !combined.contains("secret content"),
+            "tool_output_visible=false should hide results"
+        );
+    }
+
+    #[test]
+    fn test_thinking_renders_duration_when_done() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::Thinking {
+            text: "分析中...".into(),
+            expanded: true,
+            active: false,
+            started_at: None,
+            duration_ms: Some(1500),
+        });
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(
+            combined.contains("Thought for 1.5s"),
+            "thought should show duration when done: {}",
+            combined
+        );
+    }
+
+    #[test]
+    fn test_thinking_renders_focus_indicator() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::Thinking {
+            text: "done".into(),
+            expanded: true,
+            active: false,
+            started_at: None,
+            duration_ms: None,
+        });
+        state.focused_card = Some(0);
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(
+            combined.contains("▾"),
+            "focused expanded thinking should show ▾: {}",
+            combined
+        );
+    }
+
+    #[test]
+    fn test_thinking_collapsed_focus_indicator() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::Thinking {
+            text: "hidden".into(),
+            expanded: false,
+            active: false,
+            started_at: None,
+            duration_ms: None,
+        });
+        state.focused_card = Some(0);
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(
+            combined.contains("▸"),
+            "focused collapsed thinking should show ▸: {}",
+            combined
+        );
+        assert!(
+            !combined.contains("hidden"),
+            "collapsed thinking should not show content"
+        );
+    }
+
+    #[test]
+    fn test_bash_renders_workdir_in_title() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::BashExecution {
+            tool_id: "b1".into(),
+            command: "ls".into(),
+            description: "List files".into(),
+            wd: "src".into(),
+            exit_code: Some(0),
+            stdout: String::new(),
+            stderr: String::new(),
+            duration_ms: None,
+            with_agent: true,
+            expanded: false,
+        });
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let area = Rect::new(0, 0, 80, 24);
+        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(
+            combined.contains("# List files in src"),
+            "should show workdir in title: {}",
+            combined
+        );
+    }
+
+    #[test]
+    fn test_thinking_toggle_via_focus() {
+        let mut state = ChatState::new();
+        state.messages.push(ChatMessage::Thinking {
+            text: "some thoughts".into(),
+            expanded: false,
+            active: false,
+            started_at: None,
+            duration_ms: None,
+        });
+        state.focused_card = Some(0);
+        state.toggle_focused_card();
+        if let ChatMessage::Thinking { expanded, .. } = &state.messages[0] {
+            assert!(*expanded, "toggling focused thinking should expand");
+        } else {
+            panic!("Expected Thinking");
+        }
     }
 }

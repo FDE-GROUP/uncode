@@ -1,5 +1,7 @@
 # Crate 重组计划：对齐 Pi 架构分层
 
+> **存档说明**：本文为 **重组过程的历史方案**（早期 11 crate → 目标 7 crate 的推演）。**当前仓库**以根目录 `Cargo.toml` 为准：存在 **`uncode-ai`**，**不存在** 独立成员 `uncode-llm`、`uncode-session`、`uncode-tools`。与 Pi 的对齐叙事与「逻辑会话 / SurrealDB」以 [`../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`](../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md) 与 [`../uncode-technologies/`](../uncode-technologies/) 为准。
+
 ## 背景
 
 Pi 项目（github.com/earendil-works/pi）的 5 包结构精确反映了其三层架构：

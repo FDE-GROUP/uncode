@@ -31,10 +31,10 @@ impl ContextLoader {
         let mut current = start.to_path_buf();
         loop {
             let candidate = current.join(filename);
-            if candidate.exists() {
-                if let Ok(content) = std::fs::read_to_string(&candidate) {
-                    return Some(content);
-                }
+            if candidate.exists()
+                && let Ok(content) = std::fs::read_to_string(&candidate)
+            {
+                return Some(content);
             }
             if !current.pop() {
                 break;
@@ -49,16 +49,16 @@ impl ContextLoader {
             if let Ok(entries) = std::fs::read_dir(&dir) {
                 for entry in entries.filter_map(|e| e.ok()) {
                     let path = entry.path().join("SKILL.md");
-                    if path.exists() {
-                        if let Ok(content) = std::fs::read_to_string(&path) {
-                            let name = entry.file_name().to_string_lossy().to_string();
-                            let desc = content
-                                .lines()
-                                .find_map(|l| l.strip_prefix("description:"))
-                                .map(|s| s.trim().to_string())
-                                .unwrap_or_default();
-                            skills.push((name, desc));
-                        }
+                    if path.exists()
+                        && let Ok(content) = std::fs::read_to_string(&path)
+                    {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let desc = content
+                            .lines()
+                            .find_map(|l| l.strip_prefix("description:"))
+                            .map(|s| s.trim().to_string())
+                            .unwrap_or_default();
+                        skills.push((name, desc));
                     }
                 }
             }

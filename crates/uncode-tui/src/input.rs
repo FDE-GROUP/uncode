@@ -203,25 +203,15 @@ impl InputEditor {
             KeyCode::Left => {
                 self.last_input_char = false;
                 if self.cursor > 0 {
-                    self.cursor -= 1;
+                    self.cursor = self.prev_char_boundary();
                 }
                 InputAction::None
             }
             KeyCode::Right => {
                 self.last_input_char = false;
                 if self.cursor < self.buffer.len() {
-                    self.cursor += 1;
+                    self.cursor = self.next_char_boundary();
                 }
-                InputAction::None
-            }
-            KeyCode::Home => {
-                self.last_input_char = false;
-                self.cursor = 0;
-                InputAction::None
-            }
-            KeyCode::End => {
-                self.last_input_char = false;
-                self.cursor = self.buffer.len();
                 InputAction::None
             }
             KeyCode::Backspace => {
@@ -362,6 +352,16 @@ impl InputEditor {
         &self.buffer
     }
 
+    pub fn handle_paste(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.push_undo();
+        self.buffer.insert_str(self.cursor, text);
+        self.cursor = (self.cursor + text.len()).min(self.buffer.len());
+        self.last_input_char = false;
+    }
+
     pub fn set_completions(&mut self, completions: Vec<String>) {
         if self.completions != completions {
             self.completion_index = 0;
@@ -386,8 +386,18 @@ impl InputEditor {
 
         f.render_widget(content, area);
 
-        // Place cursor at the end of input text (inside the block, first content line)
-        let display_w = UnicodeWidthStr::width(self.buffer.as_str()) as u16;
+        // Place cursor at the correct position within the input text
+        let cursor_byte = self.cursor.min(self.buffer.len());
+        let clamp = if cursor_byte > 0 && !self.buffer.is_char_boundary(cursor_byte) {
+            (0..cursor_byte)
+                .rev()
+                .find(|&i| self.buffer.is_char_boundary(i))
+                .unwrap_or(0)
+        } else {
+            cursor_byte
+        };
+        let prefix = if clamp > 0 { &self.buffer[..clamp] } else { "" };
+        let display_w = UnicodeWidthStr::width(prefix) as u16;
         let cursor_x = area.x + 2 + display_w; // "> " = 2 chars
         let cursor_y = area.y + 1; // TOP border takes 1 line
         f.set_cursor_position((
@@ -558,5 +568,39 @@ mod tests {
         editor.cursor = 5;
         editor.handle_key(alt_key(KeyCode::Char('d')));
         assert_eq!(editor.buffer(), "hello");
+    }
+
+    #[test]
+    fn test_cursor_moves_by_char_on_multibyte() {
+        let mut editor = InputEditor::new();
+        editor.set_buffer("你好世界".into());
+        editor.cursor = 0;
+        editor.handle_key(key(KeyCode::Right));
+        assert_eq!(editor.cursor, 3, "should move past 1st char (3 bytes)");
+        editor.handle_key(key(KeyCode::Right));
+        assert_eq!(editor.cursor, 6, "should move past 2nd char (6 bytes)");
+        editor.handle_key(key(KeyCode::Left));
+        assert_eq!(editor.cursor, 3, "should move back 1 char");
+    }
+
+    #[test]
+    fn test_backspace_on_multibyte() {
+        let mut editor = InputEditor::new();
+        editor.set_buffer("你好".into());
+        editor.handle_key(key(KeyCode::Backspace));
+        assert_eq!(editor.buffer(), "你");
+        assert_eq!(editor.cursor, 3);
+    }
+
+    #[test]
+    fn test_paste_then_cursor_move() {
+        let mut editor = InputEditor::new();
+        editor.handle_paste("你好");
+        assert_eq!(editor.buffer(), "你好");
+        assert_eq!(editor.cursor, 6);
+        editor.handle_key(key(KeyCode::Left));
+        assert_eq!(editor.cursor, 3);
+        editor.handle_key(key(KeyCode::Right));
+        assert_eq!(editor.cursor, 6);
     }
 }

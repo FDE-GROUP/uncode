@@ -61,7 +61,7 @@ All providers implement `Api` trait (`uncode-ai/src/api.rs`). 4 API protocol imp
 - **Error handling**: anyhow for application code, thiserror for library crate error types
 - **Async runtime**: tokio (full features)
 - **Config**: TOML at `~/.uncode/config.toml`
-- **Session format**: JSONL with branch support
+- **Session format**: tree-shaped `SessionEntry` in **SurrealDB** (embedded); JSONL for import/export and migration (logical model aligned with Pi — see `docs/technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`)
 - **Platform frontend**: React 19 + TanStack Router/Query + Vite, TypeScript strict mode
 - **Cargo profiles**: dev uses `opt-level = 1` + `line-tables-only` for fast incremental builds; release uses LTO + strip
 

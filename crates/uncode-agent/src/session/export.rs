@@ -188,9 +188,9 @@ fn html_escape(s: &str) -> String {
 fn render_markdown_lite(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut in_code_block = false;
-    let mut lines = text.lines().peekable();
+    let lines = text.lines().peekable();
 
-    while let Some(line) = lines.next() {
+    for line in lines {
         if line.starts_with("```") {
             if in_code_block {
                 result.push_str("</code></pre>");

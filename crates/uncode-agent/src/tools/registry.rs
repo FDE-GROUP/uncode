@@ -73,10 +73,10 @@ impl ToolRegistry {
         if let Some(required) = schema.get("required").and_then(|r| r.as_array()) {
             if let Some(props) = args.as_object() {
                 for req in required {
-                    if let Some(key) = req.as_str() {
-                        if !props.contains_key(key) {
-                            return Err(format!("missing required parameter: {key}"));
-                        }
+                    if let Some(key) = req.as_str()
+                        && !props.contains_key(key)
+                    {
+                        return Err(format!("missing required parameter: {key}"));
                     }
                 }
             } else if !required.is_empty() {

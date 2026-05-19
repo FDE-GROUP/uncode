@@ -108,11 +108,11 @@ impl ToolExecutor for WebSearchTool {
 
         let mut output = String::new();
 
-        if let Some(answer) = &tavily.answer {
-            if !answer.is_empty() {
-                output.push_str(answer);
-                output.push_str("\n\n");
-            }
+        if let Some(answer) = &tavily.answer
+            && !answer.is_empty()
+        {
+            output.push_str(answer);
+            output.push_str("\n\n");
         }
 
         if tavily.results.is_empty() {

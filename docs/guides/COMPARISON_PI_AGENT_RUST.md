@@ -1,7 +1,9 @@
 # Pi Agent Rust vs Uncode 对比分析报告
 
-> 分析对象：[pi_agent_rust](https://github.com/Dicklesworthstone/pi_agent_rust) (commit main) vs 本项目 uncode
+> 分析对象：[pi_agent_rust](https://github.com/Dicklesworthstone/pi_agent_rust) (commit main) vs 本项目 uncode  
 > 日期：2026-05-18（第二次修订，反映 SurrealDB 迁移后状态）
+
+> **说明**：本文对比的是第三方仓库 **pi_agent_rust**，与 [earendil-works/pi](https://github.com/earendil-works/pi)（TypeScript 上游）及 [`UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`](../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md) 中的「与 Pi 对齐」**不是同一分析对象**；需要 Pi 本体与 uncode 的对照时请读该对齐文档与 `docs/pi-technologies/`。
 
 ## 1. 项目概览
 

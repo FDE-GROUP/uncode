@@ -4,7 +4,7 @@ use uncode_core::message::{ContentBlock, Message};
 pub fn estimate_tokens(text: &str) -> u64 {
     let char_count = text.chars().count();
     // Integer division ceiling: (a + b - 1) / b
-    let tokens = (char_count * 10 + 34) / 35; // char_count / 3.5 ≈ char_count * 10 / 35
+    let tokens = (char_count * 10).div_ceil(35); // char_count / 3.5 ≈ char_count * 10 / 35
     tokens as u64
 }
 

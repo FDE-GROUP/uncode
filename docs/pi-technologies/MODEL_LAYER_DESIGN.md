@@ -1,6 +1,6 @@
 # 模型层技术方案
 
-> 本文档基于 `uncode-core` + `uncode-llm` 当前代码事实，阐述模型层的架构设计、核心类型、协议实现与扩展方法。
+> 本文档基于 `uncode-core` + `uncode-ai` 当前代码事实，阐述模型层的架构设计、核心类型、协议实现与扩展方法。
 
 ## 1. 架构定位
 
@@ -16,7 +16,7 @@
 └──────────────────────┬────────────────────────────────┘
                        ▼
 ┌───────────────────────────────────────────────────────┐
-│  uncode-llm (LLM 供应商抽象层)                         │
+│  uncode-ai (LLM 供应商抽象层)                         │
 │                                                       │
 │  ┌─────────────┐   ┌──────────────┐                   │
 │  │ ApiRegistry │   │ ModelRegistry│                   │
@@ -31,13 +31,13 @@
 └──────────────────────┬────────────────────────────────┘
                        ▼
 ┌───────────────────────────────────────────────────────┐
-│  uncode-core (共享类型，leaf crate)                     │
-│  Model · Context · StreamOptions · CompatConfig       │
-│  ThinkingLevel · StopReason · StreamEvent · Error     │
+│  uncode-core + uncode-shared                          │
+│  会话 / 工具 / 事件等共享面；多处对 `uncode-ai` 再导出   │
+│  （如 `model`、`api_types`），以单一来源避免类型分叉   │
 └───────────────────────────────────────────────────────┘
 ```
 
-**依赖方向**：`uncode-agent → uncode-llm → uncode-core`，core 无内部依赖。
+**依赖方向**：`uncode-agent` **同时**依赖 `uncode-core` 与 `uncode-ai`；`uncode-core` 依赖 `uncode-ai` 与 `uncode-shared`；`uncode-ai` 依赖 `uncode-shared`。`StreamEvent`、`Api`、`ModelRegistry`、内置 `Model` 数据均在 **`uncode-ai`** 定义。
 
 **设计原则**：API-first。一个 API 协议对应一个 `Api` 实现，通过 `Model.api` 字段路由。新增供应商只需声明 `Model` 数据 + 必要时提供 `CompatConfig`，无需编写驱动代码。
 
@@ -218,7 +218,7 @@ pub enum CacheRetention {
 
 ## 3. 流式事件协议
 
-`crates/uncode-llm/src/api.rs`
+`crates/uncode-ai/src/api.rs`
 
 ```rust
 pub enum StreamEvent {
@@ -254,7 +254,7 @@ pub trait Api: Send + Sync {
 
 ### 4.1 OpenAI Completions (`openai-completions`)
 
-**文件**：`crates/uncode-llm/src/providers/openai_completions.rs`
+**文件**：`crates/uncode-ai/src/providers/openai_completions.rs`
 
 **端点**：`POST {base_url}/chat/completions`
 
@@ -275,7 +275,7 @@ pub trait Api: Send + Sync {
 
 ### 4.2 Anthropic Messages (`anthropic-messages`)
 
-**文件**：`crates/uncode-llm/src/providers/anthropic_messages.rs`
+**文件**：`crates/uncode-ai/src/providers/anthropic_messages.rs`
 
 **端点**：`POST {base_url}/messages`
 
@@ -300,7 +300,7 @@ pub trait Api: Send + Sync {
 
 ### 4.3 Gemini Generative AI (`google-generative-ai`)
 
-**文件**：`crates/uncode-llm/src/providers/gemini_generative.rs`
+**文件**：`crates/uncode-ai/src/providers/gemini_generative.rs`
 
 **端点**：`POST {base_url}/models/{model_id}:streamGenerateContent?alt=sse`
 
@@ -318,7 +318,7 @@ pub trait Api: Send + Sync {
 
 ### 4.4 Ollama Native (`ollama-native`)
 
-**文件**：`crates/uncode-llm/src/providers/ollama_native.rs`
+**文件**：`crates/uncode-ai/src/providers/ollama_native.rs`
 
 **端点**：`POST {base_url}/api/chat`
 
@@ -333,7 +333,7 @@ pub trait Api: Send + Sync {
 
 ### 5.1 ApiRegistry
 
-`crates/uncode-llm/src/api_registry.rs`
+`crates/uncode-ai/src/api_registry.rs`
 
 ```rust
 pub struct ApiRegistry {
@@ -345,7 +345,7 @@ pub struct ApiRegistry {
 
 ### 5.2 ModelRegistry
 
-`crates/uncode-llm/src/providers/model_registry.rs`
+`crates/uncode-ai/src/model_registry.rs`
 
 ```rust
 pub struct ModelRegistry {
@@ -491,7 +491,7 @@ max_tokens_field = "max_tokens"
 
 ### 新增独立 API 协议
 
-1. 在 `uncode-llm/src/providers/` 下实现 `Api` trait
+1. 在 `uncode-ai/src/providers/` 下实现 `Api` trait
 2. 在 `uncode-cli` 或 `uncode-tui` 初始化时将实现注册到 `ApiRegistry`
 3. 在 `builtin_models()` 中添加使用该协议的 `Model` 条目
 
@@ -503,7 +503,7 @@ max_tokens_field = "max_tokens"
 
 ## 13. 顶层入口
 
-`uncode-llm` 提供两个顶层函数，简化上层调用：
+`uncode-ai` 提供两个顶层函数，简化上层调用：
 
 ```rust
 // 流式补全

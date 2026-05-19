@@ -1,8 +1,8 @@
 # uncode 工具系统
 
-> ToolExecutor trait + 7 工具实现 + 沙箱 + Hooks | 基于 `crates/uncode-agent/src/tools/` + `crates/uncode-core/src/tool.rs` 源码分析
+> ToolExecutor trait + 9 工具实现 + 沙箱 + Hooks | 基于源码分析，2026-05 修订
 
-uncode 的工具系统由三层构成：`uncode-core` 定义 trait，`uncode-macros` 编译时生成 Schema，`uncode-agent` 提供具体实现。所有工具共享沙箱路径校验和统一的执行生命周期。
+uncode 的工具系统由三层构成：`uncode-core` 定义 trait，`uncode-macros` 编译时生成 Schema，`uncode-agent` 提供具体实现。所有文件操作工具共享沙箱路径校验和统一的执行生命周期。
 
 ---
 
@@ -72,17 +72,21 @@ fn read(path: String, offset: Option<usize>) -> String { ... }
 
 ---
 
-## 7 个内置工具
+## 已实现的工具（9 个）
 
-| 工具 | 实现文件 | 功能 | 执行模式 |
-|------|----------|------|----------|
-| `ReadTool` | `read.rs` | 读取文件（支持 offset/limit 行范围） | Parallel |
-| `WriteTool` | `write.rs` | 创建或完整覆写文件 | Parallel |
-| `EditTool` | `edit.rs` | 精确字符串替换（支持 replace_all） | Parallel |
-| `GrepTool` | `grep.rs` | 正则搜索文件内容（grep -rn） | Parallel |
-| `BashTool` | `bash.rs` | 执行 shell 命令（支持 timeout） | Parallel |
-| `FindTool` | `find.rs` | 按名称/模式查找文件 | Parallel |
-| `LsTool` | `ls.rs` | 列出目录内容 | Parallel |
+| 工具 | 实现文件 | 功能 | CLI 注册 | 执行模式 |
+|------|----------|------|----------|----------|
+| `ReadTool` | `read.rs` | 读取文件（支持 offset/limit 行范围、hashline） | 是 | Parallel |
+| `WriteTool` | `write.rs` | 创建或完整覆写文件 | 是 | Parallel |
+| `EditTool` | `edit.rs` | hashline 精确编辑 + legacy 字符串替换 | 是 | Parallel |
+| `GrepTool` | `grep.rs` | 正则搜索文件内容 | 是 | Parallel |
+| `BashTool` | `bash.rs` | 执行 bash 命令（支持 timeout、workdir、实时取消） | 是 | Parallel |
+| `WebFetch` | `web_fetch.rs` | HTTP 抓取网页内容 | 是 | Parallel |
+| `WebSearch` | `web_search.rs` | Tavily 网络搜索（需 API key） | 条件 | Parallel |
+| `FindTool` | `find.rs` | 按名称/模式查找文件（已实现，未注册） | 否 | Parallel |
+| `LsTool` | `ls.rs` | 列出目录内容（已实现，未注册） | 否 | Parallel |
+
+辅助模块（非工具）：`diff.rs`（统一 diff 生成）、`hashline.rs`（行哈希锚点）、`local_env.rs`（文件系统/Shell 抽象）。
 
 ---
 

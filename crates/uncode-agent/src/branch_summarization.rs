@@ -26,20 +26,19 @@ pub async fn branch_with_summary(
     store.set_leaf(session_id, target_id).await?;
 
     // Summarize the abandoned branch if there was a previous leaf
-    if let Some(old_id) = old_leaf_id {
-        if old_id != target_id {
-            if let Ok(path) = store.get_path_to_root(session_id, &old_id).await {
-                let summary = summarize_branch_entries(&path, reason);
-                let entry = SessionEntry::BranchSummary(Box::new(BranchSummaryEntry {
-                    id: generate_entry_id(),
-                    parent_id: None,
-                    timestamp: chrono::Utc::now(),
-                    from_id: old_id,
-                    summary,
-                }));
-                store.append_entry(session_id, &entry).await?;
-            }
-        }
+    if let Some(old_id) = old_leaf_id
+        && old_id != target_id
+        && let Ok(path) = store.get_path_to_root(session_id, &old_id).await
+    {
+        let summary = summarize_branch_entries(&path, reason);
+        let entry = SessionEntry::BranchSummary(Box::new(BranchSummaryEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: chrono::Utc::now(),
+            from_id: old_id,
+            summary,
+        }));
+        store.append_entry(session_id, &entry).await?;
     }
 
     Ok(())

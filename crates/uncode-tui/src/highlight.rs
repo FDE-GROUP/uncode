@@ -21,10 +21,10 @@ static THEME_PREFERENCES: &[&str] = &[
 /// Select the best syntect theme using preference chain.
 fn select_syntect_theme(theme: &Theme) -> Option<&syntect::highlighting::Theme> {
     // 1. User-specified theme name
-    if let Some(ref name) = theme.syntax_theme_name {
-        if let Some(t) = THEME_SET.themes.get(name) {
-            return Some(t);
-        }
+    if let Some(ref name) = theme.syntax_theme_name
+        && let Some(t) = THEME_SET.themes.get(name)
+    {
+        return Some(t);
     }
     // 2. Preference chain
     for &name in THEME_PREFERENCES {

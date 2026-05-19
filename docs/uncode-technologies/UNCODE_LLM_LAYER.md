@@ -1,8 +1,8 @@
 # uncode LLM 抽象层
 
-> Api trait + 4 种协议实现 + 流式协议 | 基于 `crates/uncode-ai/` 源码分析
+> Api trait + 4 种协议实现 + 流式协议 | 基于源码分析，2026-05 修订
 
-uncode-ai 是 LLM 通信的核心抽象层。所有 Provider 实现统一的 `Api` trait，通过 `StreamEvent` 枚举向下游传递流式数据。4 种 API 协议覆盖 12+ 个 LLM 服务商。
+uncode-ai 是 LLM 通信的核心抽象层。所有 Provider 实现统一的 `Api` trait，通过 `StreamEvent` 枚举向下游传递流式数据。内置 13 个模型，覆盖 4 种 API 协议跨 10+ LLM 服务商。
 
 ---
 
