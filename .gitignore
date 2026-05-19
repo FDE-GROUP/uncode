@@ -17,3 +17,6 @@ Thumbs.db
 node_modules/
 dist/
 backup/
+
+# Local clone for upstream comparison (not part of uncode workspace)
+pi_agent_rust/
