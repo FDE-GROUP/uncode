@@ -127,17 +127,13 @@ impl SurrealSessionStore {
         let db = connect(format!("rocksdb://{}", path.display()))
             .await
             .map_err(|e| {
-                SessionError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("surrealdb rocksdb init: {e}"),
-                ))
+                SessionError::Io(std::io::Error::other(format!(
+                    "surrealdb rocksdb init: {e}"
+                )))
             })?;
 
         db.use_ns("uncode").use_db("sessions").await.map_err(|e| {
-            SessionError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("surrealdb ns/db: {e}"),
-            ))
+            SessionError::Io(std::io::Error::other(format!("surrealdb ns/db: {e}")))
         })?;
 
         let store = Self { db };
@@ -148,17 +144,11 @@ impl SurrealSessionStore {
     /// 创建内存后端（用于测试）
     pub async fn new_memory() -> SessionResult<Self> {
         let db = connect("mem://").await.map_err(|e| {
-            SessionError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("surrealdb mem init: {e}"),
-            ))
+            SessionError::Io(std::io::Error::other(format!("surrealdb mem init: {e}")))
         })?;
 
         db.use_ns("uncode").use_db("sessions").await.map_err(|e| {
-            SessionError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("surrealdb ns/db: {e}"),
-            ))
+            SessionError::Io(std::io::Error::other(format!("surrealdb ns/db: {e}")))
         })?;
 
         let store = Self { db };
@@ -234,10 +224,10 @@ impl SurrealSessionStore {
         // Auto-set parent_id to current leaf
         let mut entry = entry.clone();
         let current_leaf = self.get_leaf_id(session_id).await?;
-        if entry.parent_id().is_none() {
-            if let Some(ref leaf) = current_leaf {
-                entry.set_parent_id(leaf.clone());
-            }
+        if entry.parent_id().is_none()
+            && let Some(ref leaf) = current_leaf
+        {
+            entry.set_parent_id(leaf.clone());
         }
 
         let entry_type = match &entry {
@@ -622,9 +612,6 @@ impl SurrealSessionStore {
 
 fn db_err(context: &'static str) -> impl Fn(surrealdb::Error) -> SessionError {
     move |e: surrealdb::Error| {
-        SessionError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("surrealdb {context}: {e}"),
-        ))
+        SessionError::Io(std::io::Error::other(format!("surrealdb {context}: {e}")))
     }
 }

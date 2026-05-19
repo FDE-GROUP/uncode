@@ -123,11 +123,11 @@ fn detect_admonition(bq: &mdast::Blockquote) -> Option<AdmonitionKind> {
 
 fn strip_admonition_marker(text: &str) -> String {
     let trimmed = text.trim_start();
-    if trimmed.starts_with('[') {
-        if let Some(end) = trimmed.find(']') {
-            let after = trimmed.get(end + 1..).unwrap_or("");
-            return after.trim_start().to_string();
-        }
+    if trimmed.starts_with('[')
+        && let Some(end) = trimmed.find(']')
+    {
+        let after = trimmed.get(end + 1..).unwrap_or("");
+        return after.trim_start().to_string();
     }
     text.to_string()
 }
@@ -233,14 +233,14 @@ impl<'a> RenderContext<'a> {
                 self.flush_line();
                 match heading.depth {
                     1 => {
-                        let n = w.max(3).min(60);
+                        let n = w.clamp(3, 60);
                         self.lines.push(Line::from(Span::styled(
                             "═".repeat(n),
                             Style::default().fg(self.theme.markdown.heading),
                         )));
                     }
                     2 => {
-                        let n = w.max(3).min(60);
+                        let n = w.clamp(3, 60);
                         self.lines.push(Line::from(Span::styled(
                             "─".repeat(n),
                             Style::default().fg(self.theme.markdown.heading),

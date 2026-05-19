@@ -30,17 +30,16 @@ impl TemplateStore {
         // 用户模板：覆盖同名内置
         if let Some(dir) = dirs::config_dir() {
             let tpl_dir = dir.join("uncode").join("templates");
-            if tpl_dir.is_dir() {
-                if let Ok(entries) = std::fs::read_dir(&tpl_dir) {
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.extension().and_then(|e| e.to_str()) == Some("toml") {
-                            if let Ok(content) = std::fs::read_to_string(&path) {
-                                if let Ok(tpl) = toml::from_str::<Template>(&content) {
-                                    templates.insert(tpl.name.clone(), tpl);
-                                }
-                            }
-                        }
+            if tpl_dir.is_dir()
+                && let Ok(entries) = std::fs::read_dir(&tpl_dir)
+            {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("toml")
+                        && let Ok(content) = std::fs::read_to_string(&path)
+                        && let Ok(tpl) = toml::from_str::<Template>(&content)
+                    {
+                        templates.insert(tpl.name.clone(), tpl);
                     }
                 }
             }

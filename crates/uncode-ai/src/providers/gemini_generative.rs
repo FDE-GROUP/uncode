@@ -99,38 +99,38 @@ pub(crate) fn map_gemini_finish_reason(reason: &str) -> StopReason {
 fn parse_gemini_chunk(text: &str) -> Vec<StreamEvent> {
     let mut events = Vec::new();
     for line in text.lines() {
-        if let Some(json) = line.trim().strip_prefix("data: ") {
-            if let Ok(event) = serde_json::from_str::<Value>(json) {
-                if let Some(parts) = event["candidates"][0]["content"]["parts"].as_array() {
-                    for part in parts {
-                        if let Some(text) = part["text"].as_str() {
-                            events.push(StreamEvent::TextDelta(text.to_string()));
-                        }
-                        if let Some(fc) = part.get("functionCall") {
-                            let name = fc["name"].as_str().unwrap_or_default().to_string();
-                            let id = format!("gemini_{}", &name);
-                            let args = fc["args"].clone();
-                            events.push(StreamEvent::ToolCallStart {
-                                id: id.clone(),
-                                name: name.clone(),
-                            });
-                            events.push(StreamEvent::ToolCallDelta {
-                                id: id.clone(),
-                                arguments: args.to_string(),
-                            });
-                            events.push(StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
-                                id,
-                                name,
-                                arguments: args,
-                            })));
-                        }
+        if let Some(json) = line.trim().strip_prefix("data: ")
+            && let Ok(event) = serde_json::from_str::<Value>(json)
+        {
+            if let Some(parts) = event["candidates"][0]["content"]["parts"].as_array() {
+                for part in parts {
+                    if let Some(text) = part["text"].as_str() {
+                        events.push(StreamEvent::TextDelta(text.to_string()));
+                    }
+                    if let Some(fc) = part.get("functionCall") {
+                        let name = fc["name"].as_str().unwrap_or_default().to_string();
+                        let id = format!("gemini_{}", &name);
+                        let args = fc["args"].clone();
+                        events.push(StreamEvent::ToolCallStart {
+                            id: id.clone(),
+                            name: name.clone(),
+                        });
+                        events.push(StreamEvent::ToolCallDelta {
+                            id: id.clone(),
+                            arguments: args.to_string(),
+                        });
+                        events.push(StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
+                            id,
+                            name,
+                            arguments: args,
+                        })));
                     }
                 }
-                if let Some(reason) = event["candidates"][0]["finishReason"].as_str() {
-                    events.push(StreamEvent::Done {
-                        reason: map_gemini_finish_reason(reason),
-                    });
-                }
+            }
+            if let Some(reason) = event["candidates"][0]["finishReason"].as_str() {
+                events.push(StreamEvent::Done {
+                    reason: map_gemini_finish_reason(reason),
+                });
             }
         }
     }
@@ -165,10 +165,16 @@ impl Api for GeminiGenerativeAiApi {
             req = req.header(k.as_str(), v.as_str());
         }
 
-        let response = req
-            .send()
-            .await
-            .map_err(|e| UncodeError::Network(e.to_string()))?;
+        let send_future = req.send();
+        let response = match options.timeout_ms {
+            Some(ms) => tokio::time::timeout(std::time::Duration::from_millis(ms), send_future)
+                .await
+                .map_err(|_| UncodeError::Llm("request timed out".into()))?
+                .map_err(|e| UncodeError::Network(e.to_string()))?,
+            None => send_future
+                .await
+                .map_err(|e| UncodeError::Network(e.to_string()))?,
+        };
 
         if !response.status().is_success() {
             let status = response.status();

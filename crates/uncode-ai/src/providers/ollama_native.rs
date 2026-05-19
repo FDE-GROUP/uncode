@@ -81,7 +81,8 @@ fn build_chat_messages(context: &Context) -> Vec<Value> {
                     if let ContentBlock::ToolResult(tr) = block {
                         messages.push(serde_json::json!({
                             "role": "tool",
-                            "content": tr.content
+                            "content": tr.content,
+                            "tool_call_id": tr.tool_call_id
                         }));
                     }
                 }
@@ -145,20 +146,20 @@ fn parse_ollama_chunk(text: &str, state: &mut OllamaToolState) -> Vec<StreamEven
         }
         if let Ok(event) = serde_json::from_str::<Value>(line) {
             // Ollama stream error
-            if let Some(err) = event["error"].as_str() {
-                if !err.is_empty() {
-                    events.push(StreamEvent::Error {
-                        reason: crate::api_types::StopReason::Error,
-                        message: err.to_string(),
-                    });
-                    continue;
-                }
+            if let Some(err) = event["error"].as_str()
+                && !err.is_empty()
+            {
+                events.push(StreamEvent::Error {
+                    reason: crate::api_types::StopReason::Error,
+                    message: err.to_string(),
+                });
+                continue;
             }
 
-            if let Some(content) = event["message"]["content"].as_str() {
-                if !content.is_empty() {
-                    events.push(StreamEvent::TextDelta(content.to_string()));
-                }
+            if let Some(content) = event["message"]["content"].as_str()
+                && !content.is_empty()
+            {
+                events.push(StreamEvent::TextDelta(content.to_string()));
             }
 
             if let Some(tool_calls) = event["message"]["tool_calls"].as_array() {
@@ -257,17 +258,24 @@ impl Api for OllamaNativeApi {
         }
 
         let state = OllamaToolState::new();
-        let buf = String::new();
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let buf2 = buf.clone();
         let stream = response
             .bytes_stream()
             .scan((state, buf), |(state, buf), chunk| {
                 let events: Vec<StreamEvent> = match chunk {
                     Ok(c) => {
-                        buf.push_str(&String::from_utf8_lossy(&c));
+                        buf.lock().unwrap().push_str(&String::from_utf8_lossy(&c));
                         let mut all_events = Vec::new();
-                        while let Some(pos) = buf.find('\n') {
-                            let line = buf[..pos].trim().to_string();
-                            buf.drain(..=pos);
+                        loop {
+                            let locked = buf.lock().unwrap();
+                            let pos = match locked.find('\n') {
+                                Some(p) => p,
+                                None => break,
+                            };
+                            let line = locked[..pos].trim().to_string();
+                            drop(locked);
+                            buf.lock().unwrap().drain(..=pos);
                             if line.is_empty() {
                                 continue;
                             }
@@ -283,9 +291,18 @@ impl Api for OllamaNativeApi {
                 std::future::ready(Some(stream::iter(events)))
             })
             .flatten()
-            .chain(stream::once(async {
-                StreamEvent::Done {
-                    reason: StopReason::Stop,
+            .chain(stream::once({
+                async move {
+                    let remaining = buf2.lock().unwrap().trim().to_string();
+                    if !remaining.is_empty() {
+                        return StreamEvent::Error {
+                            reason: StopReason::Error,
+                            message: format!("ollama: incomplete chunk: {remaining:.100}"),
+                        };
+                    }
+                    StreamEvent::Done {
+                        reason: StopReason::Stop,
+                    }
                 }
             }));
 

@@ -80,7 +80,7 @@ async fn import_single_jsonl(store: &SessionStore, path: &Path) -> SessionResult
     let lines: Vec<String> = reader
         .lines()
         .collect::<Result<_, _>>()
-        .map_err(|e| super::store::SessionError::Io(e))?;
+        .map_err(super::store::SessionError::Io)?;
 
     if lines.is_empty() {
         return Err(super::store::SessionError::InvalidData("empty file".into()));

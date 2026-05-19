@@ -168,21 +168,21 @@ fn extract_edges(nodes: &[GraphNode]) -> Vec<GraphEdge> {
         .collect();
 
     for node in nodes {
-        if node.kind == SymbolKind::Impl {
-            if let Some(ref _sig) = node.signature {
-                // Check if impl target matches a known struct
-                let target_lower = node.name.to_lowercase();
-                if let Some(&struct_name) = struct_names.get(&target_lower) {
-                    // Find the struct node
-                    if let Some(struct_node) = nodes.iter().find(|n| {
-                        n.kind == SymbolKind::Struct && n.path == node.path && n.name == struct_name
-                    }) {
-                        edges.push(GraphEdge {
-                            source: node.id.clone(),
-                            target: struct_node.id.clone(),
-                            edge_type: EdgeType::Implements,
-                        });
-                    }
+        if node.kind == SymbolKind::Impl
+            && let Some(ref _sig) = node.signature
+        {
+            // Check if impl target matches a known struct
+            let target_lower = node.name.to_lowercase();
+            if let Some(&struct_name) = struct_names.get(&target_lower) {
+                // Find the struct node
+                if let Some(struct_node) = nodes.iter().find(|n| {
+                    n.kind == SymbolKind::Struct && n.path == node.path && n.name == struct_name
+                }) {
+                    edges.push(GraphEdge {
+                        source: node.id.clone(),
+                        target: struct_node.id.clone(),
+                        edge_type: EdgeType::Implements,
+                    });
                 }
             }
         }
@@ -246,7 +246,7 @@ pub fn build_graph(root: &Path, config: &BundleConfig) -> WorkspaceGraph {
         let path = entry.path();
 
         // Skip non-.rs files
-        if !path.extension().is_some_and(|ext| ext == "rs") {
+        if path.extension().is_none_or(|ext| ext != "rs") {
             continue;
         }
 
@@ -392,7 +392,7 @@ pub fn select_bundle(
             let mut score: f32 = 0.0;
 
             // Recency (0-30): recent_files +15, user message mentions +15
-            if recent_files.iter().any(|f| node.path == *f) {
+            if recent_files.contains(&node.path) {
                 score += 15.0;
             }
             if msg_tokens.iter().any(|t| node.path.contains(t)) {

@@ -264,12 +264,11 @@ async fn get_session_metrics(
                             tool_counts.entry(tc.name.clone()).or_default().0 += 1;
                             last_tool_name = Some(&tc.name);
 
-                            if tc.name == "write" || tc.name == "edit" {
-                                if let Some(path) =
+                            if (tc.name == "write" || tc.name == "edit")
+                                && let Some(path) =
                                     tc.arguments.get("path").and_then(|v| v.as_str())
-                                {
-                                    files_modified.insert(path.to_string());
-                                }
+                            {
+                                files_modified.insert(path.to_string());
                             }
                         }
                         ContentBlock::ToolResult(tr) => {
@@ -494,12 +493,11 @@ async fn get_suggestions(
                         match block {
                             ContentBlock::ToolCall(tc) => {
                                 *tool_calls.entry(tc.name.clone()).or_default() += 1;
-                                if tc.name == "read" {
-                                    if let Some(path) =
+                                if tc.name == "read"
+                                    && let Some(path) =
                                         tc.arguments.get("path").and_then(|v| v.as_str())
-                                    {
-                                        *file_reads.entry(path.to_string()).or_default() += 1;
-                                    }
+                                {
+                                    *file_reads.entry(path.to_string()).or_default() += 1;
                                 }
                             }
                             ContentBlock::ToolResult(tr) if tr.is_error => {

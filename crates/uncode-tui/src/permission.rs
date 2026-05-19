@@ -139,10 +139,10 @@ impl Default for PermissionManager {
 
 /// 从 bash 工具参数中提取命令
 fn extract_command(args: &str) -> String {
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(args) {
-        if let Some(cmd) = val.get("command").and_then(|v| v.as_str()) {
-            return cmd.to_string();
-        }
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(args)
+        && let Some(cmd) = val.get("command").and_then(|v| v.as_str())
+    {
+        return cmd.to_string();
     }
     args.to_string()
 }

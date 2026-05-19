@@ -8,16 +8,15 @@ use uncode_core::tool::{
 use super::local_env::{clean_binary_output, truncate_output};
 
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 50 * 1024; // 50KB
+const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
 pub struct BashTool {
-    default_timeout_secs: u64,
     max_output_bytes: usize,
 }
 
 impl BashTool {
     pub fn new() -> Self {
         Self {
-            default_timeout_secs: 120,
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
         }
     }
@@ -29,20 +28,68 @@ impl Default for BashTool {
     }
 }
 
+struct ParsedArgs {
+    command: String,
+    workdir: String,
+    timeout_secs: u64,
+}
+
+fn parse_args(arguments: &serde_json::Value) -> Result<ParsedArgs, uncode_core::error::UncodeError> {
+    let command = arguments["command"]
+        .as_str()
+        .ok_or_else(|| uncode_core::error::UncodeError::Tool("command required".into()))?
+        .to_string();
+    let workdir = arguments["workdir"].as_str().unwrap_or(".").to_string();
+    let timeout_secs = arguments["timeout"].as_u64().unwrap_or(DEFAULT_TIMEOUT_SECS);
+    Ok(ParsedArgs {
+        command,
+        workdir,
+        timeout_secs,
+    })
+}
+
 /// Kill an entire process group by sending SIGKILL to `-pgid`.
 /// Requires the child to have been spawned with `process_group(0)`.
 #[cfg(unix)]
 #[allow(unsafe_code)]
 fn kill_process_group(pgid: u32) {
-    // Negative PID signals the entire process group
     unsafe {
         libc::kill(-(pgid as i32), libc::SIGKILL);
     }
 }
 
 #[cfg(not(unix))]
-fn kill_process_group(_pgid: u32) {
-    // Non-Unix: fallback — no process group support
+fn kill_process_group(_pgid: u32) {}
+
+fn build_command(command: &str, workdir: &str) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new("bash");
+    cmd.arg("-c").arg(command).current_dir(workdir);
+    #[cfg(unix)]
+    cmd.process_group(0);
+    cmd
+}
+
+fn build_result(
+    stdout: &str,
+    stderr: &str,
+    exit_ok: bool,
+    exit_code: Option<i32>,
+    max_output_bytes: usize,
+) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !stdout.is_empty() {
+        parts.push(truncate_output(stdout, max_output_bytes));
+    }
+    if !stderr.is_empty() {
+        parts.push(format!(
+            "stderr:\n{}",
+            truncate_output(stderr, max_output_bytes)
+        ));
+    }
+    if !exit_ok {
+        parts.push(format!("exit code: {}", exit_code.unwrap_or(-1)));
+    }
+    parts.join("\n")
 }
 
 #[async_trait]
@@ -50,13 +97,14 @@ impl ToolExecutor for BashTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "bash".into(),
-            description: "执行 shell 命令".into(),
+            description: "在沙箱中执行 bash 命令，支持描述、工作目录、超时和实时取消".into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "command": {"type": "string", "description": "要执行的命令"},
-                    "workdir": {"type": "string", "description": "工作目录"},
-                    "timeout": {"type": "integer", "description": "超时秒数"}
+                    "command": {"type": "string", "description": "要执行的 bash 命令"},
+                    "description": {"type": "string", "description": "5-10 个词的清晰简洁描述"},
+                    "workdir": {"type": "string", "description": "工作目录（相对于项目根目录）"},
+                    "timeout": {"type": "integer", "description": "超时秒数，默认 120"}
                 },
                 "required": ["command"]
             }),
@@ -66,44 +114,26 @@ impl ToolExecutor for BashTool {
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
-        let command = arguments["command"]
-            .as_str()
-            .ok_or_else(|| uncode_core::error::UncodeError::Tool("command required".into()))?;
+        let args = parse_args(&arguments)?;
+        let mut cmd = build_command(&args.command, &args.workdir);
 
-        let workdir = arguments["workdir"].as_str().unwrap_or(".");
-        let timeout = arguments["timeout"]
-            .as_u64()
-            .unwrap_or(self.default_timeout_secs);
-
-        let mut cmd = tokio::process::Command::new("sh");
-        cmd.arg("-c").arg(command).current_dir(workdir);
-
-        #[cfg(unix)]
-        cmd.process_group(0);
-
-        let output = tokio::time::timeout(std::time::Duration::from_secs(timeout), cmd.output())
-            .await
-            .map_err(|_| uncode_core::error::UncodeError::Tool("timeout".into()))?
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("bash: {e}")))?;
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(args.timeout_secs),
+            cmd.output(),
+        )
+        .await
+        .map_err(|_| uncode_core::error::UncodeError::Tool("timeout".into()))?
+        .map_err(|e| uncode_core::error::UncodeError::Tool(format!("bash: {e}")))?;
 
         let stdout = clean_binary_output(&output.stdout);
         let stderr = clean_binary_output(&output.stderr);
-
-        let mut parts: Vec<String> = Vec::new();
-        if !stdout.is_empty() {
-            parts.push(truncate_output(&stdout, self.max_output_bytes));
-        }
-        if !stderr.is_empty() {
-            parts.push(format!(
-                "stderr:\n{}",
-                truncate_output(&stderr, self.max_output_bytes)
-            ));
-        }
-        if !output.status.success() {
-            parts.push(format!("exit code: {}", output.status.code().unwrap_or(-1)));
-        }
-
-        Ok(parts.join("\n"))
+        Ok(build_result(
+            &stdout,
+            &stderr,
+            output.status.success(),
+            output.status.code(),
+            self.max_output_bytes,
+        ))
     }
 
     async fn execute_with_context(
@@ -111,41 +141,24 @@ impl ToolExecutor for BashTool {
         arguments: serde_json::Value,
         ctx: ToolContext,
     ) -> UncodeResult<ToolResult> {
-        let command = arguments["command"]
-            .as_str()
-            .ok_or_else(|| uncode_core::error::UncodeError::Tool("command required".into()))?;
-
-        let workdir = arguments["workdir"].as_str().unwrap_or(".").to_string();
-        let timeout = arguments["timeout"]
-            .as_u64()
-            .unwrap_or(self.default_timeout_secs);
-
-        let mut cmd = tokio::process::Command::new("sh");
-        cmd.arg("-c")
-            .arg(command)
-            .current_dir(&workdir)
-            .stdout(std::process::Stdio::piped())
+        let args = parse_args(&arguments)?;
+        let mut cmd = build_command(&args.command, &args.workdir);
+        cmd.stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
-
-        #[cfg(unix)]
-        cmd.process_group(0);
 
         let mut child = cmd
             .spawn()
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("spawn: {e}")))?;
 
         let pgid = child.id().unwrap_or(0);
-
         let stdout = child.stdout.take().expect("stdout piped");
         let stderr = child.stderr.take().expect("stderr piped");
-        let stdout_reader = BufReader::new(stdout);
-        let stderr_reader = BufReader::new(stderr);
 
         let mut output = String::with_capacity(4096);
         let mut errors = String::new();
 
-        // Read stdout lines with cancellation
-        let mut stdout_lines = stdout_reader.lines();
+        // Read stdout with cancellation
+        let mut stdout_lines = BufReader::new(stdout).lines();
         loop {
             if ctx.cancel_token.is_cancelled() {
                 kill_process_group(pgid);
@@ -172,8 +185,8 @@ impl ToolExecutor for BashTool {
             }
         }
 
-        // Read remaining stderr
-        let mut stderr_lines = stderr_reader.lines();
+        // Read stderr
+        let mut stderr_lines = BufReader::new(stderr).lines();
         loop {
             tokio::select! {
                 _ = ctx.cancel_token.cancelled() => {
@@ -193,29 +206,33 @@ impl ToolExecutor for BashTool {
             }
         }
 
-        let status =
-            match tokio::time::timeout(std::time::Duration::from_secs(timeout), child.wait()).await
-            {
-                Ok(Ok(s)) => s,
-                _ => {
-                    kill_process_group(pgid);
-                    return Ok(ToolResult::err("timeout"));
-                }
-            };
+        let status = match tokio::time::timeout(
+            std::time::Duration::from_secs(args.timeout_secs),
+            child.wait(),
+        )
+        .await
+        {
+            Ok(Ok(s)) => s,
+            _ => {
+                kill_process_group(pgid);
+                return Ok(ToolResult::err("timeout"));
+            }
+        };
 
         if !errors.is_empty() {
             output.push_str("stderr:\n");
             output.push_str(&errors);
         }
-        if !status.success() {
-            output.push_str(&format!("exit code: {}\n", status.code().unwrap_or(-1)));
+        let exit_ok = status.success();
+        let exit_code = status.code();
+        if !exit_ok {
+            output.push_str(&format!("exit code: {}\n", exit_code.unwrap_or(-1)));
         }
 
         let output = truncate_output(&output, self.max_output_bytes);
-        let is_error = !status.success();
         Ok(ToolResult {
             content: vec![ToolContent::Text(output)],
-            is_error,
+            is_error: !exit_ok,
             details: None,
             terminate: false,
         })

@@ -74,7 +74,7 @@ pub async fn build_context(store: &SessionStore, session_id: &str) -> SessionRes
                         continue;
                     }
                 }
-                let mut msg = Message::new(me.role.clone(), me.content.clone());
+                let mut msg = Message::new(me.role, me.content.clone());
                 msg.usage = me.usage.clone();
                 messages.push(msg);
             }

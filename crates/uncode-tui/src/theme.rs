@@ -390,16 +390,16 @@ impl Theme {
         ];
         if let Some(config_dir) = dirs::config_dir() {
             let themes_dir = config_dir.join("uncode").join("themes");
-            if themes_dir.exists() {
-                if let Ok(entries) = std::fs::read_dir(&themes_dir) {
-                    for entry in entries.flatten() {
-                        if entry.path().extension().is_some_and(|e| e == "json") {
-                            if let Some(name) = entry.path().file_stem() {
-                                let name = name.to_string_lossy().to_string();
-                                if !themes.contains(&name) {
-                                    themes.push(name);
-                                }
-                            }
+            if themes_dir.exists()
+                && let Ok(entries) = std::fs::read_dir(&themes_dir)
+            {
+                for entry in entries.flatten() {
+                    if entry.path().extension().is_some_and(|e| e == "json")
+                        && let Some(name) = entry.path().file_stem()
+                    {
+                        let name = name.to_string_lossy().to_string();
+                        if !themes.contains(&name) {
+                            themes.push(name);
                         }
                     }
                 }
@@ -473,13 +473,13 @@ fn parse_color_str(s: &str) -> Option<Color> {
         _ => {}
     }
     // Hex colors: "#RRGGBB"
-    if let Some(hex) = s.strip_prefix('#') {
-        if hex.len() == 6 {
-            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-            return Some(Color::Rgb(r, g, b));
-        }
+    if let Some(hex) = s.strip_prefix('#')
+        && hex.len() == 6
+    {
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+        return Some(Color::Rgb(r, g, b));
     }
     None
 }

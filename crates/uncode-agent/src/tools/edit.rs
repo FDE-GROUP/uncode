@@ -165,7 +165,7 @@ fn apply_hashline_edits(
     }
 
     // Phase 3: Apply edits bottom-up (highest line first)
-    parsed_edits.sort_by(|a, b| b.start_line.cmp(&a.start_line));
+    parsed_edits.sort_by_key(|b| std::cmp::Reverse(b.start_line));
 
     let mut result_lines: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
 
@@ -221,7 +221,9 @@ fn apply_legacy_edit(
 
     let count = old_content.matches(old_string).count();
     if count == 0 {
-        return Err(UncodeError::Tool(format!("old_string not found in file")));
+        return Err(UncodeError::Tool(
+            "old_string not found in file".to_string(),
+        ));
     }
     if count > 1 {
         return Err(UncodeError::Tool(format!(
