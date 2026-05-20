@@ -4,6 +4,15 @@
 ///  - FollowUp：Agent 完成全部工作后投递（默认）
 ///  - Steering：当前工具调用完成后立即投递（用于修正方向）
 ///
+/// TUI → CLI 提交意图（单次 `run` 存活期间区分 steer 与新开 run）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubmitIntent {
+    /// 空闲时启动新的 `AgentLoop::run`。
+    NewRun,
+    /// 运行中纠偏：CLI 调用 `AgentLoop::steer`（当前工具结束后注入）。
+    Steer,
+}
+
 /// TUI 侧排队类型（投递到 `uncode-agent` 运行队列前的 UI 缓冲）。
 ///
 /// **Pi:** 概念对齐 `followUp` / `steering`；无 `next_turn` 的 TUI 专名（由 agent 层处理）。

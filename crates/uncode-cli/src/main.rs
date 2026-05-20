@@ -374,19 +374,14 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // 默认：启动 TUI
+    // 默认：启动 TUI（单例 AgentLoop：同 run 内 steer，避免每次 submit 新建 loop）
     let event_rx = agent.subscribe();
     let event_tx = agent.event_sender();
-    let ar_tui = api_registry.clone();
-    let mr_tui = model_registry.clone();
-    let ak_tui = api_keys.clone();
-    let tools_tui = tool_registry.clone();
-    let store_tui = session_store.clone();
-    let tui_system_prompt = system_prompt.clone();
+    let shared_agent = Arc::new(tokio::sync::RwLock::new(agent));
 
     tokio::spawn(async move {
         let mut tui = uncode_tui::TuiEngine::new();
-        let model_ids: Vec<String> = mr_tui
+        let model_ids: Vec<String> = model_registry
             .all_models()
             .into_iter()
             .map(|m| m.id.clone())
@@ -395,47 +390,46 @@ async fn main() -> anyhow::Result<()> {
         tui.set_default_model(model.clone());
         tui.run(
             event_rx,
-            move |text, cancel_token, current_model, session_id| {
-                let ar = ar_tui.clone();
-                let mr = mr_tui.clone();
-                let ak = ak_tui.clone();
-                let t = tools_tui.clone();
-                let s = store_tui.clone();
+            move |text, cancel_token, current_model, session_id, intent| {
+                let agent = shared_agent.clone();
                 let tx = event_tx.clone();
-                let sp = tui_system_prompt.clone();
                 tokio::spawn(async move {
                     let expanded = expand_url_refs(&text).await;
-                    let mut a = AgentLoop::with_event_sender(
-                        ar,
-                        mr,
-                        ak,
-                        t,
-                        s,
-                        sp,
-                        current_model,
-                        tx.clone(),
-                    );
-                    if !session_id.is_empty() {
-                        a.set_session_id(session_id);
-                    }
-                    a.set_cancel_token(cancel_token);
-                    if let Err(e) = a.run(Message::user(expanded)).await {
-                        let _ = tx.send(AgentEvent::Error {
-                            category: ErrorCategory::Llm,
-                            message: format!("{e}"),
-                            recoverable: false,
-                        });
-                        let _ = tx.send(AgentEvent::SessionEnd {
-                            data: Box::new(uncode_core::event::SessionEndData {
-                                session_id: a
-                                    .session_id()
-                                    .map(|s| s.to_string())
-                                    .unwrap_or_default(),
-                                total_turns: 0,
-                                total_tokens: UsageInfo::default(),
-                                exit_reason: format!("error: {e}"),
-                            }),
-                        });
+                    match intent {
+                        uncode_tui::message_queue::SubmitIntent::Steer => {
+                            let a = agent.read().await;
+                            if a.is_run_active() {
+                                a.steer(Message::user(expanded)).await;
+                            }
+                        }
+                        uncode_tui::message_queue::SubmitIntent::NewRun => {
+                            {
+                                let mut a = agent.write().await;
+                                a.set_model_id(current_model);
+                                if !session_id.is_empty() {
+                                    a.set_session_id(session_id);
+                                }
+                                a.set_cancel_token(cancel_token);
+                            }
+                            let a = agent.read().await;
+                            if let Err(e) = a.run(Message::user(expanded)).await {
+                                let session_id =
+                                    a.session_id().map(|s| s.to_string()).unwrap_or_default();
+                                let _ = tx.send(AgentEvent::Error {
+                                    category: ErrorCategory::Llm,
+                                    message: format!("{e}"),
+                                    recoverable: false,
+                                });
+                                let _ = tx.send(AgentEvent::SessionEnd {
+                                    data: Box::new(uncode_core::event::SessionEndData {
+                                        session_id,
+                                        total_turns: 0,
+                                        total_tokens: UsageInfo::default(),
+                                        exit_reason: format!("error: {e}"),
+                                    }),
+                                });
+                            }
+                        }
                     }
                 });
             },

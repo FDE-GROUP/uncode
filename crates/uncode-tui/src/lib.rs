@@ -23,7 +23,7 @@ pub mod welcome;
 use crate::chat::ChatState;
 use crate::complete::CompletionEngine;
 use crate::input::{InputAction, InputEditor};
-use crate::message_queue::{MessageQueue, QueueType};
+use crate::message_queue::{MessageQueue, QueueType, SubmitIntent};
 use crate::permission::PermissionManager;
 use crate::selector::OverlaySelector;
 use crate::slash::SlashCommands;
@@ -478,7 +478,7 @@ impl TuiEngine {
 
     pub async fn run<F>(&mut self, mut event_rx: broadcast::Receiver<AgentEvent>, on_submit: F)
     where
-        F: Fn(String, CancellationToken, String, String),
+        F: Fn(String, CancellationToken, String, String, SubmitIntent),
     {
         let mut terminal = ratatui::init();
         let _ = crossterm::execute!(
@@ -623,7 +623,13 @@ impl TuiEngine {
                                                 &std::env::current_dir().unwrap_or_default(),
                                             );
                                             let token = self.new_cancel_token();
-                                            on_submit(expanded, token, self.model.clone(), self.session_id.clone());
+                                            on_submit(
+                                                expanded,
+                                                token,
+                                                self.model.clone(),
+                                                self.session_id.clone(),
+                                                SubmitIntent::NewRun,
+                                            );
                                         } else {
                                             self.chat.push_message(chat::ChatMessage::Summary {
                                                 completed: vec!["No messages to retry.".into()],
@@ -836,7 +842,7 @@ impl TuiEngine {
 
     fn handle_submit<F>(&mut self, text: String, on_submit: &F)
     where
-        F: Fn(String, CancellationToken, String, String),
+        F: Fn(String, CancellationToken, String, String, SubmitIntent),
     {
         if let Some(response) = self.slash.execute(&text) {
             self.chat.push_message(chat::ChatMessage::Summary {
@@ -855,7 +861,7 @@ impl TuiEngine {
                 self.chat.tool_output_visible = !self.chat.tool_output_visible;
             }
             "/help" => {
-                let help = "Keys: Ctrl+O tool output | Ctrl+T thinking | Ctrl+P cycle model | Ctrl+R retry | Ctrl+N new session | Ctrl+/ undo | Ctrl+G editor\nCommands: /clear | /compact | /model [name] | /new | /fork [id] | /export [fmt] | /sessions | /branch | /name [title] | /copy | /usage | /reload | /diff | /theme | /thinking | /details | /tree | /skills | /template";
+                let help = "Keys: Ctrl+O tool output | Ctrl+T thinking | Ctrl+P cycle model | Ctrl+R retry | Ctrl+N new session | Ctrl+/ undo | Ctrl+G editor\nCommands: /clear | /compact | /model [name] | /new | /fork [id] | /export [fmt] | /sessions | /branch | /name [title] | /copy | /usage | /reload | /diff | /theme | /thinking | /details | /tree | /skills | /template\nWhile agent is busy: Enter steers the run; /later <msg> queues follow-up after SessionEnd";
                 self.chat.push_message(chat::ChatMessage::Summary {
                     completed: vec![help.into()],
                     next_steps: vec![],
@@ -938,14 +944,31 @@ impl TuiEngine {
 
     fn submit_text<F>(&mut self, text: String, on_submit: &F)
     where
-        F: Fn(String, CancellationToken, String, String),
+        F: Fn(String, CancellationToken, String, String, SubmitIntent),
     {
         if self.agent_busy {
-            let preview = text.clone();
-            self.queue.enqueue(text, QueueType::FollowUp);
-            self.chat
-                .messages
-                .push(chat::ChatMessage::QueuedMessage { text: preview });
+            if let Some(rest) = text.strip_prefix("/later ") {
+                let preview = rest.to_string();
+                self.queue.enqueue(preview.clone(), QueueType::FollowUp);
+                self.chat
+                    .messages
+                    .push(chat::ChatMessage::QueuedMessage { text: preview });
+                return;
+            }
+            self.last_user_input = Some(text.clone());
+            self.chat.push_user_message(text.clone());
+            let file_expanded = uncode_core::context::expand_file_refs(
+                &text,
+                &std::env::current_dir().unwrap_or_default(),
+            );
+            let token = self.new_cancel_token();
+            on_submit(
+                file_expanded,
+                token,
+                self.model.clone(),
+                self.session_id.clone(),
+                SubmitIntent::Steer,
+            );
         } else {
             self.last_user_input = Some(text.clone());
             self.agent_busy = true;
@@ -961,6 +984,7 @@ impl TuiEngine {
                 token,
                 self.model.clone(),
                 self.session_id.clone(),
+                SubmitIntent::NewRun,
             );
         }
     }
@@ -1718,7 +1742,7 @@ impl TuiEngine {
 
     fn handle_skill_invoke<F>(&mut self, skill_name: &str, args_str: &str, on_submit: &F)
     where
-        F: Fn(String, CancellationToken, String, String),
+        F: Fn(String, CancellationToken, String, String, SubmitIntent),
     {
         use uncode_core::skill::SkillRegistry;
         let registry = SkillRegistry::load();
@@ -1757,7 +1781,13 @@ impl TuiEngine {
         self.chat
             .push_user_message(format!("[skill: {skill_name}] {args_str}"));
         let token = self.new_cancel_token();
-        on_submit(prompt, token, self.model.clone(), self.session_id.clone());
+        on_submit(
+            prompt,
+            token,
+            self.model.clone(),
+            self.session_id.clone(),
+            SubmitIntent::NewRun,
+        );
     }
 
     fn handle_theme_command(&mut self, text: &str) {
@@ -1808,13 +1838,20 @@ impl TuiEngine {
 
     fn flush_queue<F>(&mut self, on_submit: &F)
     where
-        F: Fn(String, CancellationToken, String, String),
+        F: Fn(String, CancellationToken, String, String, SubmitIntent),
     {
         if let Some(text) = self.queue.drain_follow_up().into_iter().next() {
             self.agent_busy = true;
+            self.footer.start_turn();
             self.chat.push_user_message(text.clone());
             let token = self.new_cancel_token();
-            on_submit(text, token, self.model.clone(), self.session_id.clone());
+            on_submit(
+                text,
+                token,
+                self.model.clone(),
+                self.session_id.clone(),
+                SubmitIntent::NewRun,
+            );
         }
     }
 
@@ -2317,7 +2354,8 @@ mod tests {
         let on_submit = |_text: String,
                          _token: tokio_util::sync::CancellationToken,
                          model: String,
-                         _sid: String| {
+                         _sid: String,
+                         _intent: SubmitIntent| {
             *captured.borrow_mut() = model;
         };
 
@@ -2336,13 +2374,47 @@ mod tests {
         let on_submit = |_text: String,
                          _token: tokio_util::sync::CancellationToken,
                          model: String,
-                         _sid: String| {
+                         _sid: String,
+                         _intent: SubmitIntent| {
             *captured.borrow_mut() = model;
         };
 
         engine.submit_text("hello".into(), &on_submit);
 
         assert_eq!(captured.borrow().as_str(), "deepseek-v3");
+    }
+
+    #[test]
+    fn test_submit_while_busy_uses_steer_intent() {
+        let mut engine = TuiEngine::new();
+        engine.agent_busy = true;
+        let captured: std::cell::RefCell<Option<SubmitIntent>> = std::cell::RefCell::new(None);
+        let on_submit = |_text: String,
+                         _token: tokio_util::sync::CancellationToken,
+                         _model: String,
+                         _sid: String,
+                         intent: SubmitIntent| {
+            *captured.borrow_mut() = Some(intent);
+        };
+        engine.submit_text("please fix the test".into(), &on_submit);
+        assert_eq!(*captured.borrow(), Some(SubmitIntent::Steer));
+    }
+
+    #[test]
+    fn test_later_while_busy_queues_follow_up_not_steer() {
+        let mut engine = TuiEngine::new();
+        engine.agent_busy = true;
+        let captured: std::cell::RefCell<Option<SubmitIntent>> = std::cell::RefCell::new(None);
+        let on_submit = |_text: String,
+                         _token: tokio_util::sync::CancellationToken,
+                         _model: String,
+                         _sid: String,
+                         intent: SubmitIntent| {
+            *captured.borrow_mut() = Some(intent);
+        };
+        engine.submit_text("/later run tests".into(), &on_submit);
+        assert_eq!(*captured.borrow(), None);
+        assert_eq!(engine.queue.len(), 1);
     }
 
     #[test]
