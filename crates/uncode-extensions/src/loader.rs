@@ -2,6 +2,9 @@ use std::path::Path;
 
 use crate::hooks::HookRegistry;
 
+/// 从目录扫描并加载 WASM 扩展（运行时集成进行中）。
+///
+/// **Pi:** 对照 `pi install` / 包路径发现；实现为 `.wasm` 而非 npm/git 包。
 pub struct ExtensionLoader;
 
 impl ExtensionLoader {

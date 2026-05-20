@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use crate::hooks::{Extension, HookRegistry, LifecycleHook};
 
-/// 扩展开发者的 API 入口
+/// 扩展开发者的注册 API 入口。
+///
+/// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
 pub struct ExtensionApi {
     registry: Arc<HookRegistry>,
 }

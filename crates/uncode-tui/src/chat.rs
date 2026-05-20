@@ -155,7 +155,10 @@ struct LineCountEntry {
     cached_text_len: usize,
 }
 
-/// 对话状态容器
+/// 对话区渲染状态（消息列表、滚动、工具卡片焦点与虚拟滚动缓存）。
+///
+/// **Pi:** 无同名类型；消费 `AgentEvent` 并映射为可渲染的 [`ChatMessage`]。
+/// **OpenCode:** scrollback 信息密度作 UX benchmark。
 pub struct ChatState {
     pub messages: Vec<ChatMessage>,
     pub scroll_offset: usize,
