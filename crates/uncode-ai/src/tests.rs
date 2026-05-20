@@ -223,15 +223,19 @@ mod tests {
 
     #[test]
     fn test_glm_5_1_builtin_reasoning_stream_format() {
-        let model = builtin_models()
-            .into_iter()
-            .find(|m| m.id == "glm-5.1")
-            .expect("glm-5.1 builtin");
+        use crate::provider_preset::apply_provider_preset;
+        let model = apply_provider_preset(
+            builtin_models()
+                .into_iter()
+                .find(|m| m.id == "glm-5.1")
+                .expect("glm-5.1 builtin"),
+        );
         assert!(model.reasoning);
         assert_eq!(
             model.effective_thinking_format(),
             Some(ThinkingFormat::DeepSeek)
         );
+        assert!(model.compat.done_breaks_stream);
     }
 
     #[test]
