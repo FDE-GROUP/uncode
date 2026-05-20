@@ -25,6 +25,9 @@ uncode/
 │   │   ├── LLM_DRIVER_DESIGN.md
 │   │   ├── LLM_DRIVER_COMPARISON_PI.md
 │   │   └── LLM_DRIVER_UPGRADE_FEASIBILITY.md
+│   ├── opencode-technologies/  #   OpenCode 上游实现层文档（基于 ~/EA/opencode 源码）
+│   │   ├── OPENCODE_OVERVIEW.md
+│   │   └── …
 │   └── uncode-technologies/  #   实现层技术文档（与源码同步）
 │       ├── UNCODE_OVERVIEW.md
 │       ├── UNCODE_SESSION_MODEL.md
@@ -91,6 +94,8 @@ cargo clippy             # lint 检查
 - Harness Engineering 术语索引（中英） → `HARNESS_ENGINEERING_GLOSSARY.md`
 - Coding Agent 工具开发指南 → `CODING_AGENT_TOOL_DEVELOPMENT.md`
 - OpenCode 与 Pi 架构/功能/哲学对比（独立技术分析） → `OPENCODE_VS_PI.md`
+- OpenCode 上游实现层文档（`~/EA/opencode` 源码） → `docs/opencode-technologies/OPENCODE_OVERVIEW.md` 系列
+- 术语是否与 Pi/OpenCode 趋同或引用 → `TERMINOLOGY_ALIGNMENT_STRATEGY.md`
 - uncode 对 Pi 的 Rust 复刻：哲学/机制/存储/扩展深度评价 → `UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`
 
 后续设计文档编写时，请读取 @docs/VISION.md 确保一致性，参考 opencode 的 AGENTS.md 规范格式。
