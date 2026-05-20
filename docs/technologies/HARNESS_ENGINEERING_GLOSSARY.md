@@ -343,6 +343,7 @@
 
 ## 相关文档
 
+- [四份术语索引对照说明](GLOSSARIES_COMPARISON.md) — 本表与 Pi / OpenCode / uncode 术语索引的差异与阅读顺序
 - [Harness Engineering 深度解读](HARNESS_ENGINEERING.md) — 概念、案例与参考文献正文
 - [Coding Agent 工具开发指南](CODING_AGENT_TOOL_DEVELOPMENT.md) — 基于 Harness 的自研产品路径
 

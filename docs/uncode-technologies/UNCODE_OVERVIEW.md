@@ -45,6 +45,8 @@ uncode 是一个 **以 Pi（earendil-works/pi）为架构与哲学参照** 的 R
 
 | 文档 | 内容 |
 |------|------|
+| [术语索引](UNCODE_TECHNOLOGIES_GLOSSARY.md) | **中英对照术语表**（读本系列前的速查） |
+| [术语对齐策略](../technologies/TERMINOLOGY_ALIGNMENT_STRATEGY.md) | 与 Pi/OpenCode 趋同还是引用的策略论述 |
 | [架构总览](UNCODE_OVERVIEW.md) | 三层架构、依赖图、设计决策（本文档） |
 | [循环引擎](UNCODE_LOOP_ENGINE.md) | 双层循环、Turn 生命周期、Steering、压缩 |
 | [LLM 抽象层](UNCODE_LLM_LAYER.md) | Api trait、4 种协议、StreamEvent、模型注册 |

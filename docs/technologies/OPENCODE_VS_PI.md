@@ -135,6 +135,7 @@ Pi 明确拆成 **三个可独立发布的 npm 包** + 终端与 Web UI 库：
 - 根目录 `README.md`：Agent 模式、安装与桌面版说明  
 - `packages/llm/README.md`：Schema-first LLM 与缓存策略  
 - `packages/opencode/AGENTS.md`：Effect 模块约定与数据库迁移说明  
+- **uncode 仓库内实现层文档**（基于 `~/EA/opencode` 源码）：[`../opencode-technologies/OPENCODE_OVERVIEW.md`](../opencode-technologies/OPENCODE_OVERVIEW.md) 系列  
 
 **Pi**
 

@@ -44,6 +44,7 @@ Pi Agent 是**三层架构**，每层有独立的状态管理和职责边界：
 
 | 文档 | 内容 |
 |------|------|
+| [PI_TECHNOLOGIES_GLOSSARY.md](PI_TECHNOLOGIES_GLOSSARY.md) | **术语索引**（中英对照，读本系列前的速查表） |
 | [PI_LOOP_ENGINE.md](PI_LOOP_ENGINE.md) | 双层循环架构、Turn 生命周期、agentLoop API、Agent 生命周期管理 |
 | [PI_LLM_LAYER.md](PI_LLM_LAYER.md) | pi-ai 抽象层、Provider 注册、高级特性、Stream Options、Proxy Stream |
 | [PI_EVENT_SYSTEM.md](PI_EVENT_SYSTEM.md) | AgentEvent（10 种）、AgentHarness 事件（20+）、Hook 返回值语义、订阅模型 |
