@@ -242,15 +242,16 @@ impl Api for OllamaNativeApi {
         options: &StreamOptions,
     ) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
         let body = build_ollama_body(model, context, options);
+        crate::notify_request_payload(options, &body);
         let url = format!("{}/api/chat", model.base_url);
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&body)
+        let req = crate::apply_option_headers(self.client.post(&url).json(&body), options);
+        let response = req
             .send()
             .await
             .map_err(|e| UncodeError::Network(e.to_string()))?;
+
+        crate::notify_http_response(options, response.status().as_u16(), response.headers());
 
         if !response.status().is_success() {
             let text = response.text().await.unwrap_or_default();

@@ -17,7 +17,10 @@ use crate::steering::MessageQueue;
 use crate::tools::registry::ToolRegistry;
 use uncode_ai::StreamEvent;
 use uncode_ai::{ApiRegistry, ModelRegistry};
-use uncode_core::api_types::{Context, StreamOptions, ThinkingLevel, TransformContextCallback};
+use uncode_core::api_types::{
+    Context, PayloadCallback, ResponseCallback, StreamOptions, ThinkingLevel,
+    TransformContextCallback,
+};
 use uncode_core::error::HarnessError;
 use uncode_core::error::UncodeError;
 use uncode_core::event::AgentEvent;
@@ -61,6 +64,8 @@ pub struct AgentLoop {
     should_stop_after_turn: Option<Arc<dyn Fn(u64) -> bool + Send + Sync>>,
     prepare_next_turn: Option<Arc<dyn Fn() + Send + Sync>>,
     transform_context: Option<TransformContextCallback>,
+    on_payload: Option<PayloadCallback>,
+    on_response: Option<ResponseCallback>,
     active_run: Arc<AtomicBool>,
     graph_cache: Option<Arc<crate::workspace_graph::WorkspaceGraphCache>>,
 }
@@ -92,6 +97,8 @@ impl AgentLoop {
             should_stop_after_turn: None,
             prepare_next_turn: None,
             transform_context: None,
+            on_payload: None,
+            on_response: None,
             active_run: Arc::new(AtomicBool::new(false)),
             graph_cache: None,
         }
@@ -124,6 +131,8 @@ impl AgentLoop {
             should_stop_after_turn: None,
             prepare_next_turn: None,
             transform_context: None,
+            on_payload: None,
+            on_response: None,
             active_run: Arc::new(AtomicBool::new(false)),
             graph_cache: None,
         }
@@ -171,6 +180,16 @@ impl AgentLoop {
 
     pub fn set_transform_context(&mut self, cb: TransformContextCallback) {
         self.transform_context = Some(cb);
+    }
+
+    /// 观测即将发往 LLM 的 JSON 请求体（对齐 Pi `on_payload`）。
+    pub fn set_on_payload(&mut self, cb: PayloadCallback) {
+        self.on_payload = Some(cb);
+    }
+
+    /// 观测 LLM HTTP 响应头（对齐 Pi `on_response`）。
+    pub fn set_on_response(&mut self, cb: ResponseCallback) {
+        self.on_response = Some(cb);
     }
 
     pub fn cancel(&self) {
@@ -593,6 +612,9 @@ impl AgentLoop {
                     temperature: Some(0.7),
                     max_tokens: Some(8192),
                     thinking_level,
+                    session_id: self.session_id.clone(),
+                    on_payload: self.on_payload.clone(),
+                    on_response: self.on_response.clone(),
                     ..StreamOptions::default()
                 };
 
@@ -604,7 +626,7 @@ impl AgentLoop {
                         self.emit(AgentEvent::AgentInterrupted { turn, partial_response: false });
                         break 'outer;
                     }
-                    result = uncode_ai::stream(model, &context, &options, &self.api_registry) => result?,
+                    result = uncode_ai::stream_simple(model, &context, &options, &self.api_registry) => result?,
                 };
 
                 let mut current_text = String::with_capacity(2048);
