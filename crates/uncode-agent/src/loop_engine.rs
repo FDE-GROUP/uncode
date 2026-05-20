@@ -1070,7 +1070,7 @@ impl AgentLoop {
                                     });
 
                                     let args_short = summarize_tool_args(
-                                        exec_args_by_id.get(id).map(String::as_str).unwrap_or(""),
+                                        exec_args_by_id.get(id).map(|s| s.as_str()).unwrap_or(""),
                                     );
                                     let label = format_tool_phase_label(name, &args_short);
                                     if is_error {

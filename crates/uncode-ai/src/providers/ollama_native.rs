@@ -32,7 +32,7 @@ impl Default for OllamaNativeApi {
 fn build_chat_messages(context: &Context) -> Vec<Value> {
     let mut messages: Vec<Value> = Vec::new();
 
-    if let Some(ref system) = context.system_prompt {
+    if let Some(system) = context.system_prompt.as_deref() {
         messages.push(serde_json::json!({
             "role": "system",
             "content": system
@@ -254,32 +254,22 @@ impl Api for OllamaNativeApi {
         crate::notify_http_response(options, response.status().as_u16(), response.headers());
 
         if !response.status().is_success() {
-            let text = response.text().await.unwrap_or_default();
-            return Err(UncodeError::Llm(text));
+            return Err(crate::providers::http_error_from_response(response).await);
         }
 
         let state = OllamaToolState::new();
-        let buf = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let buf = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::providers::NdjsonLineBuffer::new(),
+        ));
         let buf2 = buf.clone();
         let stream = response
             .bytes_stream()
             .scan((state, buf), |(state, buf), chunk| {
                 let events: Vec<StreamEvent> = match chunk {
                     Ok(c) => {
-                        buf.lock().unwrap().push_str(&String::from_utf8_lossy(&c));
                         let mut all_events = Vec::new();
-                        loop {
-                            let locked = buf.lock().unwrap();
-                            let pos = match locked.find('\n') {
-                                Some(p) => p,
-                                None => break,
-                            };
-                            let line = locked[..pos].trim().to_string();
-                            drop(locked);
-                            buf.lock().unwrap().drain(..=pos);
-                            if line.is_empty() {
-                                continue;
-                            }
+                        let mut guard = buf.lock().expect("ollama stream buffer lock");
+                        for line in guard.push_chunk_and_drain_lines(&c) {
                             all_events.extend(parse_ollama_chunk(&line, state));
                         }
                         all_events
@@ -294,11 +284,11 @@ impl Api for OllamaNativeApi {
             .flatten()
             .chain(stream::once({
                 async move {
-                    let remaining = buf2.lock().unwrap().trim().to_string();
-                    if !remaining.is_empty() {
+                    let guard = buf2.lock().expect("ollama stream buffer lock");
+                    if let Some(message) = guard.trailing_error_message("ollama") {
                         return StreamEvent::Error {
                             reason: StopReason::Error,
-                            message: format!("ollama: incomplete chunk: {remaining:.100}"),
+                            message,
                         };
                     }
                     StreamEvent::Done {
@@ -308,5 +298,40 @@ impl Api for OllamaNativeApi {
             }));
 
         Ok(Box::pin(stream))
+    }
+}
+
+#[cfg(test)]
+mod stream_buffer_tests {
+    use super::{OllamaToolState, parse_ollama_chunk};
+    use crate::api::StreamEvent;
+    use crate::providers::NdjsonLineBuffer;
+
+    #[test]
+    fn ndjson_buffer_splits_ollama_lines() {
+        let mut state = OllamaToolState::new();
+        let mut buf = NdjsonLineBuffer::new();
+        buf.push_chunk(br#"{"message":{"content":"hel"#);
+        assert!(buf.drain_complete_lines().is_empty());
+        buf.push_chunk(b"lo\"}}\n");
+        let lines = buf.drain_complete_lines();
+        assert_eq!(lines.len(), 1);
+        let events = parse_ollama_chunk(&lines[0], &mut state);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::TextDelta(s) if s == "hello"))
+        );
+    }
+
+    #[test]
+    fn trailing_incomplete_line_surfaces_error() {
+        let mut partial = NdjsonLineBuffer::new();
+        partial.push_chunk(br#"{"partial":true}"#);
+        let msg = partial
+            .trailing_error_message("ollama")
+            .expect("should report incomplete");
+        assert!(msg.contains("ollama"));
+        assert!(msg.contains("partial"));
     }
 }

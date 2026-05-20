@@ -63,7 +63,7 @@ impl ToolExecutor for ReadTool {
                         resolved.display()
                     ))
                 })?
-                .filter_map(|e| e.ok())
+                .filter_map(Result::ok)
                 .map(|e| {
                     let name = e.file_name().to_string_lossy().to_string();
                     if e.path().is_dir() {

@@ -106,30 +106,41 @@ impl ToolExecutor for WebSearchTool {
             .await
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("parse response: {e}")))?;
 
-        let mut output = String::new();
+        use std::fmt::Write;
 
-        if let Some(answer) = &tavily.answer
+        let mut output = String::new();
+        let results_len = tavily.results.len();
+        let reserve_hint: usize = tavily
+            .answer
+            .as_ref()
+            .map(|a| a.len())
+            .unwrap_or(0)
+            .saturating_add(results_len.saturating_mul(128));
+        output.reserve(reserve_hint);
+
+        if let Some(answer) = tavily.answer.as_deref()
             && !answer.is_empty()
         {
             output.push_str(answer);
             output.push_str("\n\n");
         }
 
-        if tavily.results.is_empty() {
+        if results_len == 0 {
             output.push_str("No results found.");
             return Ok(output);
         }
 
-        output.push_str(&format!("Found {} results:\n\n", tavily.results.len()));
+        let _ = write!(output, "Found {results_len} results:\n\n");
 
         for (i, result) in tavily.results.iter().enumerate() {
-            output.push_str(&format!(
+            let _ = write!(
+                output,
                 "{}. {} ({})\n   {}\n\n",
                 i + 1,
                 result.title,
                 result.url,
                 result.content.trim()
-            ));
+            );
         }
 
         Ok(output)

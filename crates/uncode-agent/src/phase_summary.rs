@@ -237,15 +237,7 @@ async fn llm_one_shot(
 
 /// Shorten tool arguments for phase summary context lines.
 pub fn summarize_tool_args(raw: &str) -> String {
-    let t = raw.trim();
-    if t.is_empty() {
-        return String::new();
-    }
-    if t.chars().count() <= 48 {
-        t.to_string()
-    } else {
-        format!("{}…", t.chars().take(48).collect::<String>())
-    }
+    uncode_core::text::truncate_chars_trimmed(raw, 48)
 }
 
 pub fn format_tool_phase_label(tool_name: &str, args_short: &str) -> String {
@@ -258,15 +250,7 @@ pub fn format_tool_phase_label(tool_name: &str, args_short: &str) -> String {
 
 /// Truncate assistant text for the phase-summary prompt.
 pub fn assistant_snippet_for_phase(text: &str, max_chars: usize) -> String {
-    let t = text.trim();
-    if t.is_empty() {
-        return String::new();
-    }
-    if t.chars().count() <= max_chars {
-        t.to_string()
-    } else {
-        format!("{}…", t.chars().take(max_chars).collect::<String>())
-    }
+    uncode_core::text::truncate_chars_trimmed(text, max_chars)
 }
 
 #[cfg(test)]
@@ -288,5 +272,31 @@ mod tests {
         let long = "字".repeat(100);
         let s = assistant_snippet_for_phase(&long, 20);
         assert!(s.ends_with('…'));
+    }
+
+    #[test]
+    fn summarize_tool_args_empty_and_short() {
+        assert_eq!(summarize_tool_args("   "), "");
+        assert_eq!(
+            summarize_tool_args(r#"{"path":"a.rs"}"#),
+            r#"{"path":"a.rs"}"#
+        );
+    }
+
+    #[test]
+    fn summarize_tool_args_truncates_long_json() {
+        let long = format!(r#"{{"path":"{}"}}"#, "x".repeat(80));
+        let s = summarize_tool_args(&long);
+        assert!(s.ends_with('…'));
+        assert!(s.chars().count() <= 49);
+    }
+
+    #[test]
+    fn format_tool_phase_label_with_and_without_args() {
+        assert_eq!(format_tool_phase_label("read", ""), "read");
+        assert_eq!(
+            format_tool_phase_label("grep", "pattern=foo"),
+            "grep(pattern=foo)"
+        );
     }
 }

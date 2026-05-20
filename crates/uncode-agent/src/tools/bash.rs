@@ -230,7 +230,8 @@ impl ToolExecutor for BashTool {
         let exit_ok = status.success();
         let exit_code = status.code();
         if !exit_ok {
-            output.push_str(&format!("exit code: {}\n", exit_code.unwrap_or(-1)));
+            use std::fmt::Write;
+            let _ = write!(output, "exit code: {}\n", exit_code.unwrap_or(-1));
         }
 
         let output = truncate_output(&output, self.max_output_bytes);

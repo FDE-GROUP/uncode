@@ -1182,13 +1182,7 @@ fn message_text_len(msg: &ChatMessage) -> usize {
 
 fn truncate_preview(s: &str, max_chars: usize) -> String {
     let t = s.trim().replace('\n', " ");
-    if t.chars().count() <= max_chars {
-        t
-    } else {
-        let mut out: String = t.chars().take(max_chars).collect();
-        out.push('…');
-        out
-    }
+    uncode_core::text::truncate_chars(&t, max_chars)
 }
 
 /// 从助手 Markdown 提取 `- [ ]` / `- [x]` 待办（必要时展示 Todos）

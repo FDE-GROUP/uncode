@@ -18,6 +18,7 @@ pub mod model;
 pub mod session;
 pub mod skill;
 pub mod template;
+pub mod text;
 pub mod tool;
 pub mod workspace_graph;
 

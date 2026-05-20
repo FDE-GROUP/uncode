@@ -70,7 +70,7 @@ fn grep_files(
     for entry in walkdir::WalkDir::new(search_path)
         .max_depth(20)
         .into_iter()
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .filter(|e| e.file_type().is_file())
     {
         if count >= MAX_RESULTS {

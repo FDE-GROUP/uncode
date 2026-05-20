@@ -242,7 +242,7 @@ pub fn build_graph(root: &Path, config: &BundleConfig) -> WorkspaceGraph {
 
     let ignore_dirs: Vec<&str> = DEFAULT_IGNORE_DIRS.to_vec();
 
-    for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
         let path = entry.path();
 
         // Skip non-.rs files

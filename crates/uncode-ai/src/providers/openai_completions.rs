@@ -36,7 +36,7 @@ impl Default for OpenAiCompletionsApi {
 fn build_chat_messages(context: &Context, compat: &CompatConfig) -> Vec<Value> {
     let mut messages: Vec<Value> = Vec::new();
 
-    if let Some(ref system) = context.system_prompt {
+    if let Some(system) = context.system_prompt.as_deref() {
         let role = if compat.supports_developer_role {
             "developer"
         } else {
@@ -368,14 +368,6 @@ fn extract_usage(event: &Value) -> Option<StreamEvent> {
     })
 }
 
-fn map_http_error(status: reqwest::StatusCode, body: String) -> UncodeError {
-    match status.as_u16() {
-        401 | 403 => UncodeError::LlmAuth(body),
-        429 => UncodeError::LlmRateLimit(body),
-        _ => UncodeError::Llm(format!("HTTP {status}: {body}")),
-    }
-}
-
 // ── Api trait 实现 ──
 
 #[async_trait]
@@ -427,10 +419,7 @@ impl Api for OpenAiCompletionsApi {
         crate::notify_http_response(options, response.status().as_u16(), response.headers());
 
         if !response.status().is_success() {
-            return Err(map_http_error(
-                response.status(),
-                response.text().await.unwrap_or_default(),
-            ));
+            return Err(crate::providers::http_error_from_response(response).await);
         }
 
         let mut compat = model.compat.clone();
@@ -438,11 +427,21 @@ impl Api for OpenAiCompletionsApi {
             compat.thinking_format = model.thinking_format;
         }
         let state = StreamState::new();
+        let line_buf = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::providers::NdjsonLineBuffer::new(),
+        ));
         let stream = response
             .bytes_stream()
-            .scan(state, move |state, chunk| {
+            .scan((state, line_buf), move |(state, line_buf), chunk| {
                 let events: Vec<StreamEvent> = match chunk {
-                    Ok(c) => parse_sse_chunk(&String::from_utf8_lossy(&c), state, &compat),
+                    Ok(c) => {
+                        let mut all_events = Vec::new();
+                        let mut guard = line_buf.lock().expect("openai sse buffer lock");
+                        for line in guard.push_chunk_and_drain_lines(&c) {
+                            all_events.extend(parse_sse_chunk(&line, state, &compat));
+                        }
+                        all_events
+                    }
                     Err(e) => vec![StreamEvent::Error {
                         reason: crate::api_types::StopReason::Error,
                         message: e.to_string(),
@@ -458,5 +457,72 @@ impl Api for OpenAiCompletionsApi {
             }));
 
         Ok(Box::pin(stream))
+    }
+}
+
+#[cfg(test)]
+mod stream_buffer_tests {
+    use super::{StreamState, parse_sse_chunk, parse_streamed_tool_arguments};
+    use crate::api::StreamEvent;
+    use crate::api_types::CompatConfig;
+    use crate::providers::NdjsonLineBuffer;
+
+    #[test]
+    fn ndjson_buffer_lines_drive_sse_parser() {
+        let compat = CompatConfig::default();
+        let mut state = StreamState::new();
+        let mut buf = NdjsonLineBuffer::new();
+        let chunk = br#"data: {"choices":[{"delta":{"content":"hi"}}]}
+data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+"#;
+        let mut events = Vec::new();
+        for line in buf.push_chunk_and_drain_lines(chunk) {
+            events.extend(parse_sse_chunk(&line, &mut state, &compat));
+        }
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::TextDelta(s) if s == "hi"))
+        );
+        assert!(events.iter().any(|e| matches!(e, StreamEvent::Done { .. })));
+    }
+
+    #[test]
+    fn sse_tool_call_roundtrip_through_buffer() {
+        let compat = CompatConfig::default();
+        let mut state = StreamState::new();
+        let mut buf = NdjsonLineBuffer::new();
+        let chunk = br#"data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read","arguments":"{\"path\":"}}]}}]}
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a\"}"}}]}}]}
+"#;
+        let mut events = Vec::new();
+        for line in buf.push_chunk_and_drain_lines(chunk) {
+            events.extend(parse_sse_chunk(&line, &mut state, &compat));
+        }
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::ToolCallStart { name, .. } if name == "read"))
+        );
+        assert!(events.iter().any(|e| matches!(
+            e,
+            StreamEvent::ToolCallDelta { id, arguments }
+                if id == "call_1" && arguments.contains("path")
+        )));
+    }
+
+    #[test]
+    fn parse_streamed_tool_arguments_repairs_truncated_object() {
+        let raw = r#"{"path":"src/main.rs","line":1"#;
+        let v = parse_streamed_tool_arguments(raw).expect("repaired json");
+        assert_eq!(v["path"], "src/main.rs");
+        assert_eq!(v["line"], 1);
+    }
+
+    #[test]
+    fn parse_streamed_tool_arguments_valid_unchanged() {
+        let raw = r#"{"path":"a.rs"}"#;
+        let v = parse_streamed_tool_arguments(raw).unwrap();
+        assert_eq!(v["path"], "a.rs");
     }
 }

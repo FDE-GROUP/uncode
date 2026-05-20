@@ -30,7 +30,7 @@ impl Default for GeminiGenerativeAiApi {
 fn build_gemini_body(_model: &Model, context: &Context, options: &StreamOptions) -> Value {
     let mut contents = Vec::new();
 
-    if let Some(ref system) = context.system_prompt {
+    if let Some(system) = context.system_prompt.as_deref() {
         contents.push(
             serde_json::json!({"role": "user", "parts": [{"text": format!("System: {system}")}]}),
         );
@@ -181,29 +181,32 @@ impl Api for GeminiGenerativeAiApi {
         crate::notify_http_response(options, response.status().as_u16(), response.headers());
 
         if !response.status().is_success() {
-            let status = response.status();
-            return Err(match status.as_u16() {
-                401 | 403 => UncodeError::LlmAuth(response.text().await.unwrap_or_default()),
-                429 => UncodeError::LlmRateLimit(response.text().await.unwrap_or_default()),
-                _ => UncodeError::Llm(format!(
-                    "HTTP {status}: {}",
-                    response.text().await.unwrap_or_default()
-                )),
-            });
+            return Err(crate::providers::http_error_from_response(response).await);
         }
 
+        let line_buf = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::providers::NdjsonLineBuffer::new(),
+        ));
         let stream = response
             .bytes_stream()
-            .flat_map(|chunk| {
+            .scan(line_buf, move |line_buf, chunk| {
                 let events: Vec<StreamEvent> = match chunk {
-                    Ok(c) => parse_gemini_chunk(&String::from_utf8_lossy(&c)),
+                    Ok(c) => {
+                        let mut all_events = Vec::new();
+                        let mut guard = line_buf.lock().expect("gemini sse buffer lock");
+                        for line in guard.push_chunk_and_drain_lines(&c) {
+                            all_events.extend(parse_gemini_chunk(&line));
+                        }
+                        all_events
+                    }
                     Err(e) => vec![StreamEvent::Error {
                         reason: crate::api_types::StopReason::Error,
                         message: e.to_string(),
                     }],
                 };
-                stream::iter(events)
+                std::future::ready(Some(stream::iter(events)))
             })
+            .flatten()
             .chain(stream::once(async {
                 StreamEvent::Done {
                     reason: StopReason::Stop,
@@ -211,5 +214,43 @@ impl Api for GeminiGenerativeAiApi {
             }));
 
         Ok(Box::pin(stream))
+    }
+}
+
+#[cfg(test)]
+mod stream_buffer_tests {
+    use super::parse_gemini_chunk;
+    use crate::api::StreamEvent;
+    use crate::providers::NdjsonLineBuffer;
+
+    #[test]
+    fn ndjson_buffer_lines_drive_gemini_parser() {
+        let mut buf = NdjsonLineBuffer::new();
+        let chunk = br#"data: {"candidates":[{"content":{"parts":[{"text":"yo"}]}}]}
+"#;
+        let mut events = Vec::new();
+        for line in buf.push_chunk_and_drain_lines(chunk) {
+            events.extend(parse_gemini_chunk(&line));
+        }
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::TextDelta(s) if s == "yo"))
+        );
+    }
+
+    #[test]
+    fn buffer_splits_chunk_before_data_prefix() {
+        let mut buf = NdjsonLineBuffer::new();
+        buf.push_chunk(b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ab");
+        assert!(buf.drain_complete_lines().is_empty());
+        let lines = buf.push_chunk_and_drain_lines(b"\"}]}}]}\n");
+        assert_eq!(lines.len(), 1);
+        let events = parse_gemini_chunk(&lines[0]);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::TextDelta(s) if s == "ab"))
+        );
     }
 }

@@ -173,25 +173,18 @@ fn apply_hashline_edits(
         let start_idx = edit.start_line - 1; // 0-based
         let end_idx = edit.end_line.map(|l| l - 1).unwrap_or(start_idx);
 
-        let new_content_lines: Vec<&str> = edit.new_lines.lines().collect();
+        let new_content_lines: Vec<String> = edit.new_lines.lines().map(str::to_string).collect();
 
         match edit.op.as_str() {
             "replace" => {
-                result_lines.drain(start_idx..=end_idx);
-                for (i, new_line) in new_content_lines.iter().enumerate() {
-                    result_lines.insert(start_idx + i, new_line.to_string());
-                }
+                result_lines.splice(start_idx..=end_idx, new_content_lines);
             }
             "prepend" => {
-                for (i, new_line) in new_content_lines.iter().enumerate() {
-                    result_lines.insert(start_idx + i, new_line.to_string());
-                }
+                result_lines.splice(start_idx..start_idx, new_content_lines);
             }
             "append" => {
                 let insert_at = end_idx + 1;
-                for (i, new_line) in new_content_lines.iter().enumerate() {
-                    result_lines.insert(insert_at + i, new_line.to_string());
-                }
+                result_lines.splice(insert_at..insert_at, new_content_lines);
             }
             other => {
                 return Err(UncodeError::Tool(format!("unknown op: {other}")));
@@ -232,4 +225,75 @@ fn apply_legacy_edit(
     }
 
     Ok(old_content.replacen(old_string, new_string, 1))
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use super::*;
+    use crate::tools::hashline::compute_line_hash;
+
+    fn anchor(line_no: usize, line_text: &str) -> String {
+        let h = compute_line_hash(line_text);
+        format!("{line_no}#{}", String::from_utf8_lossy(&h))
+    }
+
+    #[test]
+    fn legacy_replace_unique_match() {
+        let content = "foo bar\n";
+        let args = serde_json::json!({
+            "old_string": "bar",
+            "new_string": "baz"
+        });
+        let out = apply_legacy_edit(content, &args).unwrap();
+        assert_eq!(out, "foo baz\n");
+    }
+
+    #[test]
+    fn legacy_replace_ambiguous_returns_error() {
+        let content = "x\nx\n";
+        let args = serde_json::json!({
+            "old_string": "x",
+            "new_string": "y"
+        });
+        assert!(apply_legacy_edit(content, &args).is_err());
+    }
+
+    #[test]
+    fn hashline_replace_via_splice() {
+        let content = "alpha\nbeta\ngamma\n";
+        let pos = anchor(2, "beta");
+        let edits = serde_json::json!([{
+            "op": "replace",
+            "pos": pos,
+            "lines": "BETA"
+        }]);
+        let out = apply_hashline_edits(content, &edits).unwrap();
+        assert_eq!(out, "alpha\nBETA\ngamma\n");
+    }
+
+    #[test]
+    fn hashline_append_inserts_after_range() {
+        let content = "one\ntwo\n";
+        let pos = anchor(1, "one");
+        let edits = serde_json::json!([{
+            "op": "append",
+            "pos": pos,
+            "lines": "extra"
+        }]);
+        let out = apply_hashline_edits(content, &edits).unwrap();
+        assert_eq!(out, "one\nextra\ntwo\n");
+    }
+
+    #[test]
+    fn hashline_prepend_inserts_before_line() {
+        let content = "one\ntwo\n";
+        let pos = anchor(2, "two");
+        let edits = serde_json::json!([{
+            "op": "prepend",
+            "pos": pos,
+            "lines": "mid"
+        }]);
+        let out = apply_hashline_edits(content, &edits).unwrap();
+        assert_eq!(out, "one\nmid\ntwo\n");
+    }
 }
