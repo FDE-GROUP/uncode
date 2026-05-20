@@ -482,7 +482,7 @@ async fn generate_summary(
         ..StreamOptions::default()
     };
 
-    let mut stream = uncode_ai::stream(model, &context, &options, api_registry).await?;
+    let mut stream = uncode_ai::stream_simple(model, &context, &options, api_registry).await?;
     let mut summary = String::with_capacity(512);
     while let Some(event) = stream.next().await {
         if let StreamEvent::TextDelta(text) = event {

@@ -171,6 +171,95 @@ impl Default for CompatConfig {
     }
 }
 
+impl CompatConfig {
+    /// 厂商 preset 为 base，模型级 `compat` 中非 default 字段覆盖 base。
+    pub fn merge_with_overlay(base: &CompatConfig, overlay: &CompatConfig) -> CompatConfig {
+        let d = CompatConfig::default();
+        CompatConfig {
+            supports_developer_role: pick_bool(
+                base.supports_developer_role,
+                overlay.supports_developer_role,
+                d.supports_developer_role,
+            ),
+            supports_reasoning_effort: pick_bool(
+                base.supports_reasoning_effort,
+                overlay.supports_reasoning_effort,
+                d.supports_reasoning_effort,
+            ),
+            supports_usage_in_streaming: pick_bool(
+                base.supports_usage_in_streaming,
+                overlay.supports_usage_in_streaming,
+                d.supports_usage_in_streaming,
+            ),
+            supports_strict_mode: pick_bool(
+                base.supports_strict_mode,
+                overlay.supports_strict_mode,
+                d.supports_strict_mode,
+            ),
+            max_tokens_field: if overlay.max_tokens_field != d.max_tokens_field {
+                overlay.max_tokens_field
+            } else {
+                base.max_tokens_field
+            },
+            requires_tool_result_name: pick_bool(
+                base.requires_tool_result_name,
+                overlay.requires_tool_result_name,
+                d.requires_tool_result_name,
+            ),
+            requires_assistant_after_tool_result: pick_bool(
+                base.requires_assistant_after_tool_result,
+                overlay.requires_assistant_after_tool_result,
+                d.requires_assistant_after_tool_result,
+            ),
+            requires_thinking_as_text: pick_bool(
+                base.requires_thinking_as_text,
+                overlay.requires_thinking_as_text,
+                d.requires_thinking_as_text,
+            ),
+            done_breaks_stream: pick_bool(
+                base.done_breaks_stream,
+                overlay.done_breaks_stream,
+                d.done_breaks_stream,
+            ),
+            thinking_format: overlay.thinking_format.or(base.thinking_format),
+            send_session_affinity_headers: pick_bool(
+                base.send_session_affinity_headers,
+                overlay.send_session_affinity_headers,
+                d.send_session_affinity_headers,
+            ),
+            supports_long_cache_retention: pick_bool(
+                base.supports_long_cache_retention,
+                overlay.supports_long_cache_retention,
+                d.supports_long_cache_retention,
+            ),
+            supports_store: pick_bool(
+                base.supports_store,
+                overlay.supports_store,
+                d.supports_store,
+            ),
+            requires_reasoning_content_on_assistant_messages: pick_bool(
+                base.requires_reasoning_content_on_assistant_messages,
+                overlay.requires_reasoning_content_on_assistant_messages,
+                d.requires_reasoning_content_on_assistant_messages,
+            ),
+            supports_eager_tool_input_streaming: pick_bool(
+                base.supports_eager_tool_input_streaming,
+                overlay.supports_eager_tool_input_streaming,
+                d.supports_eager_tool_input_streaming,
+            ),
+            supports_cache_control_on_tools: pick_bool(
+                base.supports_cache_control_on_tools,
+                overlay.supports_cache_control_on_tools,
+                d.supports_cache_control_on_tools,
+            ),
+        }
+    }
+}
+
+fn pick_bool(base: bool, overlay: bool, default: bool) -> bool {
+    if overlay != default { overlay } else { base }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MaxTokensField {
