@@ -1,7 +1,10 @@
-//! uncode-tui — 对话驱动终端交互界面
+//! uncode-tui — 对话驱动终端交互界面（L3 产品层）。
 //!
-//! 基于 ratatui + crossterm 实现，订阅 AgentLoop 事件流，
-//! 实时渲染对话区：用户消息、Agent 回复、内联工具调用。
+//! 基于 ratatui + crossterm，订阅 [`AgentEvent`](uncode_core::event::AgentEvent) 广播，
+//! 渲染对话区、工具卡片、权限门控与页脚用量。
+//!
+//! **Pi:** 无独立 TUI crate；机制上对应 Pi 终端 UI 对 `agentLoop` 事件流的消费。
+//! **OpenCode:** scrollback / 工具卡片信息密度作 UX benchmark（见 `UNCODE_TUI_ARCHITECTURE`）。
 
 pub mod chat;
 pub mod complete;
@@ -204,6 +207,10 @@ enum AgentActivity {
     Writing,
 }
 
+/// TUI 主引擎：输入、渲染、权限与对 `AgentEvent` 的订阅。
+///
+/// **Pi:** 终端侧事件消费者（Pi 无同名类型）。
+/// **OpenCode:** 对照终端 scrollback 与工具展示，非 API 兼容。
 pub struct TuiEngine {
     chat: ChatState,
     session_id: String,

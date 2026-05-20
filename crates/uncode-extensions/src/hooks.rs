@@ -4,7 +4,10 @@ use std::sync::Arc;
 use uncode_core::event::AgentEvent;
 use uncode_core::message::Message;
 
-/// Agent 生命周期钩子
+/// Agent 生命周期钩子（扩展注入点）。
+///
+/// **Pi:** 概念上接近 Pi Harness 扩展点；uncode 以 WASM 扩展 + 本枚举分发。
+/// **OpenCode:** 无 1:1 钩子名；对照插件/Hook 产品能力即可。
 pub enum LifecycleHook {
     SessionStart,
     TurnStart,
@@ -45,14 +48,18 @@ pub enum HookEvent {
     None,
 }
 
-/// 扩展 trait——所有扩展必须实现
+/// 扩展 trait — 所有 WASM/内置扩展必须实现。
+///
+/// **Pi:** 对照 Pi 扩展包生命周期；实现细节不同。
 #[async_trait::async_trait]
 pub trait Extension: Send + Sync {
     fn name(&self) -> &str;
     async fn on_hook(&self, ctx: &HookContext) -> anyhow::Result<()>;
 }
 
-/// 钩子注册表——管理所有扩展和钩子映射
+/// 钩子注册表 — 管理扩展实例与 hook 名称映射。
+///
+/// **Pi:** 无同名类型；对应「按 hook 名调度扩展」的注册中心。
 pub struct HookRegistry {
     extensions: DashMap<String, Arc<dyn Extension>>,
     hooks: DashMap<String, Vec<String>>, // hook_name → extension_names

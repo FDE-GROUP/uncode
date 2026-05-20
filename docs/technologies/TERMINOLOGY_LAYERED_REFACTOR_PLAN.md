@@ -274,8 +274,16 @@ pub async fn build_context(...) -> ...
 | 2 | #261 | ✅ 已完成 | `UNCODE_PI_MECHANISM_MAP` §5–§6；glossary §二、§七–§十一 |
 | 3 | #262 | ✅ 已完成 | 核心 crate `/// **Pi:**`；见 `CONTRIBUTING.md` 约定 |
 | 4 | — | ⏸ 默认不做 | 须单独 Issue |
+| 1+ | [#259](https://github.com/FDE-GROUP/uncode/issues/259) | 🚧 进行中 | README 对外能力表与 SurrealDB/三队列表述（`docs/259-readme-and-backlog`） |
 
-**Backlog（非阻塞合并）**：`uncode-tui` / `uncode-extensions` / `uncode-macros` 的 rustdoc；glossary 附录 A–Z 不强制 Pi 列。
+**Backlog（非阻塞，随 PR 分批）**：
+
+| 项 | Crate | 说明 |
+|----|-------|------|
+| rustdoc Pi 映射 | `uncode-tui` | `TuiEngine`、模块 `//!`（本 PR 起步） |
+| rustdoc Pi 映射 | `uncode-extensions` | `LifecycleHook`、`HookRegistry`、`Extension`（本 PR 起步） |
+| rustdoc | `uncode-macros` | 低优先级 |
+| glossary | 附录 A–Z | 不强制 Pi 列 |
 
 ---
 
