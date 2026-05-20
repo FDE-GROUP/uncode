@@ -3,7 +3,9 @@ use crate::tool_renderer::ToolRendererRegistry;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use uncode_core::event::{AgentEvent, DeltaType, ErrorCategory, TaskStatus, ToolCallStatus};
+use uncode_core::event::{
+    AgentEvent, DeltaType, ErrorCategory, TaskStatus, ToolCallEndEventData, ToolCallStatus,
+};
 
 /// 对话消息类型
 #[derive(Debug, Clone)]
@@ -64,6 +66,12 @@ pub enum ChatMessage {
     TurnDivider {
         turn: u64,
     },
+    /// 同 Turn 内多个工具调用（P2：可折叠分组）
+    ToolTurnGroup {
+        turn: u64,
+        expanded: bool,
+        entries: Vec<ToolGroupEntry>,
+    },
     /// 步骤 / 待办（TaskUpdate、PhaseSummary 或助手 Markdown 清单）
     TodoList {
         id: String,
@@ -78,6 +86,47 @@ pub enum ChatMessage {
 pub struct TodoItem {
     pub text: String,
     pub done: bool,
+}
+
+/// 单条工具项（`ToolTurnGroup` 内）
+#[derive(Debug, Clone)]
+pub enum ToolGroupEntry {
+    ToolCall {
+        tool_id: String,
+        tool_name: String,
+        arguments_summary: String,
+        status: ToolCallRenderStatus,
+        duration_ms: Option<u64>,
+        result: Option<String>,
+        expanded: bool,
+    },
+    BashExecution {
+        tool_id: String,
+        command: String,
+        description: String,
+        wd: String,
+        exit_code: Option<i32>,
+        stdout: String,
+        stderr: String,
+        duration_ms: Option<u64>,
+        with_agent: bool,
+        expanded: bool,
+    },
+}
+
+impl ToolGroupEntry {
+    fn tool_id(&self) -> &str {
+        match self {
+            Self::ToolCall { tool_id, .. } | Self::BashExecution { tool_id, .. } => tool_id,
+        }
+    }
+
+    fn tool_name_label(&self) -> &str {
+        match self {
+            Self::ToolCall { tool_name, .. } => tool_name,
+            Self::BashExecution { .. } => "bash",
+        }
+    }
 }
 
 /// 工具调用渲染状态（TUI 侧独立于 AgentEvent::ToolCallStatus）
@@ -192,6 +241,9 @@ pub struct ChatState {
     prefix_sum: Vec<usize>,
     prefix_dirty: bool,
     cached_width: u16,
+
+    /// Inner-loop turn from last `TurnStart` (0 before first turn).
+    current_turn: u64,
 }
 
 impl ChatState {
@@ -209,6 +261,7 @@ impl ChatState {
             prefix_sum: vec![0],
             prefix_dirty: false,
             cached_width: 0,
+            current_turn: 0,
         }
     }
 
@@ -261,6 +314,7 @@ impl ChatState {
                     m,
                     ChatMessage::ToolCall { .. }
                         | ChatMessage::BashExecution { .. }
+                        | ChatMessage::ToolTurnGroup { .. }
                         | ChatMessage::Thinking { .. }
                         | ChatMessage::TodoList { .. }
                 )
@@ -309,6 +363,7 @@ impl ChatState {
         match &mut self.messages[idx] {
             ChatMessage::ToolCall { expanded, .. }
             | ChatMessage::BashExecution { expanded, .. }
+            | ChatMessage::ToolTurnGroup { expanded, .. }
             | ChatMessage::Thinking { expanded, .. }
             | ChatMessage::TodoList { expanded, .. } => {
                 *expanded = !*expanded;
@@ -331,6 +386,7 @@ impl ChatState {
             match msg {
                 ChatMessage::ToolCall { expanded: e, .. }
                 | ChatMessage::BashExecution { expanded: e, .. }
+                | ChatMessage::ToolTurnGroup { expanded: e, .. }
                 | ChatMessage::Thinking { expanded: e, .. }
                 | ChatMessage::TodoList { expanded: e, .. }
                     if *e != expanded =>
@@ -636,24 +692,21 @@ impl ChatState {
             } => {
                 self.deactivate_thinking();
                 self.finalize_assistant();
-                if tool_name == "bash" {
-                    let command = extract_bash_command(&arguments_summary);
-                    let description = extract_json_str(&arguments_summary, "description");
-                    let workdir = extract_json_str(&arguments_summary, "workdir");
-                    self.push_message(ChatMessage::BashExecution {
+                let entry = if tool_name == "bash" {
+                    ToolGroupEntry::BashExecution {
                         tool_id,
-                        command,
-                        description,
-                        wd: workdir,
+                        command: extract_bash_command(&arguments_summary),
+                        description: extract_json_str(&arguments_summary, "description"),
+                        wd: extract_json_str(&arguments_summary, "workdir"),
                         exit_code: None,
                         stdout: String::new(),
                         stderr: String::new(),
                         duration_ms: None,
                         with_agent: true,
                         expanded: false,
-                    });
+                    }
                 } else {
-                    self.push_message(ChatMessage::ToolCall {
+                    ToolGroupEntry::ToolCall {
                         tool_id,
                         tool_name,
                         arguments_summary,
@@ -661,28 +714,30 @@ impl ChatState {
                         duration_ms: None,
                         result: None,
                         expanded: false,
-                    });
-                }
+                    }
+                };
+                self.push_tool_group_entry(entry);
             }
             AgentEvent::ToolCallProgress {
                 tool_id, detail, ..
             } => {
-                let idx = self.messages.iter().rposition(|m| {
-                    matches!(
-                        m,
-                        ChatMessage::ToolCall { tool_id: tid, .. }
-                        | ChatMessage::BashExecution { tool_id: tid, .. }
-                        if tid == &tool_id
-                    )
-                });
-                if let Some(idx) = idx {
-                    match &mut self.messages[idx] {
+                let Some((idx, entry_idx)) = self.locate_tool(&tool_id) else {
+                    return;
+                };
+                match entry_idx {
+                    Some(ei) => {
+                        if let ChatMessage::ToolTurnGroup { entries, .. } = &mut self.messages[idx]
+                            && let Some(entry) = entries.get_mut(ei)
+                        {
+                            apply_tool_progress(entry, &detail);
+                        }
+                    }
+                    None => match &mut self.messages[idx] {
                         ChatMessage::ToolCall {
                             arguments_summary,
                             result,
                             ..
                         } => {
-                            // Show path immediately when arguments arrive
                             if arguments_summary.is_empty() && !detail.is_empty() {
                                 *arguments_summary = detail.clone();
                             } else {
@@ -704,26 +759,27 @@ impl ChatState {
                             stdout.push('\n');
                         }
                         _ => {}
-                    }
-                    self.invalidate(idx);
+                    },
                 }
+                self.invalidate(idx);
             }
             AgentEvent::ToolCallEnd { data } => {
                 let tool_id = &data.tool_id;
                 let arguments = &data.arguments;
-                let status = data.status;
                 let duration_ms = data.duration_ms;
-                let render_status = ToolCallRenderStatus::from(status);
-                let idx = self.messages.iter().rposition(|m| {
-                    matches!(
-                        m,
-                        ChatMessage::ToolCall { tool_id: tid, .. }
-                        | ChatMessage::BashExecution { tool_id: tid, .. }
-                        if tid == tool_id
-                    )
-                });
-                if let Some(idx) = idx {
-                    match &mut self.messages[idx] {
+                let render_status = ToolCallRenderStatus::from(data.status);
+                let Some((idx, entry_idx)) = self.locate_tool(tool_id) else {
+                    return;
+                };
+                match entry_idx {
+                    Some(ei) => {
+                        if let ChatMessage::ToolTurnGroup { entries, .. } = &mut self.messages[idx]
+                            && let Some(entry) = entries.get_mut(ei)
+                        {
+                            apply_tool_end(entry, arguments, render_status, duration_ms, &data);
+                        }
+                    }
+                    None => match &mut self.messages[idx] {
                         ChatMessage::ToolCall {
                             status: s,
                             duration_ms: d,
@@ -740,7 +796,6 @@ impl ChatState {
                             }
                             if let Some(ref summary) = data.result_summary {
                                 *result = Some(summary.clone());
-                                // read 是 Agent 获取信息的环节，不自动展开
                                 if tool_name != "read" {
                                     *expanded = true;
                                 }
@@ -765,9 +820,9 @@ impl ChatState {
                             }
                         }
                         _ => {}
-                    }
-                    self.invalidate(idx);
+                    },
                 }
+                self.invalidate(idx);
             }
             AgentEvent::Error {
                 message, category, ..
@@ -781,6 +836,7 @@ impl ChatState {
                 self.apply_task_update(&data);
             }
             AgentEvent::TurnStart { turn } => {
+                self.current_turn = turn;
                 if turn > 1 {
                     self.push_message(ChatMessage::TurnDivider { turn });
                 }
@@ -938,6 +994,46 @@ impl ChatState {
         self.push_message(ChatMessage::User { text, file_refs });
     }
 
+    fn push_tool_group_entry(&mut self, entry: ToolGroupEntry) {
+        let turn = self.current_turn.max(1);
+        if let Some(ChatMessage::ToolTurnGroup {
+            turn: t, entries, ..
+        }) = self.messages.last_mut()
+            && *t == turn
+        {
+            entries.push(entry);
+            let last = self.messages.len() - 1;
+            self.invalidate(last);
+            return;
+        }
+        self.push_message(ChatMessage::ToolTurnGroup {
+            turn,
+            expanded: false,
+            entries: vec![entry],
+        });
+    }
+
+    /// `(message_index, entry_index)` — `entry_index` is `None` for legacy standalone tool cards.
+    fn locate_tool(&self, tool_id: &str) -> Option<(usize, Option<usize>)> {
+        for (mi, msg) in self.messages.iter().enumerate().rev() {
+            match msg {
+                ChatMessage::ToolCall { tool_id: tid, .. }
+                | ChatMessage::BashExecution { tool_id: tid, .. }
+                    if tid == tool_id =>
+                {
+                    return Some((mi, None));
+                }
+                ChatMessage::ToolTurnGroup { entries, .. }
+                    if let Some(ei) = entries.iter().position(|e| e.tool_id() == tool_id) =>
+                {
+                    return Some((mi, Some(ei)));
+                }
+                _ => {}
+            }
+        }
+        None
+    }
+
     /// 追加 Assistant 文本
     fn append_assistant_text(&mut self, content: &str) {
         if let Some(ChatMessage::Assistant { text, .. }) = self.messages.last_mut() {
@@ -1075,6 +1171,9 @@ fn message_text_len(msg: &ChatMessage) -> usize {
                 + next_steps.iter().map(String::len).sum::<usize>()
         }
         ChatMessage::TurnDivider { .. } => 1,
+        ChatMessage::ToolTurnGroup {
+            entries, expanded, ..
+        } => entries.len() * if *expanded { 4 } else { 1 },
         ChatMessage::TodoList { title, items, .. } => {
             title.len() + items.iter().map(|i| i.text.len()).sum::<usize>()
         }
@@ -1177,6 +1276,192 @@ fn render_todo_list(
 }
 
 /// 渲染单条消息
+fn apply_tool_progress(entry: &mut ToolGroupEntry, detail: &str) {
+    match entry {
+        ToolGroupEntry::ToolCall {
+            arguments_summary,
+            result,
+            ..
+        } => {
+            if arguments_summary.is_empty() && !detail.is_empty() {
+                *arguments_summary = detail.to_string();
+            } else {
+                let r = result.get_or_insert_with(String::new);
+                r.push_str(detail);
+                r.push('\n');
+            }
+        }
+        ToolGroupEntry::BashExecution {
+            command, stdout, ..
+        } => {
+            if command.is_empty() {
+                let cmd = extract_bash_command(detail);
+                if cmd != detail {
+                    *command = cmd;
+                }
+            }
+            stdout.push_str(detail);
+            stdout.push('\n');
+        }
+    }
+}
+
+fn apply_tool_end(
+    entry: &mut ToolGroupEntry,
+    arguments: &str,
+    render_status: ToolCallRenderStatus,
+    duration_ms: u64,
+    data: &ToolCallEndEventData,
+) {
+    match entry {
+        ToolGroupEntry::ToolCall {
+            status,
+            duration_ms: d,
+            arguments_summary,
+            result,
+            expanded,
+            tool_name,
+            ..
+        } => {
+            *status = render_status;
+            *d = Some(duration_ms);
+            if arguments_summary.is_empty() {
+                *arguments_summary = arguments.to_string();
+            }
+            if let Some(ref summary) = data.result_summary {
+                *result = Some(summary.clone());
+                if tool_name != "read" {
+                    *expanded = true;
+                }
+            }
+        }
+        ToolGroupEntry::BashExecution {
+            duration_ms: d,
+            command,
+            stdout,
+            exit_code,
+            ..
+        } => {
+            *d = Some(duration_ms);
+            if command.is_empty() && !arguments.is_empty() {
+                *command = extract_bash_command(arguments);
+            }
+            if let Some(exit_pos) = stdout.rfind("exit code:") {
+                let after = &stdout[exit_pos + 10..];
+                if let Ok(code) = after.trim().parse::<i32>() {
+                    *exit_code = Some(code);
+                }
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_tool_turn_group(
+    turn: u64,
+    expanded: bool,
+    entries: &[ToolGroupEntry],
+    width: u16,
+    renderers: &ToolRendererRegistry,
+    theme: &Theme,
+    tick: usize,
+    focused: bool,
+    tool_output_visible: bool,
+    workdir: &str,
+) -> Vec<Line<'static>> {
+    let n = entries.len();
+    let labels: Vec<String> = entries
+        .iter()
+        .map(|e| capitalize_tool(e.tool_name_label()))
+        .collect();
+    let summary = labels.join(", ");
+    let (prefix, prefix_color) = if focused {
+        if expanded {
+            ("▾ ", theme.tool_status.running)
+        } else {
+            ("▸ ", theme.tool_status.running)
+        }
+    } else {
+        ("  ", theme.ui.footer_text)
+    };
+    let mut lines = vec![Line::from(vec![
+        Span::styled(prefix, Style::default().fg(prefix_color)),
+        Span::styled(
+            format!("Turn {turn} · {n} tools"),
+            Style::default()
+                .fg(theme.ui.footer_text)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(" ({summary})"),
+            Style::default().fg(theme.ui.footer_text),
+        ),
+    ])];
+    if expanded {
+        for entry in entries {
+            let entry_lines = match entry {
+                ToolGroupEntry::ToolCall {
+                    tool_name,
+                    arguments_summary,
+                    status,
+                    duration_ms,
+                    result,
+                    expanded: e_exp,
+                    ..
+                } => render_tool_call(
+                    tool_name,
+                    arguments_summary,
+                    status,
+                    duration_ms,
+                    result,
+                    *e_exp && tool_output_visible,
+                    renderers,
+                    theme,
+                    width,
+                    tick,
+                    false,
+                    workdir,
+                ),
+                ToolGroupEntry::BashExecution {
+                    command,
+                    description,
+                    wd,
+                    exit_code,
+                    stdout,
+                    duration_ms,
+                    with_agent,
+                    expanded: e_exp,
+                    ..
+                } => render_bash(
+                    command,
+                    description,
+                    wd,
+                    exit_code,
+                    stdout,
+                    duration_ms,
+                    *with_agent,
+                    *e_exp && tool_output_visible,
+                    false,
+                    theme,
+                    tick,
+                ),
+            };
+            for mut line in entry_lines {
+                line.spans.insert(
+                    0,
+                    Span::styled("    ", Style::default().fg(theme.ui.footer_text)),
+                );
+                lines.push(line);
+            }
+            lines.push(Line::from(""));
+        }
+        if lines.last().is_some_and(|l| l.spans.is_empty()) {
+            lines.pop();
+        }
+    }
+    lines
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_message(
     msg: &ChatMessage,
@@ -1302,6 +1587,22 @@ fn render_message(
                     .add_modifier(Modifier::ITALIC),
             ))]
         }
+        ChatMessage::ToolTurnGroup {
+            turn,
+            expanded,
+            entries,
+        } => render_tool_turn_group(
+            *turn,
+            *expanded,
+            entries,
+            width,
+            renderers,
+            theme,
+            tick,
+            focused,
+            tool_output_visible,
+            workdir,
+        ),
         ChatMessage::TodoList {
             title,
             items,
@@ -1779,6 +2080,15 @@ fn extract_file_refs(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn first_tool_entry(msgs: &[ChatMessage], idx: usize) -> &ToolGroupEntry {
+        match &msgs[idx] {
+            ChatMessage::ToolTurnGroup { entries, .. } => {
+                entries.first().expect("tool group should have an entry")
+            }
+            _ => panic!("expected ToolTurnGroup at index {idx}"),
+        }
+    }
     use uncode_core::event::ErrorCategory;
     use uncode_core::event::{PhaseSummaryData, ToolCallEndEventData};
     use uncode_core::message::UsageInfo;
@@ -1863,12 +2173,12 @@ mod tests {
             }),
         });
 
-        if let ChatMessage::ToolCall {
+        if let ToolGroupEntry::ToolCall {
             status,
             duration_ms,
             expanded,
             ..
-        } = &state.messages[1]
+        } = first_tool_entry(&state.messages, 1)
         {
             assert_eq!(*status, ToolCallRenderStatus::Success);
             assert_eq!(*duration_ms, Some(42));
@@ -1877,7 +2187,7 @@ mod tests {
                 "read should not auto-expand — it's agent info gathering"
             );
         } else {
-            panic!("Expected ToolCall message");
+            panic!("Expected ToolCall entry");
         }
     }
 
@@ -1902,10 +2212,10 @@ mod tests {
                 is_error: false,
             }),
         });
-        if let ChatMessage::ToolCall { expanded, .. } = &state.messages[1] {
+        if let ToolGroupEntry::ToolCall { expanded, .. } = first_tool_entry(&state.messages, 1) {
             assert!(*expanded, "edit tools should auto-expand");
         } else {
-            panic!("Expected ToolCall");
+            panic!("Expected ToolCall entry");
         }
     }
 
@@ -1921,16 +2231,16 @@ mod tests {
             arguments_summary: String::new(),
         });
 
-        if let ChatMessage::ToolCall {
+        if let ToolGroupEntry::ToolCall {
             arguments_summary, ..
-        } = &state.messages[1]
+        } = first_tool_entry(&state.messages, 1)
         {
             assert!(
                 arguments_summary.is_empty(),
                 "summary should be empty at start"
             );
         } else {
-            panic!("Expected ToolCall message");
+            panic!("Expected ToolCall entry");
         }
 
         // LLM finishes streaming arguments → progress pushes them immediately
@@ -1940,12 +2250,12 @@ mod tests {
             detail: r#"{"path":"crates/uncode-tui/src/chat.rs"}"#.into(),
         });
 
-        if let ChatMessage::ToolCall {
+        if let ToolGroupEntry::ToolCall {
             arguments_summary,
             status,
             result,
             ..
-        } = &state.messages[1]
+        } = first_tool_entry(&state.messages, 1)
         {
             assert!(
                 arguments_summary.contains("chat.rs"),
@@ -1958,7 +2268,7 @@ mod tests {
                 "result should not contain args JSON after first progress"
             );
         } else {
-            panic!("Expected ToolCall message");
+            panic!("Expected ToolCall entry");
         }
 
         // Tool finishes → final state
@@ -1975,16 +2285,16 @@ mod tests {
             }),
         });
 
-        if let ChatMessage::ToolCall {
+        if let ToolGroupEntry::ToolCall {
             status,
             duration_ms,
             ..
-        } = &state.messages[1]
+        } = first_tool_entry(&state.messages, 1)
         {
             assert_eq!(*status, ToolCallRenderStatus::Success);
             assert_eq!(*duration_ms, Some(120));
         } else {
-            panic!("Expected ToolCall message");
+            panic!("Expected ToolCall entry");
         }
     }
 
@@ -2003,9 +2313,9 @@ mod tests {
             detail: "some output".into(),
         });
 
-        if let ChatMessage::ToolCall {
+        if let ToolGroupEntry::ToolCall {
             arguments_summary, ..
-        } = &state.messages[0]
+        } = first_tool_entry(&state.messages, 0)
         {
             assert_eq!(
                 arguments_summary, r#"{"pattern":"TODO"}"#,
@@ -2023,8 +2333,8 @@ mod tests {
             arguments_summary: r#"{"command":"cargo test"}"#.into(),
         });
         assert!(matches!(
-            &state.messages[0],
-            ChatMessage::BashExecution { command, .. } if command == "cargo test"
+            first_tool_entry(&state.messages, 0),
+            ToolGroupEntry::BashExecution { command, .. } if command == "cargo test"
         ));
     }
 
@@ -2112,6 +2422,57 @@ mod tests {
         assert!(matches!(
             &state.messages[0],
             ChatMessage::TurnDivider { turn: 2 }
+        ));
+    }
+
+    #[test]
+    fn test_tool_calls_same_turn_grouped() {
+        let mut state = ChatState::new();
+        state.handle_event(AgentEvent::TurnStart { turn: 1 });
+        state.handle_event(AgentEvent::ToolCallStart {
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            arguments_summary: "a.rs".into(),
+        });
+        state.handle_event(AgentEvent::ToolCallStart {
+            tool_id: "t2".into(),
+            tool_name: "grep".into(),
+            arguments_summary: "foo".into(),
+        });
+        assert_eq!(state.messages.len(), 1);
+        assert!(matches!(
+            &state.messages[0],
+            ChatMessage::ToolTurnGroup { turn: 1, entries, .. } if entries.len() == 2
+        ));
+    }
+
+    #[test]
+    fn test_tool_calls_new_turn_new_group() {
+        let mut state = ChatState::new();
+        state.handle_event(AgentEvent::TurnStart { turn: 1 });
+        state.handle_event(AgentEvent::ToolCallStart {
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            arguments_summary: "a.rs".into(),
+        });
+        state.handle_event(AgentEvent::TurnStart { turn: 2 });
+        state.handle_event(AgentEvent::ToolCallStart {
+            tool_id: "t2".into(),
+            tool_name: "write".into(),
+            arguments_summary: "b.rs".into(),
+        });
+        assert_eq!(state.messages.len(), 3);
+        assert!(matches!(
+            &state.messages[0],
+            ChatMessage::ToolTurnGroup { turn: 1, .. }
+        ));
+        assert!(matches!(
+            &state.messages[1],
+            ChatMessage::TurnDivider { turn: 2 }
+        ));
+        assert!(matches!(
+            &state.messages[2],
+            ChatMessage::ToolTurnGroup { turn: 2, .. }
         ));
     }
 
