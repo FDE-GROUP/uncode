@@ -1,3 +1,8 @@
+//! Agent 主循环：双层 `while`、三通道队列、ReAct 工具链。
+//!
+//! **L1（Pi）：** 与 `agentLoop` 同构——外层 `follow_up`、内层 tool-call + `steering` drain、
+//! `next_turn` 预排队、`terminate` 批次 AND 语义。见 `docs/uncode-technologies/UNCODE_PI_MECHANISM_MAP.md`。
+
 use futures::StreamExt;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -37,6 +42,9 @@ fn first_text(msg: &Message) -> &str {
         .unwrap_or("")
 }
 
+/// 双层循环执行引擎（文档亦称 LoopEngine）。
+///
+/// **Pi:** 对应 `agentLoop` 核心；公开入口为 `run` / `run_inner`。
 pub struct AgentLoop {
     api_registry: Arc<ApiRegistry>,
     model_registry: Arc<ModelRegistry>,

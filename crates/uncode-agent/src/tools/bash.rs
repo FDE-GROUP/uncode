@@ -34,13 +34,17 @@ struct ParsedArgs {
     timeout_secs: u64,
 }
 
-fn parse_args(arguments: &serde_json::Value) -> Result<ParsedArgs, uncode_core::error::UncodeError> {
+fn parse_args(
+    arguments: &serde_json::Value,
+) -> Result<ParsedArgs, uncode_core::error::UncodeError> {
     let command = arguments["command"]
         .as_str()
         .ok_or_else(|| uncode_core::error::UncodeError::Tool("command required".into()))?
         .to_string();
     let workdir = arguments["workdir"].as_str().unwrap_or(".").to_string();
-    let timeout_secs = arguments["timeout"].as_u64().unwrap_or(DEFAULT_TIMEOUT_SECS);
+    let timeout_secs = arguments["timeout"]
+        .as_u64()
+        .unwrap_or(DEFAULT_TIMEOUT_SECS);
     Ok(ParsedArgs {
         command,
         workdir,

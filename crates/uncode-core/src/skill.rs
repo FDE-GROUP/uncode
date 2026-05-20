@@ -26,7 +26,9 @@ pub struct Skill {
     pub disable_model_invocation: bool,
 }
 
-/// Skill 注册表：内置 + 用户自定义
+/// Skill 注册表：内置 + 用户自定义。
+///
+/// **Pi:** 对应 Skills 目录加载；**OpenCode:** 对照 SkillTool。
 pub struct SkillRegistry {
     skills: HashMap<String, Skill>,
 }

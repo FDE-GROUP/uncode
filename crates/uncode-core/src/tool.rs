@@ -1,3 +1,7 @@
+//! Agent 工具 trait、沙箱与 Hook 扩展点。
+//!
+//! **Pi:** `ToolExecutor` 对应 `AgentTool`；`ToolHooks` 对应 Harness `tool_call` / `tool_result`。
+
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
@@ -11,7 +15,9 @@ pub enum ToolContent {
     Image { mime_type: String, data: String },
 }
 
-/// Structured tool execution result
+/// Structured tool execution result.
+///
+/// **Pi:** 对应 tool result；`terminate` 参与批次 AND 终止语义（同 Pi agentLoop）。
 #[derive(Debug, Clone)]
 pub struct ToolResult {
     pub content: Vec<ToolContent>,
@@ -106,7 +112,9 @@ pub struct AfterToolCallResult {
     pub terminate: Option<bool>,
 }
 
-/// Tool lifecycle hooks
+/// Tool lifecycle hooks.
+///
+/// **Pi:** 对应 Harness `tool_call`（阻止执行）与 `tool_result`（patch / terminate）。
 #[async_trait]
 pub trait ToolHooks: Send + Sync {
     async fn before_tool_call(&self, _ctx: &BeforeToolCallContext) -> BeforeToolCallResult {
@@ -123,7 +131,9 @@ pub trait ToolHooks: Send + Sync {
     }
 }
 
-/// 工具执行器 trait
+/// 工具执行器 trait。
+///
+/// **Pi:** 对应 `AgentTool` 执行面；**OpenCode:** 对照 Tool 注册与执行器。
 #[async_trait]
 pub trait ToolExecutor: Send + Sync {
     fn definition(&self) -> ToolDefinition;

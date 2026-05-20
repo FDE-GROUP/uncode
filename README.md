@@ -10,6 +10,8 @@ AI Agent Coding 系统 — Rust 原生、多供应商、流式优先。
 
 uncode 是一个使用 Rust 开发的终端 AI Agent Coding 系统。参照 [earendil-works/pi](https://github.com/earendil-works/pi) 的设计理念，纯 Rust 重写。
 
+**术语与对标**：机制层（Turn、双层循环、会话树、Steering 等）与 **Pi** 对齐；实现 API 保持 Rust 自有命名。分层说明见 [术语对齐策略](docs/technologies/TERMINOLOGY_ALIGNMENT_STRATEGY.md) 与 [uncode 技术术语表](docs/uncode-technologies/UNCODE_TECHNOLOGIES_GLOSSARY.md)（含 Pi/OpenCode 映射列）。
+
 **核心组件：**
 
 | 组件 | 面向用户 | 形态 |
@@ -49,7 +51,7 @@ cargo run -p uncode-cli -- --issue 42
 - **8 个内置工具**：read、write、edit、grep、bash、find、ls + GitHub API
 - **四面板 TUI**：任务清单 / 工具调用 / 思考过程 / 阶段总结
 - **上下文压缩**：Token 估算 + 自动摘要
-- **会话持久化**：JSONL 格式 + 分支支持
+- **会话持久化**：SurrealDB 主存 + JSONL 导入/导出 + 分支支持
 - **WASM 扩展**：8 个生命周期钩子
 - **JSON-RPC**：stdio 外部接口
 - **Platform**：会话分析 + Issues 面板
@@ -69,6 +71,8 @@ cargo run -p uncode-cli -- --issue 42
 
 ## 文档
 
+- [uncode 技术系列总览](docs/uncode-technologies/UNCODE_OVERVIEW.md)（含 L0–L3 术语分层）
+- [Pi 机制对照](docs/uncode-technologies/UNCODE_PI_MECHANISM_MAP.md)
 - [项目愿景](docs/VISION.md)
 - [架构设计](docs/ARCHITECTURE.md)
 - [TUI 交互设计](docs/TUI_DESIGN.md)

@@ -1,6 +1,7 @@
 //! uncode-ai — LLM 抽象层
 //!
 //! 对应 Pi 的 `pi-ai` 包。包含消息类型、模型定义、API 协议抽象和 4 个 provider 实现。
+//! 公开类型见 [`Api`](api::Api)、[`StreamEvent`](api::StreamEvent)、[`Model`](model::Model)。
 
 pub mod api;
 pub mod api_registry;
