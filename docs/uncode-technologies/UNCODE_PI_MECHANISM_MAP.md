@@ -189,4 +189,4 @@ Pi Harness **Hook**（可改行为）与 uncode 对照；uncode 在 `EventRouter
 
 ---
 
-*Phase 2（#261）事件/循环矩阵已纳入 §5–§6；Phase 3（#262）见核心 crate rustdoc `/// **Pi:**` 行。与源码冲突时以 `crates/` 为准。*
+*Phase 2（#261）事件/循环矩阵见 §5–§6。Phase 3（#262）：`uncode-core` / `uncode-agent` / `uncode-ai` 核心 `pub` 类型已加 `/// **Pi:**` — 运行 `cargo doc --no-deps -p uncode-core -p uncode-agent -p uncode-ai` 查看。与源码冲突时以 `crates/` 为准。*

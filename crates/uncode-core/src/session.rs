@@ -1,3 +1,8 @@
+//! 会话树逻辑模型：`SessionEntry` 树、压缩与分支摘要条目。
+//!
+//! **Pi:** 与 `SessionTreeEntry` / `buildContext()` 消费的条目类型同构（见 Pi `PI_SESSION_MODEL`）。
+//! **物理存储**由 `uncode-agent::SessionStore`（SurrealDB）实现，非本模块职责。
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -5,6 +10,8 @@ use crate::api_types::ThinkingLevel;
 use crate::message::{ContentBlock, Message, Role, UsageInfo};
 
 /// Generate a time-sortable entry ID from UUIDv7 (full simple format for uniqueness).
+///
+/// **Pi:** 对应条目 `id`（UUIDv7，时间可排序）。
 pub fn generate_entry_id() -> String {
     uuid::Uuid::now_v7().simple().to_string()
 }
@@ -15,6 +22,9 @@ fn default_session_version() -> u32 {
 
 // ── SessionHeader ──
 
+/// 会话元数据头（首条或导出 JSONL 时的 session 记录）。
+///
+/// **Pi:** 对应 session 级元数据；`working_dir` 与 Pi 工作目录语义一致。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionHeader {
     #[serde(rename = "type")]
@@ -55,6 +65,10 @@ impl SessionHeader {
 
 // ── SessionEntry ──
 
+/// 树状会话条目（serde 外部 tag），逻辑上与 Pi 会话 JSONL 行同构。
+///
+/// **Pi:** 对应 `SessionTreeEntry` 各 `type`；完整映射见 `UNCODE_PI_MECHANISM_MAP` §4。
+/// **OpenCode:** 对照 `MessageV2` / Part 持久化（结构不同）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -231,6 +245,9 @@ pub struct LeafEntry {
     pub target_id: String,
 }
 
+/// 压缩摘要边界条目；`build_context` 仅保留 `first_kept_entry_id` 之后的消息。
+///
+/// **Pi:** 对应 `compaction` 类型条目。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompactionEntry {
     #[serde(default = "generate_entry_id")]
@@ -369,6 +386,9 @@ pub struct SessionNode {
     pub children: Vec<SessionNode>,
 }
 
+/// 会话树 UI/列举用结构（子会话嵌套）。
+///
+/// **Pi:** 分支为隐含树（`leafId` 路径）；uncode 可显式 `Branch` 条目。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionTree {
     pub root: SessionNode,

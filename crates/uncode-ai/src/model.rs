@@ -30,7 +30,9 @@ pub struct ModelPricing {
 
 // ── 新类型：API-first Model ──
 
-/// 模型元数据（纯数据，不存密钥）
+/// 模型元数据（纯数据，不存密钥）。
+///
+/// **Pi:** 对应 `Model` 声明（api / provider / context_window / compat）；通过 `ModelRegistry` 接入供应商。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Model {
     pub id: String,

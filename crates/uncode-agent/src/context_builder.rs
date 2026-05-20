@@ -13,6 +13,8 @@ use uncode_core::message::{ContentBlock, Message, Role};
 use uncode_core::session::SessionEntry;
 
 /// Result of building context from the session tree.
+///
+/// **Pi:** 对应 `buildContext()` 返回值（`messages` + effective model/thinking）。
 pub struct BuiltContext {
     /// Reconstructed messages in conversation order.
     pub messages: Vec<Message>,

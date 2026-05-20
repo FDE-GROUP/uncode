@@ -196,7 +196,9 @@ pub enum ErrorCategory {
     Config,
 }
 
-/// Hook 返回值 — 事件监听器可返回控制指令修改 Agent 行为
+/// Hook 返回值 — 事件监听器可返回控制指令修改 Agent 行为。
+///
+/// **Pi:** 对应 Harness hook 的 typed return（block context / patch tool result / cancel compact 等）。
 #[derive(Debug, Clone, Default)]
 pub enum HookResult {
     /// 无干预，继续正常流程
@@ -230,6 +232,8 @@ pub type AsyncHookHandler =
 /// 双通道设计：
 /// - sync_handlers：观察型，fire-and-forget
 /// - hook_handlers：控制型，异步返回 HookResult
+///
+/// **Pi:** 对应 `AgentHarness.on(event, handler)`；非 Pi 全套 Harness Hook 的超集实现。
 pub struct EventRouter {
     sync_handlers: std::collections::HashMap<String, Vec<SyncEventHandler>>,
     hook_handlers: std::collections::HashMap<String, Vec<AsyncHookHandler>>,
