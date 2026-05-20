@@ -123,10 +123,11 @@ AgentEvent::TurnEnd { usage, .. } => {
 
 Agent 层 `MessageQueued` 由 `steer()` 发射；TUI 不再为 steer 重复插入 `QueuedMessage` 行。
 
-### 5.4 `PhaseSummary` 有 UI、引擎未发射
+### 5.4 `PhaseSummary`（已实现）
 
-`ChatMessage::Summary` 可展示「已完成 / 下一步」，但 `uncode-agent` **不** `emit PhaseSummary`。  
-用户看不到结构化的「本步小结」，只能依赖 Assistant 自然语言。
+每 Turn 在 `TurnEnd` 之后、若本 Turn 执行过工具，则 `emit PhaseSummary`：  
+`completed` 为成功工具行（`tool(args)`），`issues` 为失败工具，`next_steps` 在内层工具链未结束时提示可能继续。  
+TUI 经 `apply_phase_summary` 渲染为 TodoList / Summary 卡片。
 
 ### 5.5 缺少「本轮决策」分组
 
@@ -165,7 +166,7 @@ Agent 层 `MessageQueued` 由 `steer()` 发射；TUI 不再为 steer 重复插�
 | **P1** | ✅ 已实现（#271）：页脚 `turn:N` 来自 `TurnStart` | 多 Turn 链可数 |
 | **P2** | ✅ 已实现：`ToolTurnGroup` 同 Turn 可折叠分组 | 单轮「一批决策」可扫读 |
 | **P3** | ✅ 已实现：`SubmitIntent` + 单例 `AgentLoop` + `steer()` | 中途纠偏与 Pi 对齐 |
-| **P4** | Agent 或扩展在适当时机 `emit PhaseSummary` | 结构化步进小结 |
+| **P4** | ✅ 已实现：每 Turn 工具批次后 `emit PhaseSummary` | 结构化步进小结 |
 
 实现时应配 GitHub Issue；与 Plan 模式扩展（`set_active_tools` 等）正交。
 
