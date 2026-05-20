@@ -11,7 +11,8 @@ impl ToolExecutor for GrepTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "grep".into(),
-            description: "使用正则表达式搜索文件内容".into(),
+            description: "使用正则表达式搜索文件内容；默认遵守 .gitignore，跳过超过 1MB 的文件"
+                .into(),
             parameters: serde_json::json!({
                 "type": "object",
                 "additionalProperties": false,
@@ -59,6 +60,8 @@ impl ToolExecutor for GrepTool {
 }
 
 const MAX_RESULTS: usize = 50;
+/// Skip files larger than this when grepping (aligned with `read` max_size).
+const MAX_GREP_FILE_BYTES: u64 = 1024 * 1024;
 
 fn grep_files(
     re: &Regex,
@@ -68,38 +71,48 @@ fn grep_files(
     let mut results = Vec::with_capacity(MAX_RESULTS);
     let mut count = 0;
 
-    for entry in walkdir::WalkDir::new(search_path)
-        .max_depth(20)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file())
-    {
+    let walker = ignore::WalkBuilder::new(search_path)
+        .standard_filters(true)
+        .max_depth(Some(20))
+        .build();
+
+    for entry in walker.filter_map(Result::ok) {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
         if count >= MAX_RESULTS {
             results.push("... (truncated)".into());
             break;
         }
 
         if let Some(pat) = glob_pattern {
-            let rel = entry
-                .path()
+            let rel = path
                 .strip_prefix(search_path)
-                .unwrap_or(entry.path())
+                .unwrap_or(path)
                 .to_string_lossy()
                 .replace('\\', "/");
-            let file_name = entry.file_name().to_string_lossy();
+            let file_name = path.file_name().unwrap_or_default().to_string_lossy();
             if !pat.matches(&rel) && !pat.matches(&file_name) {
                 continue;
             }
         }
 
-        let content = match std::fs::read_to_string(entry.path()) {
+        if let Ok(meta) = std::fs::metadata(path)
+            && meta.len() > MAX_GREP_FILE_BYTES
+        {
+            continue;
+        }
+
+        let content = match std::fs::read_to_string(path) {
             Ok(c) => c,
             Err(_) => continue,
         };
 
         for (i, line) in content.lines().enumerate() {
             if re.is_match(line) {
-                results.push(format!("{}:{}: {}", entry.path().display(), i + 1, line));
+                results.push(format!("{}:{}: {}", path.display(), i + 1, line));
                 count += 1;
                 if count >= MAX_RESULTS {
                     break;

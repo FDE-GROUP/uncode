@@ -31,6 +31,7 @@ surrealdb.workspace = true
 regex.workspace = true
 glob.workspace = true
 walkdir.workspace = true
+ignore.workspace = true
 libc.workspace = true
 html2text.workspace = true
 tempfile = "3"
