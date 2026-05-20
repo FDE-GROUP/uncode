@@ -4,7 +4,9 @@
 ///  - FollowUp：Agent 完成全部工作后投递（默认）
 ///  - Steering：当前工具调用完成后立即投递（用于修正方向）
 ///
-/// 排队消息类型
+/// TUI 侧排队类型（投递到 `uncode-agent` 运行队列前的 UI 缓冲）。
+///
+/// **Pi:** 概念对齐 `followUp` / `steering`；无 `next_turn` 的 TUI 专名（由 agent 层处理）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueueType {
     /// Agent 完成全部工作后投递
@@ -30,7 +32,10 @@ pub struct QueuedMessage {
     pub queue_type: QueueType,
 }
 
-/// TUI 侧消息队列
+/// TUI 侧消息队列 — 在 `agent_busy` 时缓存用户输入，再按策略 drain。
+///
+/// **Pi:** 对应 Pi 终端在循环运行时的排队 UX；运行时三通道见 `uncode_agent::MessageQueue`。
+/// **OpenCode:** 无三队列专名；对照会话中「排队输入」产品行为。
 pub struct MessageQueue {
     messages: Vec<QueuedMessage>,
     steering_mode: QueueMode,

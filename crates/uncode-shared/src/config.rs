@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+/// 应用级配置（CLI `config.json` / TOML 解析目标）。
+///
+/// **Pi:** 对照 Pi 模型与 provider 配置；路径与键名不复制 Pi/opencode 专名。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub model: String,

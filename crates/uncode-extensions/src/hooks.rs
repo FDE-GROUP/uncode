@@ -34,13 +34,18 @@ impl LifecycleHook {
     }
 }
 
-/// 钩子上下文——传递给扩展的数据
+/// 钩子上下文 — 传递给扩展的数据。
+///
+/// **Pi:** 对照扩展 hook 回调入参；字段集为 uncode 自有。
 #[derive(Debug, Clone)]
 pub struct HookContext {
     pub session_id: Option<String>,
     pub event: HookEvent,
 }
 
+/// 钩子载荷：Agent 事件或消息快照。
+///
+/// **Pi:** 无同名枚举；概念上包装 Pi 侧 extension 可见的事件子集。
 #[derive(Debug, Clone)]
 pub enum HookEvent {
     Event(AgentEvent),

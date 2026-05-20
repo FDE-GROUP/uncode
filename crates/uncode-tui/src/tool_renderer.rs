@@ -42,7 +42,10 @@ impl ToolKind {
     }
 }
 
-/// 工具渲染 trait — 所有颜色从 Theme 获取
+/// 单工具 scrollback 渲染 trait（调用摘要 + 展开结果）。
+///
+/// **Pi:** 无独立 trait；Pi TUI 内联渲染工具块。
+/// **OpenCode:** 对照 scrollback 工具展示格式（信息密度 benchmark）。
 pub trait ToolRenderer: Send + Sync {
     fn render_call(&self, args: &str, workdir: &str) -> String;
     fn render_result(
@@ -54,7 +57,10 @@ pub trait ToolRenderer: Send + Sync {
     ) -> Vec<Line<'static>>;
 }
 
-/// 工具渲染注册表 — 零分配静态分发
+/// 内置工具渲染注册表 — 按工具名静态分发。
+///
+/// **Pi:** 无同名类型。
+/// **OpenCode:** 对照多工具 scrollback 渲染器集合。
 pub struct ToolRendererRegistry;
 
 impl ToolRendererRegistry {

@@ -228,7 +228,7 @@ fn test_hook_context_without_session() {
 fn test_loader_new_and_default() {
     let loader = crate::loader::ExtensionLoader::new();
     let _ = loader;
-    let default_loader = crate::loader::ExtensionLoader::default();
+    let default_loader = crate::loader::ExtensionLoader;
     let _ = default_loader;
 }
 
