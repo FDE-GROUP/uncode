@@ -157,6 +157,11 @@ impl AgentHarness {
 
     // ── 运行时配置 ──
 
+    /// Restrict tools visible to the LLM (**Pi:** `setActiveTools`).
+    pub fn set_active_tools(&self, names: &[impl AsRef<str>]) -> Result<(), String> {
+        self.agent.set_active_tools(names)
+    }
+
     /// 切换 LLM 模型（缓存在 pending_writes，turn 边界 flush）
     pub async fn set_model(&mut self, model_id: &str, provider: &str) {
         self.pending_writes.push(PendingSessionWrite::ModelChange {

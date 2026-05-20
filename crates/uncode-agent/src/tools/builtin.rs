@@ -1,0 +1,148 @@
+//! Built-in coding tools registration and Pi-aligned default active sets.
+//!
+//! **Pi:** default builtin tools are `read`, `bash`, `edit`, `write`, plus `grep`, `find`, `ls`.
+//! Network tools (`web_fetch`, `web_search`) are uncode extensions — not in the default LLM tool schema.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use super::{
+    BashTool, EditTool, FindTool, GrepTool, LsTool, ReadTool, ToolRegistry, WebFetchTool,
+    WebSearchTool, WriteTool,
+};
+
+/// Pi `coding-agent` built-in tool names (no web tools).
+pub const PI_BUILTIN_TOOL_NAMES: &[&str] = &["read", "write", "edit", "bash", "grep", "find", "ls"];
+
+/// CLI / harness options for which tools are exposed to the LLM.
+#[derive(Debug, Clone, Default)]
+pub struct ToolLaunchConfig {
+    /// `--no-tools`: empty active set.
+    pub no_tools: bool,
+    /// `--no-builtin-tools`: only non-Pi builtins (e.g. `web_fetch`, `web_search`).
+    pub no_builtin_tools: bool,
+    /// `--tools`: explicit comma-separated whitelist (parsed by caller).
+    pub tools: Option<Vec<String>>,
+}
+
+/// Whether `name` is a Pi coding-agent built-in (excludes uncode web tools).
+pub fn is_pi_builtin_tool(name: &str) -> bool {
+    PI_BUILTIN_TOOL_NAMES.contains(&name)
+}
+
+/// Register all standard coding tools on the registry (superset of Pi builtins).
+pub fn register_coding_tools(registry: &ToolRegistry, api_keys: &HashMap<String, String>) {
+    registry.register("read", Arc::new(ReadTool::new()));
+    registry.register("write", Arc::new(WriteTool));
+    registry.register("edit", Arc::new(EditTool));
+    registry.register("grep", Arc::new(GrepTool));
+    registry.register("bash", Arc::new(BashTool::new()));
+    registry.register("find", Arc::new(FindTool));
+    registry.register("ls", Arc::new(LsTool));
+    registry.register("web_fetch", Arc::new(WebFetchTool::new()));
+
+    if let Some(key) = api_keys.get("tavily")
+        && let Some(tool) = WebSearchTool::try_new(key)
+    {
+        registry.register("web_search", Arc::new(tool));
+    }
+}
+
+/// Apply Pi-aligned default: only built-in coding tools visible to the LLM (no `web_*`).
+pub fn apply_pi_default_active_tools(registry: &ToolRegistry) -> Result<(), String> {
+    registry.set_active_tools(PI_BUILTIN_TOOL_NAMES)
+}
+
+/// In-memory registry with Pi coding tools registered and default active set.
+pub fn new_pi_coding_registry(api_keys: &HashMap<String, String>) -> Result<ToolRegistry, String> {
+    let registry = ToolRegistry::new();
+    register_coding_tools_and_configure(&registry, api_keys, &ToolLaunchConfig::default())?;
+    Ok(registry)
+}
+
+/// Register coding tools and apply launch-time active set (CLI / harness entry).
+pub fn register_coding_tools_and_configure(
+    registry: &ToolRegistry,
+    api_keys: &HashMap<String, String>,
+    config: &ToolLaunchConfig,
+) -> Result<(), String> {
+    register_coding_tools(registry, api_keys);
+    configure_active_tools(registry, config)
+}
+
+/// Configure active tools from CLI-style launch options (after `register_coding_tools`).
+pub fn configure_active_tools(
+    registry: &ToolRegistry,
+    config: &ToolLaunchConfig,
+) -> Result<(), String> {
+    if config.no_tools {
+        registry.set_active_tools(&[] as &[&str])
+    } else if let Some(ref names) = config.tools {
+        if names.is_empty() {
+            return Err("--tools requires at least one tool name".into());
+        }
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        registry.set_active_tools(&refs)
+    } else if config.no_builtin_tools {
+        let names = registry.list();
+        let extension_only: Vec<&str> = names
+            .iter()
+            .filter(|n| !is_pi_builtin_tool(n))
+            .map(|s| s.as_str())
+            .collect();
+        registry.set_active_tools(&extension_only)
+    } else {
+        apply_pi_default_active_tools(registry)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn is_pi_builtin_excludes_web() {
+        assert!(is_pi_builtin_tool("read"));
+        assert!(!is_pi_builtin_tool("web_fetch"));
+    }
+
+    #[test]
+    fn list_active_matches_pi_default() {
+        let reg = new_pi_coding_registry(&HashMap::new()).unwrap();
+        let mut active = reg.list_active();
+        active.sort();
+        let mut expected: Vec<String> = PI_BUILTIN_TOOL_NAMES
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        expected.sort();
+        assert_eq!(active, expected);
+    }
+
+    #[test]
+    fn new_pi_coding_registry_has_seven_active() {
+        let reg = new_pi_coding_registry(&HashMap::new()).unwrap();
+        assert_eq!(reg.definitions().len(), PI_BUILTIN_TOOL_NAMES.len());
+        for name in PI_BUILTIN_TOOL_NAMES {
+            assert!(reg.is_active(name));
+        }
+        assert!(!reg.is_active("web_fetch"));
+    }
+
+    #[test]
+    fn no_builtin_tools_leaves_extensions_only() {
+        let reg = ToolRegistry::new();
+        register_coding_tools(&reg, &HashMap::new());
+        configure_active_tools(
+            &reg,
+            &ToolLaunchConfig {
+                no_builtin_tools: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(reg.is_active("web_fetch"));
+        assert!(!reg.is_active("read"));
+        assert_eq!(reg.definitions().len(), 1);
+    }
+}

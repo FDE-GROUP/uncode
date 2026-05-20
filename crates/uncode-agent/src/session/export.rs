@@ -1,5 +1,38 @@
+use std::fmt::Write;
+
 use uncode_core::message::{ContentBlock, Role};
 use uncode_core::session::{SessionEntry, SessionHeader};
+
+fn role_css_class(role: Role) -> &'static str {
+    match role {
+        Role::User => "user",
+        Role::Assistant => "assistant",
+        Role::Tool => "tool",
+        Role::System => "system",
+        _ => "other",
+    }
+}
+
+fn role_display(role: Role) -> &'static str {
+    match role {
+        Role::User => "用户",
+        Role::Assistant => "助手",
+        Role::Tool => "工具",
+        Role::System => "系统",
+        _ => "其他",
+    }
+}
+
+fn write_message_div(body: &mut String, role: Role, content: impl FnOnce(&mut String)) {
+    let _ = write!(
+        body,
+        r#"<div class="msg {}"><div class="msg-header">{}</div>"#,
+        role_css_class(role),
+        role_display(role)
+    );
+    content(body);
+    body.push_str("</div>\n");
+}
 
 /// 将会话数据导出为自包含 HTML
 pub fn export_html(
@@ -12,8 +45,8 @@ pub fn export_html(
 
     let mut body = String::new();
 
-    // Metadata
-    body.push_str(&format!(
+    let _ = write!(
+        body,
         r#"<div class="meta">
 <span class="label">会话</span> {title}
 <span class="label">日期</span> {date}
@@ -25,87 +58,55 @@ pub fn export_html(
         date = date,
         model = html_escape(&header.model),
         id = html_escape(&header.id),
-    ));
+    );
 
     for entry in entries {
         match entry {
             SessionEntry::Message(me) => {
-                let class = match me.role {
-                    Role::User => "user",
-                    Role::Assistant => "assistant",
-                    Role::Tool => "tool",
-                    Role::System => "system",
-                    _ => "other",
-                };
-                body.push_str(&format!(r#"<div class="msg {class}">"#));
-                body.push_str(&format!(
-                    r#"<div class="msg-header">{}</div>"#,
-                    match me.role {
-                        Role::User => "用户",
-                        Role::Assistant => "助手",
-                        Role::Tool => "工具",
-                        Role::System => "系统",
-                        _ => "其他",
+                write_message_div(&mut body, me.role, |b| {
+                    for block in &me.content {
+                        render_block(b, block);
                     }
-                ));
-
-                for block in &me.content {
-                    render_block(&mut body, block);
-                }
-                body.push_str("</div>\n");
+                });
             }
             SessionEntry::Compaction(ce) => {
-                body.push_str(&format!(
+                let _ = write!(
+                    body,
                     r#"<div class="msg system"><div class="msg-header">上下文压缩</div><div class="text"><em>{}</em></div></div>"#,
-                    html_escape(&ce.summary),
-                ));
+                    html_escape(&ce.summary)
+                );
             }
             SessionEntry::BranchSummary(bs) => {
-                body.push_str(&format!(
+                let _ = write!(
+                    body,
                     r#"<div class="msg system"><div class="msg-header">分支摘要</div><div class="text"><em>{}</em></div></div>"#,
-                    html_escape(&bs.summary),
-                ));
+                    html_escape(&bs.summary)
+                );
             }
             SessionEntry::ModelChange(mc) => {
-                body.push_str(&format!(
+                let _ = write!(
+                    body,
                     r#"<div class="msg system"><div class="msg-header">模型切换</div><div class="text">→ {}</div></div>"#,
-                    html_escape(&mc.model_id),
-                ));
+                    html_escape(&mc.model_id)
+                );
             }
-            _ => {} // Leaf, Label, etc. — skip in export
+            _ => {}
         }
     }
 
-    // Also support legacy messages format (for backward compat callers)
     if entries.is_empty() && !messages.is_empty() {
         for (role, blocks) in messages {
-            let class = match role {
-                Role::User => "user",
-                Role::Assistant => "assistant",
-                Role::Tool => "tool",
-                Role::System => "system",
-                _ => "other",
-            };
-            body.push_str(&format!(r#"<div class="msg {class}">"#));
-            body.push_str(&format!(
-                r#"<div class="msg-header">{}</div>"#,
-                match role {
-                    Role::User => "用户",
-                    Role::Assistant => "助手",
-                    Role::Tool => "工具",
-                    Role::System => "系统",
-                    _ => "其他",
+            write_message_div(&mut body, *role, |b| {
+                for block in blocks {
+                    render_block(b, block);
                 }
-            ));
-
-            for block in blocks {
-                render_block(&mut body, block);
-            }
-            body.push_str("</div>\n");
+            });
         }
     }
 
-    format!(
+    let mut html = String::new();
+    let _ = write!(
+        html,
         r#"<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -139,36 +140,42 @@ summary:hover {{ background: #f6f8fa; }}
 </html>"#,
         title = html_escape(title),
         body = body,
-    )
+    );
+    html
 }
 
 fn render_block(body: &mut String, block: &ContentBlock) {
     match block {
         ContentBlock::Text { text } => {
-            body.push_str(&format!(
+            let _ = write!(
+                body,
                 r#"<div class="text">{}</div>"#,
                 render_markdown_lite(text)
-            ));
+            );
         }
         ContentBlock::Thinking { text } => {
-            body.push_str(&format!(
+            let _ = write!(
+                body,
                 r#"<details><summary>思考过程</summary><div class="thinking">{}</div></details>"#,
                 html_escape(text)
-            ));
+            );
         }
         ContentBlock::ToolCall(tc) => {
-            body.push_str(&format!(
+            let args = serde_json::to_string_pretty(&tc.arguments).unwrap_or_default();
+            let _ = write!(
+                body,
                 r#"<details><summary>工具调用: {}</summary><div class="tool-call"><pre><code>{}</code></pre></div></details>"#,
                 html_escape(&tc.name),
-                html_escape(&serde_json::to_string_pretty(&tc.arguments).unwrap_or_default()),
-            ));
+                html_escape(&args),
+            );
         }
         ContentBlock::ToolResult(tr) => {
             let status = if tr.is_error { "error" } else { "result" };
-            body.push_str(&format!(
+            let _ = write!(
+                body,
                 r#"<details><summary>工具结果 ({status})</summary><div class="tool-result"><pre><code>{}</code></pre></div></details>"#,
                 html_escape(&tr.content),
-            ));
+            );
         }
         ContentBlock::Image { .. } => {
             body.push_str(r#"<div class="text">[图片]</div>"#);
@@ -188,9 +195,8 @@ fn html_escape(s: &str) -> String {
 fn render_markdown_lite(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut in_code_block = false;
-    let lines = text.lines().peekable();
 
-    for line in lines {
+    for line in text.lines() {
         if line.starts_with("```") {
             if in_code_block {
                 result.push_str("</code></pre>");
@@ -205,7 +211,6 @@ fn render_markdown_lite(text: &str) -> String {
             result.push('\n');
         } else {
             let escaped = html_escape(line);
-            // bold
             let rendered = escaped.replace("**", "<strong>").replace("</strong>", "");
             result.push_str(&rendered);
             result.push_str("<br>\n");
@@ -311,6 +316,23 @@ mod tests {
     }
 
     #[test]
+    fn test_export_html_tool_call_block() {
+        use uncode_core::message::ToolCall;
+        let header = SessionHeader::new("id".into(), "model".into(), "/tmp".into());
+        let messages = vec![(
+            Role::Assistant,
+            vec![ContentBlock::ToolCall(Box::new(ToolCall {
+                id: "c1".into(),
+                name: "read".into(),
+                arguments: serde_json::json!({"path": "main.rs"}),
+            }))],
+        )];
+        let html = export_html(&header, &[], &messages);
+        assert!(html.contains("工具调用: read"));
+        assert!(html.contains("main.rs"));
+    }
+
+    #[test]
     fn test_export_html_with_model_change() {
         use uncode_core::session::{ModelChangeEntry, generate_entry_id};
         let header = SessionHeader::new("test".into(), "model".into(), "/tmp".into());
@@ -324,5 +346,58 @@ mod tests {
         let html = export_html(&header, &entries, &[]);
         assert!(html.contains("模型切换"));
         assert!(html.contains("gpt-4o"));
+    }
+
+    #[test]
+    fn test_export_html_tool_result_success() {
+        use uncode_core::message::ToolResult;
+        let header = SessionHeader::new("id".into(), "model".into(), "/tmp".into());
+        let messages = vec![(
+            Role::Tool,
+            vec![ContentBlock::ToolResult(Box::new(ToolResult {
+                tool_call_id: "tc".into(),
+                content: "ok output".into(),
+                is_error: false,
+            }))],
+        )];
+        let html = export_html(&header, &[], &messages);
+        assert!(html.contains("工具结果 (result)"));
+        assert!(html.contains("ok output"));
+    }
+
+    /// 文档骨架片段须按出现顺序排列（golden 结构，不绑定动态日期/UUID）。
+    #[test]
+    fn test_export_html_document_structure_order() {
+        let header =
+            SessionHeader::new("golden-sid".into(), "golden-model".into(), "/golden".into());
+        let messages = vec![(
+            Role::User,
+            vec![ContentBlock::Text {
+                text: "body marker".into(),
+            }],
+        )];
+        let html = export_html(&header, &[], &messages);
+
+        let markers = [
+            "<!DOCTYPE html>",
+            r#"<html lang="zh-CN">"#,
+            "<head>",
+            "<body>",
+            "<h1>",
+            "<div class=\"meta\">",
+            "golden-model",
+            "golden-sid",
+            r#"class="msg user""#,
+            "body marker",
+            "</html>",
+        ];
+        let mut offset = 0usize;
+        for marker in markers {
+            let rest = &html[offset..];
+            let pos = rest
+                .find(marker)
+                .unwrap_or_else(|| panic!("missing marker {marker:?} after offset {offset}"));
+            offset += pos + marker.len();
+        }
     }
 }

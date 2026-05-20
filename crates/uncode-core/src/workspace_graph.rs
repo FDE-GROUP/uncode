@@ -100,6 +100,7 @@ pub struct ContextBundle {
 impl ContextBundle {
     /// 渲染为 system Message，注入 LLM 上下文
     pub fn to_system_message(&self) -> Message {
+        use std::fmt::Write;
         let mut parts = String::from("## Workspace Context\n\n");
 
         for item in &self.items {
@@ -113,10 +114,11 @@ impl ContextBundle {
                 SymbolKind::Test => "test",
                 SymbolKind::DocSection => "doc",
             };
-            parts.push_str(&format!(
+            let _ = write!(
+                parts,
                 "<symbol kind=\"{kind_label}\" path=\"{}\" lines=\"{}-{}\">\n",
                 item.path, item.line_start, item.line_end
-            ));
+            );
             parts.push_str(&item.content);
             if !item.content.ends_with('\n') {
                 parts.push('\n');

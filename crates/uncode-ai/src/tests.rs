@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod suite {
     use crate::api_types::{CompatConfig, StopReason, ThinkingFormat, ThinkingLevel};
     use crate::model::{Model, builtin_models};
 

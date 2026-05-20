@@ -5,6 +5,7 @@ use uncode_core::tool::ToolExecutor;
 use super::bash::BashTool;
 use super::edit::EditTool;
 use super::find::FindTool;
+use super::grep::GrepTool;
 use super::ls::LsTool;
 use super::read::ReadTool;
 use super::registry::ToolRegistry;
@@ -580,15 +581,70 @@ async fn test_bash_missing_command() {
 #[tokio::test]
 async fn test_bash_workdir() {
     let (_dir, _guard) = sandbox_dir();
+    std::fs::create_dir_all("subwd").unwrap();
     let tool = BashTool::new();
     let result = tool
+        .execute(serde_json::json!({
+            "command": "pwd",
+            "workdir": "subwd"
+        }))
+        .await
+        .unwrap();
+    assert!(result.contains("subwd"));
+}
+
+#[tokio::test]
+async fn test_bash_workdir_outside_sandbox_rejected() {
+    let (_dir, _guard) = sandbox_dir();
+    let tool = BashTool::new();
+    let err = tool
         .execute(serde_json::json!({
             "command": "pwd",
             "workdir": "/tmp"
         }))
         .await
+        .unwrap_err();
+    assert!(err.to_string().contains("outside the project directory"));
+}
+
+#[tokio::test]
+async fn test_grep_include_matches_relative_path() {
+    let (_dir, _guard) = sandbox_dir();
+    std::fs::create_dir_all("src").unwrap();
+    fs::write("src/lib.rs", "fn pi() {}\n").unwrap();
+    fs::write("other.rs", "fn other() {}\n").unwrap();
+
+    let tool = GrepTool;
+    let result = tool
+        .execute(serde_json::json!({
+            "pattern": "fn pi",
+            "path": ".",
+            "include": "src/*.rs"
+        }))
+        .await
         .unwrap();
-    assert!(result.contains("/tmp"));
+    assert!(result.contains("src/lib.rs"));
+    assert!(!result.contains("other.rs"));
+}
+
+#[tokio::test]
+async fn test_write_distinct_temp_paths_for_same_stem() {
+    let (_dir, _guard) = sandbox_dir();
+    let tool = WriteTool;
+    tool.execute(serde_json::json!({
+        "path": "lib.rs",
+        "content": "rs\n"
+    }))
+    .await
+    .unwrap();
+    tool.execute(serde_json::json!({
+        "path": "lib.c",
+        "content": "c\n"
+    }))
+    .await
+    .unwrap();
+    assert_eq!(fs::read_to_string("lib.rs").unwrap(), "rs\n");
+    assert_eq!(fs::read_to_string("lib.c").unwrap(), "c\n");
 }
 
 #[tokio::test]

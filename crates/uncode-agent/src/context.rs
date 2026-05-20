@@ -47,7 +47,7 @@ impl ContextLoader {
         let mut skills = Vec::new();
         for dir in skill_dirs() {
             if let Ok(entries) = std::fs::read_dir(&dir) {
-                for entry in entries.filter_map(|e| e.ok()) {
+                for entry in entries.filter_map(Result::ok) {
                     let path = entry.path().join("SKILL.md");
                     if path.exists()
                         && let Ok(content) = std::fs::read_to_string(&path)

@@ -100,6 +100,12 @@ pub enum AgentEvent {
         progress_type: ProgressType,
         detail: String,
     },
+    /// Tool execution blocked until user confirms (TUI permission gate).
+    ToolCallAwaitingApproval {
+        tool_id: String,
+        tool_name: String,
+        arguments_summary: String,
+    },
     ToolCallEnd {
         #[serde(flatten)]
         data: Box<ToolCallEndEventData>,
@@ -299,6 +305,7 @@ pub fn agent_event_tag(event: &AgentEvent) -> &'static str {
         AgentEvent::ContentDelta { .. } => "content_delta",
         AgentEvent::ToolCallStart { .. } => "tool_call_start",
         AgentEvent::ToolCallProgress { .. } => "tool_call_progress",
+        AgentEvent::ToolCallAwaitingApproval { .. } => "tool_call_awaiting_approval",
         AgentEvent::ToolCallEnd { .. } => "tool_call_end",
         AgentEvent::TaskUpdate { .. } => "task_update",
         AgentEvent::PhaseSummary { .. } => "phase_summary",

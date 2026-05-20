@@ -532,6 +532,171 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_parallel_batch_runs_second_tool_after_first_validation_fails() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({}),
+                })),
+                StreamEvent::ToolCallStart {
+                    id: "tc2".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
+                    id: "tc2".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "ok"}),
+                })),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                StreamEvent::TextDelta("done".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+        let tool_results: Vec<_> = messages
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .filter_map(|m| m.content.first())
+            .collect();
+        assert_eq!(tool_results.len(), 2);
+        assert!(matches!(tool_results[0], ContentBlock::ToolResult(tr) if tr.is_error));
+        assert!(
+            matches!(tool_results[1], ContentBlock::ToolResult(tr) if !tr.is_error && tr.content.contains("echo: ok"))
+        );
+    }
+
+    #[tokio::test]
+    async fn test_agent_loop_schema_validation_blocks_execute() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({}),
+                })),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                StreamEvent::TextDelta("ok".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+        let tool_msg = messages
+            .iter()
+            .find(|m| m.role == Role::Tool)
+            .expect("tool result message");
+        assert!(
+            matches!(
+                &tool_msg.content[0],
+                ContentBlock::ToolResult(tr)
+                    if tr.is_error
+                        && tr.content.contains("Validation failed for tool \"echo\"")
+                        && tr.content.contains("missing required parameter: text")
+            ),
+            "expected schema validation error, got {:?}",
+            tool_msg.content
+        );
+    }
+
+    #[tokio::test]
+    async fn test_agent_loop_inactive_tool_blocked() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "x"}),
+                })),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                StreamEvent::TextDelta("ok".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let tool_reg = make_tool_registry();
+        tool_reg.set_active_tools(&[] as &[&str]).unwrap();
+        assert!(!tool_reg.is_active("echo"));
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            tool_reg,
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+        let tool_msg = messages
+            .iter()
+            .find(|m| m.role == Role::Tool)
+            .expect("tool result message");
+        assert!(
+            matches!(
+                &tool_msg.content[0],
+                ContentBlock::ToolResult(tr)
+                    if tr.is_error && tr.content.contains("tool not active")
+            ),
+            "expected inactive tool error, got {:?}",
+            tool_msg.content
+        );
+    }
+
+    #[tokio::test]
     async fn test_agent_loop_multiple_tool_calls_in_one_turn() {
         let (api_reg, model_reg, api_keys) = make_registries(vec![
             vec![
