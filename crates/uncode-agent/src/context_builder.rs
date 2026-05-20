@@ -24,6 +24,9 @@ pub struct BuiltContext {
 
 /// Build message context from session entries in insertion order.
 ///
+/// **Pi:** 对应 `buildContext()`：从会话树重建 LLM 消息并处理 Compaction / BranchSummary 边界。
+/// **OpenCode:** 无直接同名 API；对照 `MessageV2` 持久化与 prompt 组装。
+///
 /// Algorithm:
 /// 1. Pre-scan for the last CompactionEntry (latest compaction wins)
 /// 2. Inject compaction summary first (if any)

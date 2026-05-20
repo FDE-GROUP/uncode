@@ -68,10 +68,13 @@ pub struct HarnessResources {
     pub templates: TemplateStore,
 }
 
-/// AgentHarness — Pi 三层架构的最高层
+/// AgentHarness — Pi 三层架构的最高层。
 ///
-/// 包装 AgentLoop，负责 session 持久化、compaction 触发、
+/// 包装 [`AgentLoop`](crate::loop_engine::AgentLoop)，负责 session 持久化、compaction 触发、
 /// Phase 守卫和运行时配置。
+///
+/// **Pi:** 对应 `AgentHarness`（`before_agent_start`、`session_before_compact` 等 Hook 的子集由
+/// `ToolHooks` / compaction 路径实现）。
 pub struct AgentHarness {
     agent: AgentLoop,
     phase: AgentHarnessPhase,

@@ -6,6 +6,9 @@ use futures::stream::{BoxStream, StreamExt};
 
 // ── Stream protocol types ──
 
+/// LLM 流式输出协议事件（须以 [`StreamEvent::Done`] 结束）。
+///
+/// **Pi:** 对应 `pi-ai` 流式 delta；工具调用遵循 Start → Delta → End 三阶段。
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
     TextDelta(String),
@@ -32,7 +35,9 @@ pub struct UsageInfo {
     pub output_tokens: u64,
 }
 
-/// API 协议抽象——每个 API 协议一个实现
+/// API 协议抽象——每个 API 协议一个实现（openai-completions、anthropic-messages 等）。
+///
+/// **Pi:** 对应 `pi-ai` 的 `Api` 分层；供应商通过 `Model` 声明接入，不新增驱动 crate。
 #[async_trait]
 pub trait Api: Send + Sync {
     /// 此 API 的标识符，如 "openai-completions"

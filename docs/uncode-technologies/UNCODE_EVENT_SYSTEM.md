@@ -2,6 +2,8 @@
 
 > AgentEvent（18 variants）+ EventRouter + HookResult | 基于源码分析，2026-05 修订
 
+> **L1 对照：** Pi 四层 `AgentEvent`（10 种）与 Harness Hook 的映射见 [`UNCODE_PI_MECHANISM_MAP.md`](UNCODE_PI_MECHANISM_MAP.md) §5；Pi 侧见 [`PI_EVENT_SYSTEM.md`](../pi-technologies/PI_EVENT_SYSTEM.md)。
+
 uncode 的跨层通信通过 `AgentEvent` 枚举实现。上层（TUI / Platform / RPC）通过 `broadcast::Receiver<AgentEvent>` 订阅事件流，实现发布-订阅解耦。
 
 ---

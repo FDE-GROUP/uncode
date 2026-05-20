@@ -33,20 +33,20 @@
 
 ## 二、架构与 Crate 分层
 
-| 中文 | English | 定义 | 参见 |
-|------|---------|------|------|
-| 三层架构 | Three-layer architecture | Entry（CLI/TUI）→ Agent Engine → Foundation（ai/core/shared）。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| uncode-cli | uncode-cli | 唯一入口：clap 解析、模式路由、工具/API 注册。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| uncode-tui | uncode-tui | ratatui + crossterm 全屏 TUI。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
-| uncode-agent | uncode-agent | LoopEngine、Harness、Session、Tools、Compaction。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| uncode-ai | uncode-ai | `Api` trait、4 协议实现、`StreamEvent`、模型注册。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| uncode-core | uncode-core | 共享类型：event、tool、session、skill；再导出 ai 类型。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| uncode-shared | uncode-shared | 叶子 crate：`UncodeError`、`AppConfig`。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| uncode-macros | uncode-macros | `#[tool]` 过程宏，编译期生成 Schema。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| uncode-extensions | uncode-extensions | 生命周期 Hook、WASM 扩展（scaffold）。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| uncode-platform | uncode-platform | Platform 服务端（axum，规划中/演进中）。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| 依赖方向约束 | Dependency direction | 严格自上而下；跨层用 broadcast 或 trait，不反向依赖实现。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| API-first（LLM） | API-first (LLM) | 以协议（openai-completions 等）组织供应商，非每厂商一驱动。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| 中文 | English | Pi 对应 | OpenCode 对应 | 定义 | 参见 |
+|------|---------|---------|----------------|------|------|
+| 三层架构 | Three-layer architecture | Pi 分层（agent/ai/ui） | monorepo 包分层 | Entry（CLI/TUI）→ Agent Engine → Foundation（ai/core/shared）。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| uncode-cli | uncode-cli | pi CLI | opencode CLI | 唯一入口：clap 解析、模式路由、工具/API 注册。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| uncode-tui | uncode-tui | pi-tui | TUI 应用 | ratatui + crossterm 全屏 TUI。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
+| uncode-agent | uncode-agent | `packages/agent` | `packages/opencode` Agent | AgentLoop、Harness、Session、Tools、Compaction。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| uncode-ai | uncode-ai | `pi-ai` | Provider 层 | `Api` trait、4 协议实现、`StreamEvent`、模型注册。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| uncode-core | uncode-core | 共享类型包 | core / util | 共享类型：event、tool、session、skill；再导出 ai 类型。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| uncode-shared | uncode-shared | — | — | 叶子 crate：`UncodeError`、`AppConfig`。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| uncode-macros | uncode-macros | — | — | `#[tool]` 过程宏，编译期生成 Schema。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| uncode-extensions | uncode-extensions | Extension | Plugin | 生命周期 Hook、WASM 扩展（scaffold）。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| uncode-platform | uncode-platform | — | Web / Server | Platform 服务端（axum，规划中/演进中）。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| 依赖方向约束 | Dependency direction | 同向分层 | 同向分层 | 严格自上而下；跨层用 broadcast 或 trait，不反向依赖实现。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| API-first（LLM） | API-first (LLM) | API-first | Provider 协议 | 以协议（openai-completions 等）组织供应商，非每厂商一驱动。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
 
 ---
 
@@ -143,100 +143,100 @@
 
 ## 七、LLM 层（uncode-ai）
 
-| 中文 | English | 定义 | 参见 |
-|------|---------|------|------|
-| Api trait | Api trait | `stream` / `complete` 统一 LLM 接口。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| StreamEvent | StreamEvent | 流式事件：Text/Thinking/ToolCall*/Usage/Error/Done。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| 工具调用三阶段 | Tool-call three-stage protocol | ToolCallStart → ToolCallDelta → ToolCallEnd；流须以 Done 结束。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| collect_assistant_message | collect_assistant_message | 消费整流组装 `Message`。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| openai-completions | openai-completions | OpenAI Chat Completions 协议实现。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| anthropic-messages | anthropic-messages | Anthropic Messages API。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| google-generative-ai | google-generative-ai | Gemini Generative AI。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| ollama-native | ollama-native | Ollama 原生 `/api/chat`（JSONL 行协议，非会话 JSONL）。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| ApiRegistry | ApiRegistry | Eager / Lazy / Unregister 注册 API 实现。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| ModelRegistry | ModelRegistry | 内置 + 用户模型，`merge_user_models` 覆盖。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| Model | Model | id、api、provider、context_window、compat 等。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| CompatConfig | CompatConfig | 约 16 字段刻画 OpenAI 兼容差异。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| Context | Context | system_prompt + messages + tools 等请求容器。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| StreamOptions | StreamOptions | temperature、max_tokens、thinking_level 等。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| ThinkingLevel | ThinkingLevel | minimal / low / medium / high 等。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| ThinkingFormat | ThinkingFormat | DeepSeek / OpenRouter / Anthropic 等 thinking 形态。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| StopReason | StopReason | 流结束原因（length、error、aborted 等）。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
-| UncodeError（LLM） | UncodeError (LLM variants) | LlmAuth、LlmRateLimit、Llm 等。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| 中文 | English | Pi 对应 | OpenCode 对应 | 定义 | 参见 |
+|------|---------|---------|----------------|------|------|
+| Api trait | Api trait | `pi-ai` Api | Provider.stream | `stream` / `complete` 统一 LLM 接口。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| StreamEvent | StreamEvent | 流式 delta 协议 | AI SDK stream | 流式事件：Text/Thinking/ToolCall*/Usage/Error/Done。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| 工具调用三阶段 | Tool-call three-stage protocol | toolcall delta 链 | tool call parts | ToolCallStart → ToolCallDelta → ToolCallEnd；流须以 Done 结束。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| collect_assistant_message | collect_assistant_message | 流消费组装 | — | 消费整流组装 `Message`。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| openai-completions | openai-completions | 同协议 | OpenAI 兼容 | OpenAI Chat Completions 协议实现。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| anthropic-messages | anthropic-messages | 同协议 | Anthropic | Anthropic Messages API。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| google-generative-ai | google-generative-ai | Gemini API | Google | Gemini Generative AI。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| ollama-native | ollama-native | Ollama | Ollama | Ollama 原生 `/api/chat`（JSONL 行协议，非会话 JSONL）。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| ApiRegistry | ApiRegistry | — | Provider 注册 | Eager / Lazy / Unregister 注册 API 实现。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| ModelRegistry | ModelRegistry | Model 表 | Model 配置 | 内置 + 用户模型，`merge_user_models` 覆盖。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| Model | Model | Model | Model | id、api、provider、context_window、compat 等。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| CompatConfig | CompatConfig | compat 字段 | — | 约 16 字段刻画 OpenAI 兼容差异。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| Context | Context | LLM context | 请求上下文 | system_prompt + messages + tools 等请求容器。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| StreamOptions | StreamOptions | streamOptions | 生成参数 | temperature、max_tokens、thinking_level 等。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| ThinkingLevel | ThinkingLevel | thinkingLevel | reasoning | minimal / low / medium / high 等。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| ThinkingFormat | ThinkingFormat | thinking 格式 | — | DeepSeek / OpenRouter / Anthropic 等 thinking 形态。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| StopReason | StopReason | stopReason | finish reason | 流结束原因（length、error、aborted 等）。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
+| UncodeError（LLM） | UncodeError (LLM variants) | — | — | LlmAuth、LlmRateLimit、Llm 等。 | [UNCODE_LLM_LAYER](UNCODE_LLM_LAYER.md) |
 
 ---
 
 ## 八、工具系统
 
-| 中文 | English | 定义 | 参见 |
-|------|---------|------|------|
-| ToolExecutor | ToolExecutor | 工具 trait：`definition` + `execute` / `execute_with_context`。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| ToolDefinition | ToolDefinition | name、JSON Schema parameters、execution_mode、label。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| ToolResult | ToolResult | content、is_error、details、terminate。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| ToolRegistry | ToolRegistry | 运行时注册与查找 `ToolExecutor`。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| #[tool] 宏 | #[tool] macro | 从函数签名生成 `ToolDefinition` 与 schema 函数。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| ExecutionMode | ExecutionMode | Parallel（默认）或 Sequential；任一为 Sequential 则整批串行。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| 沙箱 / resolve_path | Sandbox / resolve_path | CWD 内 `canonicalize`，越界 `SandboxViolation`。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| ToolContext | ToolContext | cancel_token、on_progress、tool_call_id。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| ToolHooks | ToolHooks | before_tool_call / after_tool_call。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| ExecutionEnv | ExecutionEnv | FileSystem + Shell trait；`LocalFileSystem` + `LocalShell`。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| hashline | hashline | 行哈希锚点精确编辑（EditTool）。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| 默认 CLI 注册工具 | Default CLI-registered tools | read、write、edit、grep、bash、web_fetch；可选 web_search。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| find / ls（未默认注册） | find / ls (optional) | 已实现，demo/自定义入口可注册。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| ToolRenderer | ToolRenderer | TUI 侧 per-tool 零分配静态渲染。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
+| 中文 | English | Pi 对应 | OpenCode 对应 | 定义 | 参见 |
+|------|---------|---------|----------------|------|------|
+| ToolExecutor | ToolExecutor | `AgentTool` | Tool 定义 + 执行 | 工具 trait：`definition` + `execute` / `execute_with_context`。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| ToolDefinition | ToolDefinition | tool schema | Zod schema | name、JSON Schema parameters、execution_mode、label。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| ToolResult | ToolResult | tool result | tool output | content、is_error、details、terminate。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| ToolRegistry | ToolRegistry | 工具注册表 | ToolRegistry | 运行时注册与查找 `ToolExecutor`。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| #[tool] 宏 | #[tool] macro | — | — | 从函数签名生成 `ToolDefinition` 与 schema 函数。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| ExecutionMode | ExecutionMode | 并行/串行批次 | 执行策略 | Parallel（默认）或 Sequential；任一为 Sequential 则整批串行。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| 沙箱 / resolve_path | Sandbox / resolve_path | ExecutionEnv | Permission + cwd | CWD 内 `canonicalize`，越界 `SandboxViolation`。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| ToolContext | ToolContext | tool 上下文 | — | cancel_token、on_progress、tool_call_id。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| ToolHooks | ToolHooks | `tool_call` / `tool_result` hook | Plugin hook | before_tool_call / after_tool_call。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| ExecutionEnv | ExecutionEnv | ExecutionEnv | 沙箱环境 | FileSystem + Shell trait；`LocalFileSystem` + `LocalShell`。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| hashline | hashline | — | — | 行哈希锚点精确编辑（EditTool）。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| 默认 CLI 注册工具 | Default CLI-registered tools | 内置工具集 | 内置工具 | read、write、edit、grep、bash、web_fetch；可选 web_search。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| find / ls（未默认注册） | find / ls (optional) | — | — | 已实现，demo/自定义入口可注册。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| ToolRenderer | ToolRenderer | TUI 工具展示 | UI 渲染 | TUI 侧 per-tool 零分配静态渲染。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
 
 ---
 
 ## 九、事件系统
 
-| 中文 | English | 定义 | 参见 |
-|------|---------|------|------|
-| AgentEvent | AgentEvent | 跨层通信枚举（文档称 18 variants，含 Session/Turn/Message/Tool 等）。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| broadcast 通道 | broadcast channel | `broadcast::Sender<AgentEvent>` 发布-订阅。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| ContentDelta | ContentDelta | 流式 Thinking/Text 增量（DeltaType）。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| ToolCallStart/Progress/End | ToolCallStart/Progress/End | 工具执行生命周期事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| EventRouter | EventRouter | 观察型 handler + 控制型 hook handler。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| HookResult | HookResult | Continue、Block、PatchMessages、PatchToolResult、CancelCompaction。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| event_tag | event_tag | 按 serde tag 名匹配，避免序列化开销。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| LifecycleHook | LifecycleHook | extensions 层 8 个生命周期钩子枚举。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| Extension trait | Extension trait | WASM/扩展实现 `on_hook`。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| HookRegistry | HookRegistry | 基于 DashMap 的扩展钩子注册调度。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| SessionStart / SessionEnd | SessionStart / SessionEnd | 会话级生命周期事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| ErrorCategory | ErrorCategory | Llm / Tool / Network / Config。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| 中文 | English | Pi 对应 | OpenCode 对应 | 定义 | 参见 |
+|------|---------|---------|----------------|------|------|
+| AgentEvent | AgentEvent | 10 种四层 + Harness | Bus 事件 | 跨层通信枚举（18 variants，含 Session/Turn/Message/Tool 等）。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| broadcast 通道 | broadcast channel | subscribe 模型 | 事件总线 | `broadcast::Sender<AgentEvent>` 发布-订阅。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| ContentDelta | ContentDelta | `message_update` | stream part | 流式 Thinking/Text 增量（DeltaType）。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| ToolCallStart/Progress/End | ToolCallStart/Progress/End | `tool_execution_*` | tool 事件 | 工具执行生命周期事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| EventRouter | EventRouter | Harness `on()` | Plugin 路由 | 观察型 handler + 控制型 hook handler。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| HookResult | HookResult | hook 返回值 | — | Continue、Block、PatchMessages、PatchToolResult、CancelCompaction。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| event_tag | event_tag | event.type | — | 按 serde tag 名匹配，避免序列化开销。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| LifecycleHook | LifecycleHook | Harness Hook 子集 | Plugin 生命周期 | extensions 层 8 个生命周期钩子枚举。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| Extension trait | Extension trait | Extension | Plugin | WASM/扩展实现 `on_hook`。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| HookRegistry | HookRegistry | — | Plugin 注册 | 基于 DashMap 的扩展钩子注册调度。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| SessionStart / SessionEnd | SessionStart / SessionEnd | `agent_start` / `agent_end`（近似） | session 生命周期 | 会话级生命周期事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| ErrorCategory | ErrorCategory | — | — | Llm / Tool / Network / Config。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
 
 ---
 
 ## 十、TUI 与请求链路
 
-| 中文 | English | 定义 | 参见 |
-|------|---------|------|------|
-| TuiEngine | TuiEngine | TUI 唯一入口：主循环、渲染、快捷键。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md)、[TUI_EVENT_FLOW](TUI_EVENT_FLOW.md) |
-| ChatState | ChatState | 消息列表 + 虚拟滚动 + 行数缓存。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
-| 虚拟滚动 | Virtual scrolling | prefix_sum + 二分 `visible_range`，增量渲染 tail。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
-| InputEditor | InputEditor | 输入框：历史、撤销、补全、UTF-8 光标。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
-| ToolRendererRegistry | ToolRendererRegistry | 9 类工具自定义渲染 + syntect 高亮。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
-| PermissionManager | PermissionManager | 工具执行前权限确认。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
-| SlashCommands | SlashCommands | 可扩展斜杠命令（/model、/clear 等）。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md)、[UNCODE_REQUEST_LIFECYCLE](UNCODE_REQUEST_LIFECYCLE.md) |
-| expand_file_refs | expand_file_refs | 展开用户输入中的 `@file` 引用。 | [UNCODE_REQUEST_LIFECYCLE](UNCODE_REQUEST_LIFECYCLE.md) |
-| agent_busy | agent_busy | TUI 状态：忙碌时消息入 FollowUp/Steering 队列。 | [UNCODE_REQUEST_LIFECYCLE](UNCODE_REQUEST_LIFECYCLE.md) |
-| on_submit | on_submit | TUI → Agent 回调：文本 + CancellationToken + model + session_id。 | [UNCODE_REQUEST_LIFECYCLE](UNCODE_REQUEST_LIFECYCLE.md)、[TUI_EVENT_FLOW](TUI_EVENT_FLOW.md) |
-| tokio::select!（biased） | tokio::select! (biased) | UI 事件优先于 Agent 事件。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
-| flush_queue | flush_queue | TurnEnd/SessionEnd 后刷新 TUI 消息队列。 | [TUI_EVENT_FLOW](TUI_EVENT_FLOW.md) |
+| 中文 | English | Pi 对应 | OpenCode 对应 | 定义 | 参见 |
+|------|---------|---------|----------------|------|------|
+| TuiEngine | TuiEngine | pi-tui | TUI 应用 | TUI 唯一入口：主循环、渲染、快捷键。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md)、[TUI_EVENT_FLOW](TUI_EVENT_FLOW.md) |
+| ChatState | ChatState | 消息列表状态 | UI state | 消息列表 + 虚拟滚动 + 行数缓存。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
+| 虚拟滚动 | Virtual scrolling | — | — | prefix_sum + 二分 `visible_range`，增量渲染 tail。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
+| InputEditor | InputEditor | 输入组件 | prompt UI | 输入框：历史、撤销、补全、UTF-8 光标。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
+| ToolRendererRegistry | ToolRendererRegistry | 工具 UI | tool UI | 9 类工具自定义渲染 + syntect 高亮。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
+| PermissionManager | PermissionManager | 确认流 | Permission | 工具执行前权限确认。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
+| SlashCommands | SlashCommands | 命令 | slash 命令 | 可扩展斜杠命令（/model、/clear 等）。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md)、[UNCODE_REQUEST_LIFECYCLE](UNCODE_REQUEST_LIFECYCLE.md) |
+| expand_file_refs | expand_file_refs | @ 引用 | @ 引用 | 展开用户输入中的 `@file` 引用。 | [UNCODE_REQUEST_LIFECYCLE](UNCODE_REQUEST_LIFECYCLE.md) |
+| agent_busy | agent_busy | busy 时 steer | 忙碌排队 | TUI 状态：忙碌时消息入 FollowUp/Steering 队列。 | [UNCODE_REQUEST_LIFECYCLE](UNCODE_REQUEST_LIFECYCLE.md) |
+| on_submit | on_submit | prompt 提交 | 用户提交 | TUI → Agent 回调：文本 + CancellationToken + model + session_id。 | [UNCODE_REQUEST_LIFECYCLE](UNCODE_REQUEST_LIFECYCLE.md)、[TUI_EVENT_FLOW](TUI_EVENT_FLOW.md) |
+| tokio::select!（biased） | tokio::select! (biased) | — | — | UI 事件优先于 Agent 事件。 | [UNCODE_TUI_ARCHITECTURE](UNCODE_TUI_ARCHITECTURE.md) |
+| flush_queue | flush_queue | — | — | TurnEnd/SessionEnd 后刷新 TUI 消息队列。 | [TUI_EVENT_FLOW](TUI_EVENT_FLOW.md) |
 
 ---
 
 ## 十一、配置、技能与运行模式
 
-| 中文 | English | 定义 | 参见 |
-|------|---------|------|------|
-| AppConfig | AppConfig | `~/.uncode/config.toml` 解析的配置结构。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| UncodeError | UncodeError | 14 variants 结构化错误（shared）。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| SkillRegistry | SkillRegistry | 技能加载与注入（core）。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| TUI 模式 | TUI mode | 无参数启动全屏 UI。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| CLI one-shot | CLI one-shot | `uncode "prompt"` 单次执行。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| Issue 模式 | Issue mode | `uncode --issue N` 拉取 GitHub Issue 执行。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| 流式优先 | Streaming-first | 所有 Provider 返回 `BoxStream<StreamEvent>`。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| MSRV 1.85 | MSRV 1.85 | Rust 2024 edition 最低工具链要求。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| 中文 | English | Pi 对应 | OpenCode 对应 | 定义 | 参见 |
+|------|---------|---------|----------------|------|------|
+| AppConfig | AppConfig | Pi 配置 | opencode 配置 | `~/.uncode/config.toml` 解析的配置结构。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| UncodeError | UncodeError | — | — | 14 variants 结构化错误（shared）。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| SkillRegistry | SkillRegistry | Skills | SkillTool | 技能加载与注入（core）。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| TUI 模式 | TUI mode | TUI 启动 | TUI | 无参数启动全屏 UI。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| CLI one-shot | CLI one-shot | one-shot | CLI | `uncode "prompt"` 单次执行。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| Issue 模式 | Issue mode | — | — | `uncode --issue N` 拉取 GitHub Issue 执行。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| 流式优先 | Streaming-first | streaming-first | streaming | 所有 Provider 返回 `BoxStream<StreamEvent>`。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| MSRV 1.85 | MSRV 1.85 | — | — | Rust 2024 edition 最低工具链要求。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
 
 ---
 

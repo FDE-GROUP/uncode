@@ -45,7 +45,10 @@ pub struct PhaseSummaryData {
     pub token_usage: UsageInfo,
 }
 
-/// Agent 向 TUI/Platform 广播的事件，驱动对话区更新
+/// Agent 向 TUI/Platform 广播的事件，驱动对话区更新。
+///
+/// **Pi:** 对应终端四层 `AgentEvent`（`agent_*` / `turn_*` / `message_*` / `tool_execution_*`）
+/// 及 Harness 观察事件；完整 1:1 / 1:N 对照见 `docs/uncode-technologies/UNCODE_PI_MECHANISM_MAP.md` §5。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]

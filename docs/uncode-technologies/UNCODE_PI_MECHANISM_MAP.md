@@ -19,7 +19,7 @@
 | 机制 | Pi（L1 概念） | uncode（L2 实现） | 对齐度 |
 |------|---------------|-------------------|--------|
 | 编排外壳 | `AgentHarness` | `AgentHarness` + `LoopEngine` | 高 |
-| 主循环 | `agentLoop` 双层 `while` | `LoopEngine::run_inner`（`'outer` + `while`） | 高 |
+| 主循环 | `agentLoop` 双层 `while` | `AgentLoop::run_inner`（`'outer` + `while`） | 高 |
 | 中途纠偏 | `steering` 队列 | `MessageQueue` steering 通道 | 高 |
 | 会话延续 | `followUp` 队列 | `MessageQueue` follow_up 通道 | 高 |
 | 预排队 | `nextTurn` 队列 | `MessageQueue` next_turn 通道 | 高 |
@@ -37,7 +37,7 @@ OpenCode 为 **L3 能力对照**（非机制主参照），见 [OPENCODE_VS_PI](
 ## 2. 双层循环
 
 ```
-Pi agentLoop                          uncode LoopEngine::run_inner
+Pi agentLoop                          uncode AgentLoop::run_inner
 ────────────────                      ─────────────────────────────
 outer: followUp drain                 'outer: follow_up drain
   inner: tool-call loop                 inner while: tool-call loop
@@ -94,29 +94,80 @@ TUI 在 `agent_busy` 时将用户输入路由到 Follow-up/Steering，见 [UNCOD
 
 ---
 
-## 5. AgentEvent ↔ Pi 事件（概念）
+## 5. AgentEvent ↔ Pi 四层事件（P2-1）
 
-uncode 使用 **18 个** `AgentEvent` 变体（`uncode-core/src/event.rs`）。与 Pi 终端事件流 **语义对齐**，名称不一一对应。
+Pi **UI 层** 有 [10 种 `AgentEvent`](../pi-technologies/PI_EVENT_SYSTEM.md)（Agent / Turn / Message / Tool 四层）；uncode **广播层** 有 **18 个** `AgentEvent` 变体（`uncode-core/src/event.rs`）。二者 **语义对齐、命名不同**；uncode 另含会话级、队列、压缩、TUI 扩展事件。
 
-| uncode `AgentEvent` | Pi 侧（概念） | 说明 |
-|---------------------|---------------|------|
-| `SessionStart` / `SessionEnd` | session lifecycle | 会话级 |
-| `TurnStart` / `TurnEnd` | turn lifecycle | 含 `UsageInfo` |
-| `MessageStart` / `MessageEnd` | message lifecycle | |
-| `ContentDelta` | stream delta | Thinking / Text |
-| `ToolCallStart` / `Progress` / `End` | tool execution | |
-| `CompactionComplete` | compaction done | |
-| `MessageQueued` / `MessageDelivered` | queue events | 三通道可见性 |
-| `AgentInterrupted` | cancel / interrupt | |
-| `AgentSettled` | idle after session end | |
-| `Error` | error surface | `ErrorCategory` |
-| `TaskUpdate` / `PhaseSummary` | （预留） | TUI 任务/阶段 |
+### 5.1 Pi `AgentEvent` → uncode `AgentEvent`
 
-完整序列与 Hook 见 [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md)。
+| Pi `AgentEvent` | uncode `AgentEvent` | 关系 | 备注 |
+|-----------------|---------------------|------|------|
+| `agent_start` | `SessionStart` | 近似 | Pi 按单次 `prompt()`；uncode 会话级启动 |
+| `agent_end` | `SessionEnd` | 近似 | `SessionEndData` 含 turns/tokens |
+| `turn_start` | `TurnStart` | **1:1** | |
+| `turn_end` | `TurnEnd` | **1:1** | uncode 带 `usage` |
+| `message_start` | `MessageStart` | **1:1** | `role` + `message_id` |
+| `message_update` | `ContentDelta` | **1:N** | Pi 统一 update；uncode 按 `DeltaType`（Thinking/Text） |
+| `message_update`（toolcall 增量） | `ToolCallStart` / `ToolCallProgress` | **1:N** | LLM 流式工具参数在 provider 层；执行期用 Progress |
+| `message_end` | `MessageEnd` | **1:1** | |
+| `tool_execution_start` | `ToolCallStart` | **1:1** | |
+| `tool_execution_update` | `ToolCallProgress` | **1:1** | |
+| `tool_execution_end` | `ToolCallEnd` | **1:1** | `ToolCallEndEventData` |
+
+### 5.2 uncode 独有 / 扩展变体
+
+| uncode `AgentEvent` | Pi 侧（概念） | 关系 | 备注 |
+|---------------------|---------------|------|------|
+| `CompactionComplete` | `session_compact`（观察） | 概念 1:1 | 无 Pi 同名 UI 事件；对应 Harness `session_before_compact` 之后 |
+| `MessageQueued` / `MessageDelivered` | `queue_update`（观察） | 概念 1:1 | 三通道入队/投递可见性 |
+| `AgentInterrupted` | `abort`（观察） | 概念 1:1 | 取消令牌触发 |
+| `AgentSettled` | `settled`（观察） | 概念 1:1 | `SessionEnd` 后完全空闲 |
+| `Error` | — | uncode 独有 | `ErrorCategory` 分类 |
+| `TaskUpdate` / `PhaseSummary` | — | uncode 独有 | TUI 任务/阶段（预留产品面） |
+
+### 5.3 Pi Harness Hook ↔ uncode 机制
+
+Pi Harness **Hook**（可改行为）与 uncode 对照；uncode 在 `EventRouter` / `ToolHooks` / compaction 路径实现子集。
+
+| Pi Harness Hook | uncode 实现 | 关系 |
+|-------------------|-------------|------|
+| `before_agent_start` | `SystemPromptBuilder` + 首条 system 注入 | 概念 |
+| `context` | `transform_context` 回调 | 概念 1:1 |
+| `before_provider_request` | `StreamOptions` 构建 | 部分 |
+| `tool_call` | `ToolHooks::before_tool_call` | 概念 1:1 |
+| `tool_result` | `ToolHooks::after_tool_call` + `terminate` | 概念 1:1 |
+| `session_before_compact` | `compact_if_needed` / `should_compact_session` | 概念 1:1 |
+| `session_before_tree` | `branch_with_summary` | 概念 |
+| `queue_update` | `MessageQueued` / `MessageDelivered` | 观察 1:1 |
+| `abort` | `AgentInterrupted` + `CancellationToken` | 概念 1:1 |
+| `settled` | `AgentSettled` | 概念 1:1 |
+
+完整 Hook 列表见 [PI_EVENT_SYSTEM](../pi-technologies/PI_EVENT_SYSTEM.md)；uncode 见 [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md)。
 
 ---
 
-## 6. 刻意不对齐（备忘）
+## 6. `run_inner` 阶段 ↔ Pi `prompt()` 序列（P2-3）
+
+| 顺序 | uncode `AgentLoop::run_inner` | Pi 等价阶段 | 典型 Pi 事件 |
+|:----:|------------------------------|-------------|--------------|
+| 1 | Session 初始化 / 迁移 | session load | — |
+| 2 | 持久化用户消息 | append user message | `message_start` / `message_end` |
+| 3 | `build_context()` | `buildContext()` | — |
+| 4 | 注入 system prompt（+ workspace graph） | system bundle | — |
+| 5 | drain `next_turn` → `pending_messages` | nextTurn queue | — |
+| 6 | 内层 `while`：LLM `stream` | turn 内 ReAct | `turn_start` … |
+| 7 | 流式 `ContentDelta` / 工具调用解析 | `message_update` | 1:N |
+| 8 | 工具批次执行 | `tool_execution_*` | 1:1 |
+| 9 | drain `steering`（每 turn 末） | steering queue | — |
+| 10 | `compact_if_needed` | compaction hook | `session_before_compact` |
+| 11 | 外层 drain `follow_up` | followUp queue | — |
+| 12 | `SessionEnd` / `AgentSettled` | `agent_end` / `settled` | 近似 |
+
+端到端 TUI 路径见 [UNCODE_REQUEST_LIFECYCLE](UNCODE_REQUEST_LIFECYCLE.md)。
+
+---
+
+## 7. 刻意不对齐（备忘）
 
 | 项 | Pi | uncode | 原因 |
 |----|-----|--------|------|
@@ -138,4 +189,4 @@ uncode 使用 **18 个** `AgentEvent` 变体（`uncode-core/src/event.rs`）。�
 
 ---
 
-*机制对照随 Phase 2（#261 事件矩阵细化）扩展；与源码冲突时以 `crates/` 为准。*
+*Phase 2（#261）事件/循环矩阵已纳入 §5–§6；Phase 3（#262）见核心 crate rustdoc `/// **Pi:**` 行。与源码冲突时以 `crates/` 为准。*

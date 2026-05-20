@@ -2,6 +2,9 @@
 //!
 //! 编排 LLM 调用 → 工具执行 → 事件广播 → 循环的主流程。
 //! `AgentHarness` 是生产编排器，`AgentLoop` 是核心执行引擎，`GitHubClient` 提供 Issue/PR 集成能力。
+//!
+//! **L1（Pi）：** 机制与 Pi `packages/agent` 对齐（双环、三队列、会话树、Compaction）；
+//! 对照表见 `docs/uncode-technologies/UNCODE_PI_MECHANISM_MAP.md`。
 
 pub mod branch_summarization;
 pub mod compaction;
