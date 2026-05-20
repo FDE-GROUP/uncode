@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::api_types::{CompatConfig, StopReason, ThinkingFormat, ThinkingLevel};
-    use crate::model::Model;
+    use crate::model::{Model, builtin_models};
 
     // ── StopReason 映射测试 ──
 
@@ -214,7 +214,24 @@ mod tests {
         assert_eq!(model.api, "openai-completions");
         assert!(!model.compat.supports_developer_role);
         assert_eq!(model.thinking_format, Some(ThinkingFormat::DeepSeek));
+        assert_eq!(
+            model.effective_thinking_format(),
+            Some(ThinkingFormat::DeepSeek)
+        );
         assert!(model.reasoning);
+    }
+
+    #[test]
+    fn test_glm_5_1_builtin_reasoning_stream_format() {
+        let model = builtin_models()
+            .into_iter()
+            .find(|m| m.id == "glm-5.1")
+            .expect("glm-5.1 builtin");
+        assert!(model.reasoning);
+        assert_eq!(
+            model.effective_thinking_format(),
+            Some(ThinkingFormat::DeepSeek)
+        );
     }
 
     #[test]
@@ -232,7 +249,21 @@ mod tests {
         assert_eq!(model.id, "my-custom-model");
         assert_eq!(model.api, "openai-completions");
         assert!(!model.compat.supports_developer_role);
-        assert!(model.thinking_format.is_none());
+        assert_eq!(
+            model.effective_thinking_format(),
+            Some(ThinkingFormat::DeepSeek)
+        );
+    }
+
+    #[test]
+    fn test_provider_preset_merges_on_registry_load() {
+        let reg = crate::model_registry::ModelRegistry::from_builtin();
+        let glm = reg.get("glm-4-flash").unwrap();
+        assert!(glm.compat.done_breaks_stream);
+        assert_eq!(
+            glm.effective_thinking_format(),
+            Some(ThinkingFormat::DeepSeek)
+        );
     }
 
     #[test]

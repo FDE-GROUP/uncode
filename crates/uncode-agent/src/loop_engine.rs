@@ -604,7 +604,7 @@ impl AgentLoop {
                         self.emit(AgentEvent::AgentInterrupted { turn, partial_response: false });
                         break 'outer;
                     }
-                    result = uncode_ai::stream(model, &context, &options, &self.api_registry) => result?,
+                    result = uncode_ai::stream_simple(model, &context, &options, &self.api_registry) => result?,
                 };
 
                 let mut current_text = String::with_capacity(2048);

@@ -82,6 +82,34 @@ impl Default for Model {
 }
 
 impl Model {
+    /// 厂商 preset + 模型级 compat 覆盖后的有效配置。
+    pub fn effective_compat(&self) -> CompatConfig {
+        match crate::provider_preset::provider_preset(&self.provider) {
+            Some(p) => CompatConfig::merge_with_overlay(&p.compat, &self.compat),
+            None => self.compat.clone(),
+        }
+    }
+
+    /// Request/SSE 使用有效 compat；内置模型可在 `thinking_format` 字段再声明一层。
+    pub fn effective_thinking_format(&self) -> Option<ThinkingFormat> {
+        self.effective_compat()
+            .thinking_format
+            .or(self.thinking_format)
+    }
+
+    /// 供 `stream_simple` 使用：钳制 thinking 并写入有效 compat。
+    pub fn prepared_for_stream(&self, options: &mut crate::api_types::StreamOptions) -> Model {
+        let mut model = self.clone();
+        model.compat = self.effective_compat();
+        model.thinking_format = model.effective_thinking_format();
+
+        if let Some(level) = options.thinking_level {
+            options.thinking_level = Some(clamp_thinking_level(level, &model));
+        }
+
+        model
+    }
+
     pub fn from_user_config(uc: &UserModelConfig) -> Self {
         let mut compat = CompatConfig::default();
         if let Some(ref uc_compat) = uc.compat {
@@ -134,7 +162,7 @@ impl Model {
                 compat.supports_cache_control_on_tools = v;
             }
         }
-        Self {
+        let model = Self {
             id: uc.id.clone(),
             name: uc.id.clone(),
             api: uc.api.clone(),
@@ -144,14 +172,15 @@ impl Model {
             max_output_tokens: uc.max_output_tokens.unwrap_or(8192),
             compat,
             ..Model::default()
-        }
+        };
+        crate::provider_preset::apply_provider_preset(model)
     }
 
     pub fn from_model_config(mc: &ModelConfig) -> Self {
         // If a builtin model with the same id exists, use it as base
         let builtin = builtin_models().into_iter().find(|m| m.id == mc.id);
 
-        if let Some(base) = builtin {
+        let model = if let Some(base) = builtin {
             // Use builtin model's full config (api, compat, pricing, etc.)
             let mut input_modalities = base.input_modalities.clone();
             if mc.supports_vision && !input_modalities.contains(&InputModality::Image) {
@@ -179,7 +208,8 @@ impl Model {
                 input_modalities,
                 ..Model::default()
             }
-        }
+        };
+        crate::provider_preset::apply_provider_preset(model)
     }
 }
 
@@ -363,6 +393,31 @@ pub fn builtin_models() -> Vec<Model> {
                 done_breaks_stream: true,
                 ..CompatConfig::default()
             },
+            ..Model::default()
+        },
+        Model {
+            id: "glm-5.1".into(),
+            name: "GLM 5.1".into(),
+            api: "openai-completions".into(),
+            provider: "glm".into(),
+            base_url: "https://open.bigmodel.cn/api/paas/v4".into(),
+            context_window: 200_000,
+            max_output_tokens: 8192,
+            reasoning: true,
+            thinking_format: Some(ThinkingFormat::DeepSeek),
+            input_modalities: vec![InputModality::Text, InputModality::Image],
+            compat: CompatConfig {
+                done_breaks_stream: true,
+                thinking_format: Some(ThinkingFormat::DeepSeek),
+                ..CompatConfig::default()
+            },
+            thinking_level_map: HashMap::from([
+                (ThinkingLevel::Minimal, Some("low".into())),
+                (ThinkingLevel::Low, Some("low".into())),
+                (ThinkingLevel::Medium, Some("medium".into())),
+                (ThinkingLevel::High, Some("high".into())),
+                (ThinkingLevel::XHigh, Some("high".into())),
+            ]),
             ..Model::default()
         },
         // ── OpenAI ──

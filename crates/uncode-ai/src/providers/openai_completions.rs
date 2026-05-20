@@ -170,12 +170,11 @@ fn build_request_body(model: &Model, context: &Context, options: &StreamOptions)
             .get(&level)
             .and_then(|v| v.as_deref());
 
-        match model.compat.thinking_format {
+        match model.effective_thinking_format() {
             Some(ThinkingFormat::DeepSeek) => {
-                if let Some(effort) = mapped {
-                    body["thinking"] = serde_json::json!({"type": "enabled"});
-                    body["reasoning_effort"] = serde_json::json!(effort);
-                }
+                body["thinking"] = serde_json::json!({"type": "enabled"});
+                let effort = mapped.unwrap_or("high");
+                body["reasoning_effort"] = serde_json::json!(effort);
             }
             Some(ThinkingFormat::OpenRouter) => {
                 let effort = mapped.unwrap_or("high");
@@ -415,7 +414,10 @@ impl Api for OpenAiCompletionsApi {
             ));
         }
 
-        let compat = model.compat.clone();
+        let mut compat = model.compat.clone();
+        if compat.thinking_format.is_none() {
+            compat.thinking_format = model.thinking_format;
+        }
         let state = StreamState::new();
         let stream = response
             .bytes_stream()
