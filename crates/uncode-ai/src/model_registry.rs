@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::model::{Model, builtin_models};
+use crate::provider_preset::apply_provider_preset;
 
 /// 模型注册表——按 id 查找 Model 数据。
 ///
@@ -20,6 +21,7 @@ impl ModelRegistry {
     pub fn from_builtin() -> Self {
         let models = builtin_models()
             .into_iter()
+            .map(apply_provider_preset)
             .map(|m| (m.id.clone(), m))
             .collect();
         Self { models }
@@ -44,6 +46,7 @@ impl ModelRegistry {
     /// 合并用户自定义模型——同 id 覆盖，新 id 追加
     pub fn merge_user_models(&mut self, user_models: Vec<Model>) {
         for m in user_models {
+            let m = apply_provider_preset(m);
             self.models.insert(m.id.clone(), m);
         }
     }

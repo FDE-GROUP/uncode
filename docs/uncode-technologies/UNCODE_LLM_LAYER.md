@@ -2,7 +2,7 @@
 
 > Api trait + 4 种协议实现 + 流式协议 | 基于源码分析，2026-05 修订
 
-uncode-ai 是 LLM 通信的核心抽象层。所有 Provider 实现统一的 `Api` trait，通过 `StreamEvent` 枚举向下游传递流式数据。内置 13 个模型，覆盖 4 种 API 协议跨 10+ LLM 服务商。
+uncode-ai 是 LLM 通信的核心抽象层。所有 Provider 实现统一的 `Api` trait，通过 `StreamEvent` 枚举向下游传递流式数据。内置 14 个模型，覆盖 4 种 API 协议跨 10+ LLM 服务商；厂商级 Compat 由 **ProviderPreset** 合并，Agent 主路径经 **`stream_simple`** 调用（对齐 Pi `streamSimple`）。
 
 ---
 
@@ -108,9 +108,11 @@ pub async fn collect_assistant_message(
 | 认证 | `x-api-key` + `anthropic-version: 2023-06-01` |
 | 协议 | SSE（Anthropic 特有事件类型） |
 | 工具定义 | `{"name": "...", "input_schema": {...}}` |
-| Thinking | `{"thinking": {"type": "enabled", "budget_tokens": N}}` |
+| Thinking | `{"thinking": {"type": "enabled", "budget_tokens": N}}`；`N` 来自 `StreamOptions.thinking_budget_tokens` 或 preset `thinking_level_map`（anthropic 为数字字符串） |
+| Thinking SSE | `content_block_start` / `content_block_delta` 中 `type: thinking` / `thinking_delta` → `StreamEvent::ThinkingDelta` |
+| 历史回写 | assistant 消息中的 `ContentBlock::Thinking` → `{"type":"thinking","thinking":"..."}` |
 
-特有事件类型：`message_start`、`content_block_start`、`content_block_delta`（含 `input_json_delta`）、`content_block_stop`、`message_delta`。
+特有事件类型：`message_start`、`content_block_start`、`content_block_delta`（含 `input_json_delta`、`thinking_delta`）、`content_block_stop`、`message_delta`。
 
 System prompt 作为顶层 `"system"` 字段发送，不在 messages 数组中。工具结果包裹在 `role: "user"` 消息中（`type: "tool_result"`）。
 
@@ -166,17 +168,23 @@ pub struct ModelRegistry {
 }
 ```
 
-12 个内置模型 + 用户自定义模型（`merge_user_models`，同 ID 覆盖）。
+14 个内置模型 + 用户自定义模型（`merge_user_models`，同 ID 覆盖）。`from_builtin()` 对每条内置模型调用 `apply_provider_preset(provider)`。
+
+### ProviderPreset（厂商 Compat 预设）
+
+`crates/uncode-ai/src/provider_preset.rs`：`deepseek`、`glm`、`openai`、`anthropic` 等 11 个 preset，含 `default_api`、`default_base_url`、`compat`、`thinking_level_map`。内置 `builtin_models()` 只声明模型级 delta（定价、窗口、`reasoning`、模态）；`CompatConfig::merge_with_overlay(preset, model_delta)` 在注册时合并。
 
 ### 路由流程
 
 ```
-uncode_ai::stream(model_id, context, options, api_registry)
-    │
-    ├── api_registry.get(model.api) → Arc<dyn Api>
-    ├── model_registry.get(model_id) → Model
-    └── api.stream(model, context, options) → BoxStream<StreamEvent>
+uncode_ai::stream_simple(model, context, options, api_registry)   ← Agent / compaction
+    ├── prepared_for_stream：effective_compat + clamp_thinking_level
+    └── stream → api_registry.get(model.api).stream(...)
 ```
+
+底层 `stream()` 仍可直接调用；新代码应优先 `stream_simple()`。
+
+**Harness 钩子（P4）**：`AgentLoop::set_transform_context` 在组 `Context` 前改写 messages；`set_on_payload` / `set_on_response` 经 `StreamOptions` 在 provider 发 HTTP 前后触发。`session_id` 由 LoopEngine 写入 options（OpenAI/Anthropic 兼容头）。Pi 的 `streamProxy` 服务端路由不在本 crate 实现。
 
 ---
 
@@ -196,9 +204,12 @@ pub struct Model {
     pub input_modalities: Vec<InputModality>,
     pub pricing: ModelPricingPerMillion,
     pub headers: HashMap<String, String>,
-    pub compat: CompatConfig,          // 15 个 Provider 差异字段
-    pub thinking_level_map: HashMap<ThinkingLevel, Option<String>>,
+    pub compat: CompatConfig,          // 模型 delta；运行时有效值见 effective_compat()
+    pub thinking_level_map: HashMap<ThinkingLevel, Option<String>>, // 空则继承 preset
 }
+```
+
+`Model::effective_compat()` / `Model::effective_thinking_format()`：preset ⊕ 模型覆盖。扩展新 OpenAI 兼容供应商时优先改 preset，再在 `builtin_models()` 增加一行。
 ```
 
 ### CompatConfig — Provider 差异矩阵

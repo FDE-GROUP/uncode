@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::session::store::SessionStore;
-use uncode_core::api_types::ThinkingLevel;
+use uncode_core::api_types::{PayloadCallback, ResponseCallback, ThinkingLevel};
 use uncode_core::error::{HarnessError, UncodeError};
 use uncode_core::event::AgentEvent;
 use uncode_core::message::Message;
@@ -182,6 +182,21 @@ impl AgentHarness {
     /// 设置 session ID
     pub fn set_session_id(&mut self, session_id: String) {
         self.agent.set_session_id(session_id);
+    }
+
+    /// 注册 LLM 请求体观测回调（经 `stream_simple` → provider 触发）。
+    pub fn set_on_payload(&mut self, cb: PayloadCallback) {
+        self.agent.set_on_payload(cb);
+    }
+
+    /// 注册 LLM HTTP 响应观测回调。
+    pub fn set_on_response(&mut self, cb: ResponseCallback) {
+        self.agent.set_on_response(cb);
+    }
+
+    /// 发送 LLM 前变换消息（与 Pi `transformContext` 同层）。
+    pub fn set_transform_context(&mut self, cb: uncode_core::api_types::TransformContextCallback) {
+        self.agent.set_transform_context(cb);
     }
 
     /// 获取当前 session ID

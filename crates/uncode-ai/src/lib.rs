@@ -9,12 +9,18 @@ pub mod api_types;
 pub mod message;
 pub mod model;
 pub mod model_registry;
+pub mod provider_preset;
 pub mod providers;
+pub mod request_hooks;
 pub mod tool_def;
+
+pub use request_hooks::{apply_option_headers, notify_http_response, notify_request_payload};
 
 pub use api::{Api, StreamEvent, ToolCallEndData, UsageInfo as LlmUsageInfo};
 pub use api_registry::ApiRegistry;
+pub use model::{Model, clamp_thinking_level};
 pub use model_registry::ModelRegistry;
+pub use provider_preset::{ProviderPreset, apply_provider_preset, builtin_provider_presets};
 pub use providers::anthropic_messages::AnthropicMessagesApi;
 pub use providers::gemini_generative::GeminiGenerativeAiApi;
 pub use providers::ollama_native::OllamaNativeApi;
@@ -34,6 +40,21 @@ pub async fn stream(
         .get(&model.api)
         .ok_or_else(|| UncodeError::Config(format!("no API registered for '{}'", model.api)))?;
     api.stream(model, context, options).await
+}
+
+/// Pi `streamSimple` 对齐入口：合并厂商 Compat、钳制 thinking level 后调用 [`stream`].
+///
+/// `StreamOptions` 中的 `on_payload` / `on_response` 由各 `Api` 实现在发请求前后触发；
+/// Agent 侧在 `transform_context` 之后组装 `Context` 并传入本函数。
+pub async fn stream_simple(
+    model: &model::Model,
+    context: &api_types::Context,
+    options: &api_types::StreamOptions,
+    api_registry: &ApiRegistry,
+) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
+    let mut options = options.clone();
+    let model = model.prepared_for_stream(&mut options);
+    stream(&model, context, &options, api_registry).await
 }
 
 /// 通过 ApiRegistry 路由到对应 API 实现的非流式补全

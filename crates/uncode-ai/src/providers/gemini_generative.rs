@@ -150,12 +150,14 @@ impl Api for GeminiGenerativeAiApi {
         options: &StreamOptions,
     ) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
         let body = build_gemini_body(model, context, options);
+        crate::notify_request_payload(options, &body);
         let url = format!(
             "{}/models/{}:streamGenerateContent?alt=sse",
             model.base_url, model.id
         );
 
         let mut req = self.client.post(&url).json(&body);
+        req = crate::apply_option_headers(req, options);
 
         if let Some(ref key) = options.api_key {
             req = req.header("x-goog-api-key", key);
@@ -175,6 +177,8 @@ impl Api for GeminiGenerativeAiApi {
                 .await
                 .map_err(|e| UncodeError::Network(e.to_string()))?,
         };
+
+        crate::notify_http_response(options, response.status().as_u16(), response.headers());
 
         if !response.status().is_success() {
             let status = response.status();

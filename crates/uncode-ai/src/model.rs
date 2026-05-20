@@ -82,6 +82,34 @@ impl Default for Model {
 }
 
 impl Model {
+    /// 厂商 preset + 模型级 compat 覆盖后的有效配置。
+    pub fn effective_compat(&self) -> CompatConfig {
+        match crate::provider_preset::provider_preset(&self.provider) {
+            Some(p) => CompatConfig::merge_with_overlay(&p.compat, &self.compat),
+            None => self.compat.clone(),
+        }
+    }
+
+    /// Request/SSE 使用有效 compat；内置模型可在 `thinking_format` 字段再声明一层。
+    pub fn effective_thinking_format(&self) -> Option<ThinkingFormat> {
+        self.effective_compat()
+            .thinking_format
+            .or(self.thinking_format)
+    }
+
+    /// 供 `stream_simple` 使用：钳制 thinking 并写入有效 compat。
+    pub fn prepared_for_stream(&self, options: &mut crate::api_types::StreamOptions) -> Model {
+        let mut model = self.clone();
+        model.compat = self.effective_compat();
+        model.thinking_format = model.effective_thinking_format();
+
+        if let Some(level) = options.thinking_level {
+            options.thinking_level = Some(clamp_thinking_level(level, &model));
+        }
+
+        model
+    }
+
     pub fn from_user_config(uc: &UserModelConfig) -> Self {
         let mut compat = CompatConfig::default();
         if let Some(ref uc_compat) = uc.compat {
@@ -134,7 +162,7 @@ impl Model {
                 compat.supports_cache_control_on_tools = v;
             }
         }
-        Self {
+        let model = Self {
             id: uc.id.clone(),
             name: uc.id.clone(),
             api: uc.api.clone(),
@@ -144,14 +172,15 @@ impl Model {
             max_output_tokens: uc.max_output_tokens.unwrap_or(8192),
             compat,
             ..Model::default()
-        }
+        };
+        crate::provider_preset::apply_provider_preset(model)
     }
 
     pub fn from_model_config(mc: &ModelConfig) -> Self {
         // If a builtin model with the same id exists, use it as base
         let builtin = builtin_models().into_iter().find(|m| m.id == mc.id);
 
-        if let Some(base) = builtin {
+        let model = if let Some(base) = builtin {
             // Use builtin model's full config (api, compat, pricing, etc.)
             let mut input_modalities = base.input_modalities.clone();
             if mc.supports_vision && !input_modalities.contains(&InputModality::Image) {
@@ -179,7 +208,8 @@ impl Model {
                 input_modalities,
                 ..Model::default()
             }
-        }
+        };
+        crate::provider_preset::apply_provider_preset(model)
     }
 }
 
@@ -255,274 +285,219 @@ fn default_max_output_tokens() -> u32 {
     8192
 }
 
-/// 内置模型数据集
+/// 内置模型声明：仅写模型级 delta；`api`/`base_url`/Compat/thinking 映射由 [`crate::provider_preset::apply_provider_preset`] 合并。
+fn builtin_model(
+    id: &'static str,
+    name: &'static str,
+    provider: &'static str,
+    context_window: u32,
+    max_output_tokens: u32,
+    reasoning: bool,
+    pricing: ModelPricingPerMillion,
+    input_modalities: Vec<InputModality>,
+    headers: HashMap<String, String>,
+) -> Model {
+    Model {
+        id: id.into(),
+        name: name.into(),
+        provider: provider.into(),
+        context_window,
+        max_output_tokens,
+        reasoning,
+        pricing,
+        input_modalities,
+        headers,
+        ..Model::default()
+    }
+}
+
+/// 内置模型数据集（注册时经 `ModelRegistry::from_builtin` 套用厂商 preset）。
 pub fn builtin_models() -> Vec<Model> {
     vec![
-        // ── DeepSeek ──
-        Model {
-            id: "deepseek-chat".into(),
-            name: "DeepSeek V3".into(),
-            api: "openai-completions".into(),
-            provider: "deepseek".into(),
-            base_url: "https://api.deepseek.com/v1".into(),
-            context_window: 128_000,
-            max_output_tokens: 8192,
-            reasoning: true,
-            thinking_format: Some(ThinkingFormat::DeepSeek),
-            input_modalities: vec![InputModality::Text],
-            pricing: ModelPricingPerMillion {
+        builtin_model(
+            "deepseek-chat",
+            "DeepSeek V3",
+            "deepseek",
+            128_000,
+            8192,
+            true,
+            ModelPricingPerMillion {
                 input: 0.27,
                 output: 1.10,
                 cache_read: 0.07,
                 cache_write: 0.27,
             },
-            compat: CompatConfig {
-                supports_developer_role: false,
-                ..CompatConfig::default()
-            },
-            thinking_level_map: HashMap::from([
-                (ThinkingLevel::Minimal, None),
-                (ThinkingLevel::Low, None),
-                (ThinkingLevel::Medium, None),
-                (ThinkingLevel::High, Some("high".into())),
-                (ThinkingLevel::XHigh, Some("max".into())),
-            ]),
-            ..Model::default()
-        },
-        Model {
-            id: "deepseek-v4-pro".into(),
-            name: "DeepSeek V4 Pro".into(),
-            api: "openai-completions".into(),
-            provider: "deepseek".into(),
-            base_url: "https://api.deepseek.com/v1".into(),
-            context_window: 128_000,
-            max_output_tokens: 8192,
-            reasoning: true,
-            thinking_format: Some(ThinkingFormat::DeepSeek),
-            input_modalities: vec![InputModality::Text],
-            pricing: ModelPricingPerMillion {
+            vec![InputModality::Text],
+            HashMap::new(),
+        ),
+        builtin_model(
+            "deepseek-v4-pro",
+            "DeepSeek V4 Pro",
+            "deepseek",
+            128_000,
+            8192,
+            true,
+            ModelPricingPerMillion {
                 input: 0.27,
                 output: 1.10,
                 cache_read: 0.07,
                 cache_write: 0.27,
             },
-            compat: CompatConfig {
-                supports_developer_role: false,
-                ..CompatConfig::default()
-            },
-            thinking_level_map: HashMap::from([
-                (ThinkingLevel::Minimal, None),
-                (ThinkingLevel::Low, None),
-                (ThinkingLevel::Medium, None),
-                (ThinkingLevel::High, Some("high".into())),
-                (ThinkingLevel::XHigh, Some("max".into())),
-            ]),
-            ..Model::default()
-        },
-        Model {
-            id: "deepseek-reasoner".into(),
-            name: "DeepSeek R1".into(),
-            api: "openai-completions".into(),
-            provider: "deepseek".into(),
-            base_url: "https://api.deepseek.com/v1".into(),
-            context_window: 128_000,
-            max_output_tokens: 8192,
-            reasoning: true,
-            thinking_format: Some(ThinkingFormat::DeepSeek),
-            input_modalities: vec![InputModality::Text],
-            pricing: ModelPricingPerMillion {
+            vec![InputModality::Text],
+            HashMap::new(),
+        ),
+        builtin_model(
+            "deepseek-reasoner",
+            "DeepSeek R1",
+            "deepseek",
+            128_000,
+            8192,
+            true,
+            ModelPricingPerMillion {
                 input: 0.55,
                 output: 2.19,
                 cache_read: 0.14,
                 cache_write: 0.55,
             },
-            compat: CompatConfig {
-                supports_developer_role: false,
-                ..CompatConfig::default()
-            },
-            thinking_level_map: HashMap::from([
-                (ThinkingLevel::Minimal, None),
-                (ThinkingLevel::Low, None),
-                (ThinkingLevel::Medium, None),
-                (ThinkingLevel::High, Some("high".into())),
-                (ThinkingLevel::XHigh, Some("max".into())),
-            ]),
-            ..Model::default()
-        },
-        // ── GLM (智谱) ──
-        Model {
-            id: "glm-4-flash".into(),
-            name: "GLM-4 Flash".into(),
-            api: "openai-completions".into(),
-            provider: "glm".into(),
-            base_url: "https://open.bigmodel.cn/api/paas/v4".into(),
-            context_window: 128_000,
-            max_output_tokens: 4096,
-            input_modalities: vec![InputModality::Text],
-            compat: CompatConfig {
-                done_breaks_stream: true,
-                ..CompatConfig::default()
-            },
-            ..Model::default()
-        },
-        // ── OpenAI ──
-        Model {
-            id: "gpt-4o-mini".into(),
-            name: "GPT-4o Mini".into(),
-            api: "openai-completions".into(),
-            provider: "openai".into(),
-            base_url: "https://api.openai.com/v1".into(),
-            context_window: 128_000,
-            max_output_tokens: 16_384,
-            input_modalities: vec![InputModality::Text, InputModality::Image],
-            pricing: ModelPricingPerMillion {
+            vec![InputModality::Text],
+            HashMap::new(),
+        ),
+        builtin_model(
+            "glm-4-flash",
+            "GLM-4 Flash",
+            "glm",
+            128_000,
+            4096,
+            false,
+            ModelPricingPerMillion::default(),
+            vec![InputModality::Text],
+            HashMap::new(),
+        ),
+        builtin_model(
+            "glm-5.1",
+            "GLM 5.1",
+            "glm",
+            200_000,
+            8192,
+            true,
+            ModelPricingPerMillion::default(),
+            vec![InputModality::Text, InputModality::Image],
+            HashMap::new(),
+        ),
+        builtin_model(
+            "gpt-4o-mini",
+            "GPT-4o Mini",
+            "openai",
+            128_000,
+            16_384,
+            false,
+            ModelPricingPerMillion {
                 input: 0.15,
                 output: 0.60,
                 ..Default::default()
             },
-            compat: CompatConfig {
-                send_session_affinity_headers: true,
-                supports_long_cache_retention: true,
-                ..CompatConfig::default()
-            },
-            ..Model::default()
-        },
-        Model {
-            id: "gpt-4o".into(),
-            name: "GPT-4o".into(),
-            api: "openai-completions".into(),
-            provider: "openai".into(),
-            base_url: "https://api.openai.com/v1".into(),
-            context_window: 128_000,
-            max_output_tokens: 16_384,
-            input_modalities: vec![InputModality::Text, InputModality::Image],
-            pricing: ModelPricingPerMillion {
+            vec![InputModality::Text, InputModality::Image],
+            HashMap::new(),
+        ),
+        builtin_model(
+            "gpt-4o",
+            "GPT-4o",
+            "openai",
+            128_000,
+            16_384,
+            false,
+            ModelPricingPerMillion {
                 input: 2.50,
                 output: 10.00,
                 ..Default::default()
             },
-            compat: CompatConfig {
-                send_session_affinity_headers: true,
-                supports_long_cache_retention: true,
-                ..CompatConfig::default()
-            },
-            ..Model::default()
-        },
-        // ── Anthropic ──
-        Model {
-            id: "claude-sonnet-4-6".into(),
-            name: "Claude Sonnet 4.6".into(),
-            api: "anthropic-messages".into(),
-            provider: "anthropic".into(),
-            base_url: "https://api.anthropic.com/v1".into(),
-            context_window: 200_000,
-            max_output_tokens: 16_384,
-            reasoning: true,
-            thinking_format: Some(ThinkingFormat::Anthropic),
-            input_modalities: vec![InputModality::Text, InputModality::Image],
-            pricing: ModelPricingPerMillion {
+            vec![InputModality::Text, InputModality::Image],
+            HashMap::new(),
+        ),
+        builtin_model(
+            "claude-sonnet-4-6",
+            "Claude Sonnet 4.6",
+            "anthropic",
+            200_000,
+            16_384,
+            true,
+            ModelPricingPerMillion {
                 input: 3.00,
                 output: 15.00,
                 cache_read: 0.30,
                 cache_write: 3.75,
             },
-            compat: CompatConfig {
-                send_session_affinity_headers: true,
-                supports_long_cache_retention: true,
-                supports_cache_control_on_tools: true,
-                ..CompatConfig::default()
-            },
-            ..Model::default()
-        },
-        // ── Gemini ──
-        Model {
-            id: "gemini-2.0-flash".into(),
-            name: "Gemini 2.0 Flash".into(),
-            api: "google-generative-ai".into(),
-            provider: "gemini".into(),
-            base_url: "https://generativelanguage.googleapis.com/v1beta".into(),
-            context_window: 1_048_576,
-            max_output_tokens: 8192,
-            input_modalities: vec![InputModality::Text, InputModality::Image],
-            pricing: ModelPricingPerMillion::default(),
-            ..Model::default()
-        },
-        // ── OpenRouter ──
-        Model {
-            id: "openrouter-auto".into(),
-            name: "OpenRouter Auto".into(),
-            api: "openai-completions".into(),
-            provider: "openrouter".into(),
-            base_url: "https://openrouter.ai/api/v1".into(),
-            context_window: 128_000,
-            max_output_tokens: 8192,
-            headers: HashMap::from([(
+            vec![InputModality::Text, InputModality::Image],
+            HashMap::new(),
+        ),
+        builtin_model(
+            "gemini-2.0-flash",
+            "Gemini 2.0 Flash",
+            "gemini",
+            1_048_576,
+            8192,
+            false,
+            ModelPricingPerMillion::default(),
+            vec![InputModality::Text, InputModality::Image],
+            HashMap::new(),
+        ),
+        builtin_model(
+            "openrouter-auto",
+            "OpenRouter Auto",
+            "openrouter",
+            128_000,
+            8192,
+            false,
+            ModelPricingPerMillion::default(),
+            vec![InputModality::Text],
+            HashMap::from([(
                 "HTTP-Referer".into(),
                 "https://github.com/FDE-GROUP/uncode".into(),
             )]),
-            ..Model::default()
-        },
-        // ── Groq ──
-        Model {
-            id: "llama-3.3-70b-versatile".into(),
-            name: "Llama 3.3 70B (Groq)".into(),
-            api: "openai-completions".into(),
-            provider: "groq".into(),
-            base_url: "https://api.groq.com/openai/v1".into(),
-            context_window: 128_000,
-            max_output_tokens: 8192,
-            compat: CompatConfig {
-                max_tokens_field: crate::api_types::MaxTokensField::MaxCompletionTokens,
-                ..CompatConfig::default()
-            },
-            ..Model::default()
-        },
-        // ── Cerebras ──
-        Model {
-            id: "llama-3.3-70b".into(),
-            name: "Llama 3.3 70B (Cerebras)".into(),
-            api: "openai-completions".into(),
-            provider: "cerebras".into(),
-            base_url: "https://api.cerebras.ai/v1".into(),
-            context_window: 128_000,
-            max_output_tokens: 8192,
-            compat: CompatConfig {
-                max_tokens_field: crate::api_types::MaxTokensField::MaxCompletionTokens,
-                ..CompatConfig::default()
-            },
-            ..Model::default()
-        },
-        // ── Mistral ──
-        Model {
-            id: "mistral-large-latest".into(),
-            name: "Mistral Large".into(),
-            api: "openai-completions".into(),
-            provider: "mistral".into(),
-            base_url: "https://api.mistral.ai/v1".into(),
-            context_window: 128_000,
-            max_output_tokens: 8192,
-            compat: CompatConfig {
-                supports_developer_role: false,
-                ..CompatConfig::default()
-            },
-            ..Model::default()
-        },
-        // ── xAI ──
-        Model {
-            id: "grok-3-mini".into(),
-            name: "Grok 3 Mini".into(),
-            api: "openai-completions".into(),
-            provider: "xai".into(),
-            base_url: "https://api.x.ai/v1".into(),
-            context_window: 128_000,
-            max_output_tokens: 8192,
-            reasoning: true,
-            thinking_format: Some(ThinkingFormat::OpenAi),
-            compat: CompatConfig {
-                max_tokens_field: crate::api_types::MaxTokensField::MaxCompletionTokens,
-                ..CompatConfig::default()
-            },
-            ..Model::default()
-        },
+        ),
+        builtin_model(
+            "llama-3.3-70b-versatile",
+            "Llama 3.3 70B (Groq)",
+            "groq",
+            128_000,
+            8192,
+            false,
+            ModelPricingPerMillion::default(),
+            vec![InputModality::Text],
+            HashMap::new(),
+        ),
+        builtin_model(
+            "llama-3.3-70b",
+            "Llama 3.3 70B (Cerebras)",
+            "cerebras",
+            128_000,
+            8192,
+            false,
+            ModelPricingPerMillion::default(),
+            vec![InputModality::Text],
+            HashMap::new(),
+        ),
+        builtin_model(
+            "mistral-large-latest",
+            "Mistral Large",
+            "mistral",
+            128_000,
+            8192,
+            false,
+            ModelPricingPerMillion::default(),
+            vec![InputModality::Text],
+            HashMap::new(),
+        ),
+        builtin_model(
+            "grok-3-mini",
+            "Grok 3 Mini",
+            "xai",
+            128_000,
+            8192,
+            true,
+            ModelPricingPerMillion::default(),
+            vec![InputModality::Text],
+            HashMap::new(),
+        ),
     ]
 }
