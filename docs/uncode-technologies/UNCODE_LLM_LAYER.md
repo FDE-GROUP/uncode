@@ -108,9 +108,11 @@ pub async fn collect_assistant_message(
 | 认证 | `x-api-key` + `anthropic-version: 2023-06-01` |
 | 协议 | SSE（Anthropic 特有事件类型） |
 | 工具定义 | `{"name": "...", "input_schema": {...}}` |
-| Thinking | `{"thinking": {"type": "enabled", "budget_tokens": N}}` |
+| Thinking | `{"thinking": {"type": "enabled", "budget_tokens": N}}`；`N` 来自 `StreamOptions.thinking_budget_tokens` 或 preset `thinking_level_map`（anthropic 为数字字符串） |
+| Thinking SSE | `content_block_start` / `content_block_delta` 中 `type: thinking` / `thinking_delta` → `StreamEvent::ThinkingDelta` |
+| 历史回写 | assistant 消息中的 `ContentBlock::Thinking` → `{"type":"thinking","thinking":"..."}` |
 
-特有事件类型：`message_start`、`content_block_start`、`content_block_delta`（含 `input_json_delta`）、`content_block_stop`、`message_delta`。
+特有事件类型：`message_start`、`content_block_start`、`content_block_delta`（含 `input_json_delta`、`thinking_delta`）、`content_block_stop`、`message_delta`。
 
 System prompt 作为顶层 `"system"` 字段发送，不在 messages 数组中。工具结果包裹在 `role: "user"` 消息中（`type: "tool_result"`）。
 
@@ -181,6 +183,8 @@ uncode_ai::stream_simple(model, context, options, api_registry)   ← Agent / co
 ```
 
 底层 `stream()` 仍可直接调用；新代码应优先 `stream_simple()`。
+
+**Harness 钩子（P4）**：`AgentLoop::set_transform_context` 在组 `Context` 前改写 messages；`set_on_payload` / `set_on_response` 经 `StreamOptions` 在 provider 发 HTTP 前后触发。`session_id` 由 LoopEngine 写入 options（OpenAI/Anthropic 兼容头）。Pi 的 `streamProxy` 服务端路由不在本 crate 实现。
 
 ---
 

@@ -1,6 +1,6 @@
 # LLM 模型层 Pi 对齐重构方案
 
-> 状态：Phase 1 已落地；Phase 2 已落地（本分支）  
+> 状态：Phase 1–4 已落地（本分支）；`streamProxy` 服务端路由留待 Platform  
 > 关联：[PI_LLM_LAYER.md](../pi-technologies/PI_LLM_LAYER.md)、[MODEL_LAYER_DESIGN.md](../pi-technologies/MODEL_LAYER_DESIGN.md)、[UNCODE_PI_ALIGNMENT_AND_EVALUATION.md](UNCODE_PI_ALIGNMENT_AND_EVALUATION.md) §3.4
 
 ## 1. 动机
@@ -79,8 +79,8 @@ pub async fn stream_simple(
 |------|------|------|
 | **P1** | `ProviderPreset`、`effective_compat`、`stream_simple`、LoopEngine/Compaction 改用 `stream_simple` | ✅ |
 | **P2** | 内置模型表瘦身；`from_user_config` / `from_model_config` 套 preset；文档同步 `UNCODE_LLM_LAYER.md` | ✅ |
-| **P3** | Anthropic thinking block SSE；`StreamOptions` 全链路（transport/retry 与 Pi 对齐） | Anthropic reasoning 流可见 |
-| **P4** | Harness hooks：`transform_context` / proxy stream（可选） | 与 Pi 高级特性表一致 |
+| **P3** | Anthropic extended thinking：`thinking_level_map` → `budget_tokens`；SSE `thinking` / `thinking_delta` → `ThinkingDelta`；assistant 历史回写 thinking 块 | ✅ |
+| **P4** | `on_payload` / `on_response` 四协议接线；`AgentLoop`/`Harness` setter；`session_id` 传入 `StreamOptions`；`transform_context` 已在 LoopEngine | ✅（proxy stream 未做） |
 
 ## 5. 与 Pi 的差异（刻意保留）
 

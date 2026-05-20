@@ -84,7 +84,14 @@ pub fn builtin_provider_presets() -> Vec<ProviderPreset> {
                 supports_cache_control_on_tools: true,
                 ..CompatConfig::default()
             },
-            thinking_level_map: HashMap::new(),
+            // Values are `budget_tokens` for extended thinking (see Anthropic Messages API).
+            thinking_level_map: HashMap::from([
+                (ThinkingLevel::Minimal, Some("1024".into())),
+                (ThinkingLevel::Low, Some("4096".into())),
+                (ThinkingLevel::Medium, Some("8000".into())),
+                (ThinkingLevel::High, Some("16000".into())),
+                (ThinkingLevel::XHigh, Some("32000".into())),
+            ]),
         },
         ProviderPreset {
             id: "gemini",

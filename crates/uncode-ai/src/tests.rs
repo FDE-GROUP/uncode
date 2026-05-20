@@ -281,6 +281,20 @@ mod tests {
         assert_eq!(model.thinking_format, Some(ThinkingFormat::Anthropic));
     }
 
+    #[test]
+    fn test_anthropic_thinking_level_map_budget_tokens() {
+        let reg = crate::model_registry::ModelRegistry::from_builtin();
+        let model = reg.get("claude-sonnet-4-6").unwrap();
+        assert_eq!(
+            model.thinking_level_map.get(&ThinkingLevel::Low),
+            Some(&Some("4096".into()))
+        );
+        assert_eq!(
+            model.thinking_level_map.get(&ThinkingLevel::XHigh),
+            Some(&Some("32000".into()))
+        );
+    }
+
     // ── CacheRetention 测试 ──
 
     #[test]
