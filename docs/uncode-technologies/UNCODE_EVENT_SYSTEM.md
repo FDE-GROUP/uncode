@@ -131,10 +131,10 @@ router.on_hook("tool_call_end", Box::new(|event| {
 
 ### 事件类型匹配
 
-事件类型通过 serde tag name 匹配（`event_tag()` 函数），避免 JSON 序列化开销：
+事件类型通过 serde tag name 匹配（`agent_event_tag()` 函数），避免 JSON 序列化开销：
 
 ```rust
-fn event_tag(event: &AgentEvent) -> &'static str {
+pub fn agent_event_tag(event: &AgentEvent) -> &'static str {
     match event {
         AgentEvent::SessionStart { .. } => "session_start",
         AgentEvent::ToolCallEnd { .. } => "tool_call_end",

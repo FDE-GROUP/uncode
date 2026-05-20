@@ -285,7 +285,7 @@ pub async fn build_context(...) -> ...
 | rustdoc Pi 映射 | `uncode-tui` | ✅ #266 批次 |
 | rustdoc Pi 映射 | `uncode-extensions` | ✅ #266 批次 |
 | rustdoc | `uncode-macros` | ✅ crate `//!` + `#[tool]` |
-| glossary | 附录 A–Z | 不强制 Pi 列（仍可选） |
+| glossary | 附录 A–Z | ✅ `UNCODE_TECHNOLOGIES_GLOSSARY` 142 条速查（#268） |
 | 行为对齐（可选） | 测试 / 文档 | ✅ `validate_pi_turn_lifecycle_order` fixture；`UNCODE_SESSION_MODEL` JSONL↔Pi 表 |
 
 ---
