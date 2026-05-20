@@ -7,7 +7,7 @@
 |----|------|
 | **文档类型** | 术语索引 / Glossary |
 | **路径** | `docs/uncode-technologies/UNCODE_TECHNOLOGIES_GLOSSARY.md` |
-| **来源** | `UNCODE_OVERVIEW`、`UNCODE_LOOP_ENGINE`、`UNCODE_LLM_LAYER`、`UNCODE_TOOL_SYSTEM`、`UNCODE_SESSION_MODEL`、`UNCODE_EVENT_SYSTEM`、`UNCODE_TUI_ARCHITECTURE`、`TUI_EVENT_FLOW`、`UNCODE_REQUEST_LIFECYCLE` |
+| **来源** | `UNCODE_OVERVIEW`、`UNCODE_LOOP_ENGINE`、`UNCODE_MICRO_PLANNING`、`UNCODE_TUI_MICRO_PLANNING_UX`、`UNCODE_LLM_LAYER`、`UNCODE_TOOL_SYSTEM`、`UNCODE_SESSION_MODEL`、`UNCODE_EVENT_SYSTEM`、`UNCODE_TUI_ARCHITECTURE`、`TUI_EVENT_FLOW`、`UNCODE_REQUEST_LIFECYCLE` |
 | **最后更新** | 2026-05（附录 A–Z 扩全） |
 
 ---
@@ -86,6 +86,9 @@
 | terminate（工具，AND 语义） | terminate (tool, AND semantics) | terminate AND | — | 批次内**全部**工具 `terminate=true` 才结束内层循环。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
 | AgentInterrupted | AgentInterrupted | interrupt | — | 用户/系统取消导致的中断事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
 | AgentSettled | AgentSettled | idle / settled | — | 会话结束后的安定状态事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| 微观规划 | micro-planning (per turn) | — | — | 单 Turn 内模型选择工具与组织回复；ReAct 固有，**≠** Plan 模式。 | [UNCODE_MICRO_PLANNING](UNCODE_MICRO_PLANNING.md)、[EXTENSION_COMPOSABLE_HARNESS_DESIGN](../technologies/EXTENSION_COMPOSABLE_HARNESS_DESIGN.md) §2.3 |
+| Plan 模式 | plan mode (workflow) | plan-mode extension | build/plan agents | 跨多 Turn 的只读规划相 + 用户闸门 + 执行相；**非** Turn 内建能力。 | [EXTENSION_COMPOSABLE_HARNESS_DESIGN](../technologies/EXTENSION_COMPOSABLE_HARNESS_DESIGN.md) |
+| 规划相 / 执行相 | planning phase / execution phase | planModeEnabled / executionMode | — | Plan 扩展内的会话阶段；由扩展状态机切换，非 `AgentLoop` 枚举。 | [EXTENSION_COMPOSABLE_HARNESS_DESIGN](../technologies/EXTENSION_COMPOSABLE_HARNESS_DESIGN.md) §2.3 |
 
 ---
 
@@ -374,6 +377,9 @@
 | TuiEngine | TUI 引擎 | 十 |
 | Turn | 轮次 | 四 |
 | TurnStart / TurnEnd | 轮次起止事件 | 九 |
+| micro-planning (per turn) | 微观规划（单 Turn） | 四 |
+| plan mode (workflow) | Plan 模式（工作流） | 四 |
+| planning phase / execution phase | 规划相 / 执行相 | 四 |
 | uncode | uncode 产品 | 一 |
 | uncode technologies doc series | 实现层文档系列 | 一 |
 | uncode-agent | Agent 引擎 crate | 二 |

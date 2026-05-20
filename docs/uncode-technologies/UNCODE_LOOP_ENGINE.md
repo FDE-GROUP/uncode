@@ -85,6 +85,20 @@ Turn 由 5 种机制驱动循环：
 | **NextTurn** | 首次进入内层前 drain | 内层循环 |
 | **CancellationToken** | 5 个检查点（预流式、流式中、每 turn 开始） | 全局中断 |
 
+### Turn 与 Plan 模式（粒度澄清）
+
+**Turn 是机制层的一格循环，不是 Plan 模式的一轮。** 每个 Turn 内，模型都会做**微观规划**（选工具、组织回复）；这与产品意义上的 **Plan 模式**（跨多 Turn 的只读规划相、工具集收缩、用户确认后再执行）不是同一概念。
+
+| 概念 | 层级 | 是否内建于每个 Turn |
+|------|------|---------------------|
+| Turn | `AgentLoop` 内层循环 | 是（凡进入 ReAct 即按 Turn 计数） |
+| 微观规划 | 单 Turn 内 LLM 推理 | 是（ReAct 固有行为） |
+| Plan 模式 | 扩展 / 会话策略 | **否**；由扩展在多个 Turn 上叠加策略 |
+
+uncode **不在** `loop_engine.rs` 为 Turn 增加 `Plan` 变体或内置只读相；若需 Pi 式 plan-mode，应通过扩展宿主 API（`set_active_tools`、上下文 hook、会话 `Custom` 等）在**规划相 / 执行相**之间切换，详见 [`../technologies/EXTENSION_COMPOSABLE_HARNESS_DESIGN.md`](../technologies/EXTENSION_COMPOSABLE_HARNESS_DESIGN.md) **§2.3**。
+
+**微观规划**（单 Turn 内选工具、多 Turn 链式推理）已由 ReAct 循环提供，能力说明见 [`UNCODE_MICRO_PLANNING.md`](UNCODE_MICRO_PLANNING.md)。
+
 ---
 
 ## Steering 三通道设计

@@ -3,7 +3,7 @@ use crate::tool_renderer::ToolRendererRegistry;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use uncode_core::event::{AgentEvent, DeltaType, ErrorCategory, ToolCallStatus};
+use uncode_core::event::{AgentEvent, DeltaType, ErrorCategory, TaskStatus, ToolCallStatus};
 
 /// 对话消息类型
 #[derive(Debug, Clone)]
@@ -60,6 +60,24 @@ pub enum ChatMessage {
     QueuedMessage {
         text: String,
     },
+    /// Turn 边界（微观规划多轮决策）
+    TurnDivider {
+        turn: u64,
+    },
+    /// 步骤 / 待办（TaskUpdate、PhaseSummary 或助手 Markdown 清单）
+    TodoList {
+        id: String,
+        title: String,
+        items: Vec<TodoItem>,
+        expanded: bool,
+    },
+}
+
+/// 单条待办
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoItem {
+    pub text: String,
+    pub done: bool,
 }
 
 /// 工具调用渲染状态（TUI 侧独立于 AgentEvent::ToolCallStatus）
@@ -244,6 +262,7 @@ impl ChatState {
                     ChatMessage::ToolCall { .. }
                         | ChatMessage::BashExecution { .. }
                         | ChatMessage::Thinking { .. }
+                        | ChatMessage::TodoList { .. }
                 )
             })
             .map(|(i, _)| i)
@@ -290,7 +309,8 @@ impl ChatState {
         match &mut self.messages[idx] {
             ChatMessage::ToolCall { expanded, .. }
             | ChatMessage::BashExecution { expanded, .. }
-            | ChatMessage::Thinking { expanded, .. } => {
+            | ChatMessage::Thinking { expanded, .. }
+            | ChatMessage::TodoList { expanded, .. } => {
                 *expanded = !*expanded;
             }
             _ => return false,
@@ -312,6 +332,7 @@ impl ChatState {
                 ChatMessage::ToolCall { expanded: e, .. }
                 | ChatMessage::BashExecution { expanded: e, .. }
                 | ChatMessage::Thinking { expanded: e, .. }
+                | ChatMessage::TodoList { expanded: e, .. }
                     if *e != expanded =>
                 {
                     *e = expanded;
@@ -754,10 +775,15 @@ impl ChatState {
                 self.push_message(ChatMessage::Error { message, category });
             }
             AgentEvent::PhaseSummary { data } => {
-                self.push_message(ChatMessage::Summary {
-                    completed: data.completed.clone(),
-                    next_steps: data.next_steps.clone(),
-                });
+                self.apply_phase_summary(&data);
+            }
+            AgentEvent::TaskUpdate { data } => {
+                self.apply_task_update(&data);
+            }
+            AgentEvent::TurnStart { turn } => {
+                if turn > 1 {
+                    self.push_message(ChatMessage::TurnDivider { turn });
+                }
             }
             AgentEvent::CompactionComplete {
                 messages_replaced,
@@ -798,9 +824,112 @@ impl ChatState {
             | AgentEvent::SessionEnd { .. }
             | AgentEvent::AgentInterrupted { .. } => {
                 self.deactivate_thinking();
+                self.sync_todos_from_last_assistant();
             }
             _ => {}
         }
+    }
+
+    fn apply_phase_summary(&mut self, data: &uncode_core::event::PhaseSummaryData) {
+        let mut items: Vec<TodoItem> = data
+            .completed
+            .iter()
+            .map(|s| TodoItem {
+                text: s.clone(),
+                done: true,
+            })
+            .collect();
+        items.extend(data.next_steps.iter().map(|s| TodoItem {
+            text: s.clone(),
+            done: false,
+        }));
+        if !items.is_empty() {
+            let title = if data.phase > 0 {
+                format!("Phase {}", data.phase)
+            } else {
+                "Progress".to_string()
+            };
+            self.upsert_todo_list(format!("phase:{}", data.phase), title, items);
+        } else if !data.completed.is_empty() || !data.next_steps.is_empty() {
+            self.push_message(ChatMessage::Summary {
+                completed: data.completed.clone(),
+                next_steps: data.next_steps.clone(),
+            });
+        }
+        if !data.issues.is_empty() {
+            self.push_message(ChatMessage::Summary {
+                completed: Vec::new(),
+                next_steps: data.issues.iter().map(|i| format!("⚠ {i}")).collect(),
+            });
+        }
+    }
+
+    fn apply_task_update(&mut self, data: &uncode_core::event::TaskUpdateData) {
+        let parent_done = matches!(data.status, TaskStatus::Done);
+        let items: Vec<TodoItem> = if data.subtasks.is_empty() {
+            vec![TodoItem {
+                text: data.title.clone(),
+                done: parent_done,
+            }]
+        } else {
+            data.subtasks
+                .iter()
+                .map(|s| TodoItem {
+                    text: s.clone(),
+                    done: parent_done,
+                })
+                .collect()
+        };
+        if items.is_empty() {
+            return;
+        }
+        let title = if data.title.is_empty() {
+            "Tasks".to_string()
+        } else {
+            data.title.clone()
+        };
+        self.upsert_todo_list(data.task_id.clone(), title, items);
+    }
+
+    fn upsert_todo_list(&mut self, id: String, title: String, items: Vec<TodoItem>) {
+        if let Some(idx) = self
+            .messages
+            .iter()
+            .rposition(|m| matches!(m, ChatMessage::TodoList { id: tid, .. } if tid == &id))
+        {
+            if let ChatMessage::TodoList {
+                title: t,
+                items: its,
+                ..
+            } = &mut self.messages[idx]
+            {
+                *t = title;
+                *its = items;
+            }
+            self.invalidate(idx);
+        } else {
+            self.push_message(ChatMessage::TodoList {
+                id,
+                title,
+                items,
+                expanded: true,
+            });
+        }
+    }
+
+    fn sync_todos_from_last_assistant(&mut self) {
+        let text = self.messages.iter().rev().find_map(|m| match m {
+            ChatMessage::Assistant { text } => Some(text.as_str()),
+            _ => None,
+        });
+        let Some(text) = text else {
+            return;
+        };
+        let items = parse_markdown_todos(text);
+        if items.is_empty() {
+            return;
+        }
+        self.upsert_todo_list("assistant".to_string(), "Todos".to_string(), items);
     }
 
     /// 添加用户消息，解析 @file 引用
@@ -938,8 +1067,113 @@ fn message_text_len(msg: &ChatMessage) -> usize {
         ChatMessage::Error { message, .. } => message.len(),
         ChatMessage::CompactionSummary { summary_text, .. } => summary_text.len(),
         ChatMessage::QueuedMessage { text } => text.len(),
-        ChatMessage::Summary { .. } => 0,
+        ChatMessage::Summary {
+            completed,
+            next_steps,
+        } => {
+            completed.iter().map(String::len).sum::<usize>()
+                + next_steps.iter().map(String::len).sum::<usize>()
+        }
+        ChatMessage::TurnDivider { .. } => 1,
+        ChatMessage::TodoList { title, items, .. } => {
+            title.len() + items.iter().map(|i| i.text.len()).sum::<usize>()
+        }
     }
+}
+
+fn truncate_preview(s: &str, max_chars: usize) -> String {
+    let t = s.trim().replace('\n', " ");
+    if t.chars().count() <= max_chars {
+        t
+    } else {
+        let mut out: String = t.chars().take(max_chars).collect();
+        out.push('…');
+        out
+    }
+}
+
+/// 从助手 Markdown 提取 `- [ ]` / `- [x]` 待办（必要时展示 Todos）
+fn parse_markdown_todos(text: &str) -> Vec<TodoItem> {
+    let mut items = Vec::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed
+            .strip_prefix("- [ ]")
+            .or_else(|| trimmed.strip_prefix("* [ ]"))
+        {
+            let t = rest.trim();
+            if !t.is_empty() {
+                items.push(TodoItem {
+                    text: t.to_string(),
+                    done: false,
+                });
+            }
+        } else if let Some(rest) = trimmed
+            .strip_prefix("- [x]")
+            .or_else(|| trimmed.strip_prefix("- [X]"))
+            .or_else(|| trimmed.strip_prefix("* [x]"))
+            .or_else(|| trimmed.strip_prefix("* [X]"))
+        {
+            let t = rest.trim();
+            if !t.is_empty() {
+                items.push(TodoItem {
+                    text: t.to_string(),
+                    done: true,
+                });
+            }
+        }
+    }
+    items
+}
+
+fn render_todo_list(
+    title: &str,
+    items: &[TodoItem],
+    expanded: bool,
+    focused: bool,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let (prefix, prefix_color) = if focused {
+        if expanded {
+            ("▾ ", theme.tool_status.running)
+        } else {
+            ("▸ ", theme.tool_status.running)
+        }
+    } else {
+        ("  ", theme.ui.summary_card)
+    };
+    let done_count = items.iter().filter(|i| i.done).count();
+    let mut lines = vec![Line::from(vec![
+        Span::styled(prefix, Style::default().fg(prefix_color)),
+        Span::styled(
+            format!("Todos · {title} ({done_count}/{})", items.len()),
+            Style::default()
+                .fg(theme.ui.summary_card)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])];
+    if expanded {
+        for item in items {
+            let (box_ch, color) = if item.done {
+                ("☑", theme.tool_status.success)
+            } else {
+                ("☐", theme.markdown.code_text)
+            };
+            lines.push(Line::from(vec![
+                Span::raw("   "),
+                Span::styled(format!("{box_ch} "), Style::default().fg(color)),
+                Span::styled(
+                    item.text.clone(),
+                    Style::default().fg(if item.done {
+                        theme.ui.footer_text
+                    } else {
+                        theme.markdown.code_text
+                    }),
+                ),
+            ]));
+        }
+    }
+    lines
 }
 
 /// 渲染单条消息
@@ -992,7 +1226,7 @@ fn render_message(
                 } else {
                     "○"
                 };
-                (dot, "Thinking...".to_string())
+                (dot, "Thinking".to_string())
             } else {
                 let dur = match duration_ms {
                     Some(d) => format_duration(*d),
@@ -1001,7 +1235,7 @@ fn render_message(
                 if dur.is_empty() {
                     ("●", "Thought".to_string())
                 } else {
-                    ("●", format!("Thought for {dur}"))
+                    ("●", format!("Thought · {dur}"))
                 }
             };
             let icon_color = if *active {
@@ -1050,10 +1284,30 @@ fn render_message(
                             .into_iter()
                             .map(|l| l.style(Style::default().fg(theme.ui.footer_text))),
                     );
+                } else if !*expanded && !text.is_empty() && !*active && !focused {
+                    let preview = truncate_preview(text, 96);
+                    lines.push(Line::from(Span::styled(
+                        format!("   {preview}"),
+                        Style::default().fg(theme.ui.footer_text),
+                    )));
                 }
                 lines
             }
         }
+        ChatMessage::TurnDivider { turn } => {
+            vec![Line::from(Span::styled(
+                format!("── Turn {turn} ──"),
+                Style::default()
+                    .fg(theme.ui.footer_text)
+                    .add_modifier(Modifier::ITALIC),
+            ))]
+        }
+        ChatMessage::TodoList {
+            title,
+            items,
+            expanded,
+            ..
+        } => render_todo_list(title, items, *expanded, focused, theme),
         ChatMessage::ToolCall {
             tool_name,
             arguments_summary,
@@ -1789,7 +2043,7 @@ mod tests {
     }
 
     #[test]
-    fn test_summary_message() {
+    fn test_phase_summary_renders_todo_list() {
         let mut state = ChatState::new();
         state.handle_event(AgentEvent::PhaseSummary {
             data: Box::new(PhaseSummaryData {
@@ -1802,8 +2056,62 @@ mod tests {
         });
         assert!(matches!(
             &state.messages[0],
-            ChatMessage::Summary { completed, next_steps, .. }
-            if completed.len() == 1 && next_steps.len() == 1
+            ChatMessage::TodoList { items, .. } if items.len() == 2
+                && items[0].done && !items[1].done
+        ));
+    }
+
+    #[test]
+    fn test_parse_markdown_todos() {
+        let text = "Plan:\n- [x] done step\n- [ ] next step\n";
+        let items = parse_markdown_todos(text);
+        assert_eq!(items.len(), 2);
+        assert!(items[0].done);
+        assert!(!items[1].done);
+    }
+
+    #[test]
+    fn test_sync_todos_from_assistant_on_turn_end() {
+        let mut state = ChatState::new();
+        state.handle_event(make_text_delta("- [ ] fix tests\n- [x] add docs\n"));
+        state.handle_event(AgentEvent::TurnEnd {
+            turn: 1,
+            usage: UsageInfo::default(),
+        });
+        assert!(state.messages.iter().any(|m| {
+            matches!(m, ChatMessage::TodoList { id, items, .. }
+                if id == "assistant" && items.len() == 2)
+        }));
+    }
+
+    #[test]
+    fn test_task_update_upserts_todos() {
+        let mut state = ChatState::new();
+        state.handle_event(AgentEvent::TaskUpdate {
+            data: Box::new(uncode_core::event::TaskUpdateData {
+                task_id: "t1".into(),
+                status: TaskStatus::Running,
+                title: "Build feature".into(),
+                subtasks: vec!["design".into(), "implement".into()],
+                depends_on: vec![],
+            }),
+        });
+        assert!(matches!(
+            &state.messages[0],
+            ChatMessage::TodoList { title, items, .. }
+            if title == "Build feature" && items.len() == 2
+        ));
+    }
+
+    #[test]
+    fn test_turn_divider_from_turn_start() {
+        let mut state = ChatState::new();
+        state.handle_event(AgentEvent::TurnStart { turn: 1 });
+        state.handle_event(AgentEvent::TurnStart { turn: 2 });
+        assert_eq!(state.messages.len(), 1);
+        assert!(matches!(
+            &state.messages[0],
+            ChatMessage::TurnDivider { turn: 2 }
         ));
     }
 
@@ -2272,7 +2580,7 @@ mod tests {
         let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(
-            combined.contains("Thought for 1.5s"),
+            combined.contains("Thought · 1.5s"),
             "thought should show duration when done: {}",
             combined
         );

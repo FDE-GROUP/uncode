@@ -21,6 +21,7 @@ uncode/
 │   ├── FDE_INSIGHT.md      #   FDE 角色深度解读
 │   ├── technologies/       #   技术分析与方案文档
 │   │   ├── UNCODE_PI_ALIGNMENT_AND_EVALUATION.md  # uncode 对 Pi 的复刻：深度对比与评价
+│   │   ├── EXTENSION_COMPOSABLE_HARNESS_DESIGN.md  # 可组合扩展与 Plan 模式：设计理念与技术方案
 │   │   ├── AGENT_CODING_FUNDAMENTALS.md
 │   │   ├── LLM_DRIVER_DESIGN.md
 │   │   ├── LLM_DRIVER_COMPARISON_PI.md
@@ -101,5 +102,8 @@ cargo clippy             # lint 检查
 - uncode 实现层术语表（含 Pi/OpenCode 列）→ `docs/uncode-technologies/UNCODE_TECHNOLOGIES_GLOSSARY.md`
 - uncode ↔ Pi 机制对照（L1）→ `docs/uncode-technologies/UNCODE_PI_MECHANISM_MAP.md`
 - uncode 对 Pi 的 Rust 复刻：哲学/机制/存储/扩展深度评价 → `UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`
+- 可组合扩展宿主与 Plan 模式（Pi plan-mode 对照、uncode 演进方案；**Turn ≠ Plan 模式**，见 §2.3）→ `EXTENSION_COMPOSABLE_HARNESS_DESIGN.md`
+- 微观规划（micro-planning）能力说明：ReAct Turn 内决策 vs Plan 模式 → `docs/uncode-technologies/UNCODE_MICRO_PLANNING.md`
+- TUI 微观规划 UX 评价（Turn 边界、`agent_busy`、steering）→ `docs/uncode-technologies/UNCODE_TUI_MICRO_PLANNING_UX.md`
 
 后续设计文档编写时，请读取 @docs/VISION.md 确保一致性，参考 opencode 的 AGENTS.md 规范格式。

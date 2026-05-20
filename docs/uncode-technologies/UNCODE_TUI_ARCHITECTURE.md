@@ -4,6 +4,8 @@
 
 uncode 的 TUI 基于 ratatui + crossterm 构建，是一个全屏终端 UI。核心挑战是实时渲染流式 LLM 输出（Thinking + 文本 + 工具调用），同时保持响应性。
 
+**微观规划 UX**（用户能否感知多 Turn「想→做」链、Turn 边界与 `agent_busy` 语义）：见 [`UNCODE_TUI_MICRO_PLANNING_UX.md`](UNCODE_TUI_MICRO_PLANNING_UX.md)。机制定义见 [`UNCODE_MICRO_PLANNING.md`](UNCODE_MICRO_PLANNING.md)。
+
 ---
 
 ## 模块结构
