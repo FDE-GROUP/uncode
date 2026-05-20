@@ -265,7 +265,7 @@ impl EventRouter {
 
     /// Dispatch an event to all sync handlers (fire-and-forget).
     pub fn dispatch(&self, event: &AgentEvent) {
-        let tag = event_tag(event);
+        let tag = agent_event_tag(event);
         if let Some(handlers) = self.sync_handlers.get(tag) {
             for h in handlers {
                 h(event);
@@ -276,7 +276,7 @@ impl EventRouter {
     /// Dispatch an event to all hook handlers and collect results.
     /// Returns Vec<HookResult> for the caller to aggregate.
     pub async fn dispatch_hooks(&self, event: &AgentEvent) -> Vec<HookResult> {
-        let tag = event_tag(event);
+        let tag = agent_event_tag(event);
         let mut results = Vec::new();
         if let Some(handlers) = self.hook_handlers.get(tag) {
             for h in handlers {
@@ -287,9 +287,8 @@ impl EventRouter {
     }
 }
 
-/// Extract the serde tag name from an AgentEvent without serializing.
-/// Matches the `#[serde(tag = "type", rename_all = "snake_case")]` output.
-fn event_tag(event: &AgentEvent) -> &'static str {
+/// Serde `type` 字段（snake_case），与 `#[serde(tag = "type")]` 输出一致。
+pub fn agent_event_tag(event: &AgentEvent) -> &'static str {
     match event {
         AgentEvent::SessionStart { .. } => "session_start",
         AgentEvent::SessionEnd { .. } => "session_end",
@@ -315,5 +314,187 @@ fn event_tag(event: &AgentEvent) -> &'static str {
 impl Default for EventRouter {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Pi 四层 `AgentEvent` 在文档级 1:1 映射的 uncode 标签（见 `UNCODE_PI_MECHANISM_MAP.md` §5.1）。
+pub fn pi_equivalent_event_name(uncode_tag: &str) -> Option<&'static str> {
+    match uncode_tag {
+        "session_start" => Some("agent_start"),
+        "session_end" => Some("agent_end"),
+        "turn_start" => Some("turn_start"),
+        "turn_end" => Some("turn_end"),
+        "message_start" => Some("message_start"),
+        "message_end" => Some("message_end"),
+        "content_delta" => Some("message_update"),
+        "tool_call_start" => Some("tool_execution_start"),
+        "tool_call_progress" => Some("tool_execution_update"),
+        "tool_call_end" => Some("tool_execution_end"),
+        _ => None,
+    }
+}
+
+/// 单轮 ReAct 内事件的生命周期秩（越大越靠后）。会话级/队列等事件返回 `None` 并跳过。
+fn turn_lifecycle_rank(tag: &str) -> Option<u8> {
+    match tag {
+        "turn_start" => Some(0),
+        "message_start" => Some(1),
+        "content_delta" | "tool_call_start" => Some(2),
+        "tool_call_progress" => Some(3),
+        "tool_call_end" => Some(4),
+        "message_end" => Some(5),
+        "turn_end" => Some(6),
+        _ => None,
+    }
+}
+
+/// 校验事件切片是否符合 Pi 式 turn 内顺序（`turn_start` … `turn_end`）。
+///
+/// 用于 fixture 测试与回归；不校验跨 turn 的 `session_*` / 队列事件。
+pub fn validate_pi_turn_lifecycle_order(events: &[AgentEvent]) -> Result<(), String> {
+    let mut last_rank: Option<u8> = None;
+    let mut in_turn = false;
+
+    for event in events {
+        let tag = agent_event_tag(event);
+        let Some(rank) = turn_lifecycle_rank(tag) else {
+            continue;
+        };
+
+        if tag == "turn_start" {
+            in_turn = true;
+            last_rank = Some(rank);
+            continue;
+        }
+
+        if !in_turn {
+            return Err(format!("{tag} before turn_start"));
+        }
+
+        if let Some(prev) = last_rank
+            && rank < prev
+        {
+            return Err(format!(
+                "out of order: {tag} (rank {rank}) after rank {prev}"
+            ));
+        }
+        last_rank = Some(rank);
+
+        if tag == "turn_end" {
+            in_turn = false;
+            last_rank = None;
+        }
+    }
+
+    if in_turn {
+        return Err("turn_start without matching turn_end".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod pi_event_fixture {
+    use super::*;
+    use crate::message::UsageInfo;
+
+    /// 文档 §5.1 中标注为 1:1 的 Pi ↔ uncode 标签对（fixture 表）。
+    const PI_ONE_TO_ONE: &[(&str, &str)] = &[
+        ("turn_start", "turn_start"),
+        ("turn_end", "turn_end"),
+        ("message_start", "message_start"),
+        ("message_end", "message_end"),
+        ("tool_call_start", "tool_execution_start"),
+        ("tool_call_progress", "tool_execution_update"),
+        ("tool_call_end", "tool_execution_end"),
+    ];
+
+    #[test]
+    fn pi_one_to_one_mapping_table() {
+        for (uncode_tag, pi_name) in PI_ONE_TO_ONE {
+            assert_eq!(
+                pi_equivalent_event_name(uncode_tag),
+                Some(*pi_name),
+                "uncode tag {uncode_tag}"
+            );
+        }
+    }
+
+    #[test]
+    fn pi_minimal_text_turn_fixture() {
+        let events = vec![
+            AgentEvent::TurnStart { turn: 1 },
+            AgentEvent::MessageStart {
+                role: crate::message::Role::Assistant,
+                message_id: "m1".into(),
+            },
+            AgentEvent::ContentDelta {
+                delta_type: DeltaType::Text,
+                content: "hi".into(),
+                content_index: None,
+            },
+            AgentEvent::MessageEnd {
+                role: crate::message::Role::Assistant,
+                message_id: "m1".into(),
+            },
+            AgentEvent::TurnEnd {
+                turn: 1,
+                usage: UsageInfo::default(),
+            },
+        ];
+        validate_pi_turn_lifecycle_order(&events).expect("minimal text turn");
+    }
+
+    #[test]
+    fn pi_tool_turn_fixture() {
+        let events = vec![
+            AgentEvent::TurnStart { turn: 2 },
+            AgentEvent::MessageStart {
+                role: crate::message::Role::Assistant,
+                message_id: "m2".into(),
+            },
+            AgentEvent::ToolCallStart {
+                tool_id: "t1".into(),
+                tool_name: "read".into(),
+                arguments_summary: "{}".into(),
+            },
+            AgentEvent::ToolCallProgress {
+                tool_id: "t1".into(),
+                progress_type: ProgressType::Spinner,
+                detail: "".into(),
+            },
+            AgentEvent::ToolCallEnd {
+                data: Box::new(ToolCallEndEventData {
+                    tool_id: "t1".into(),
+                    tool_name: "read".into(),
+                    arguments: "{}".into(),
+                    status: ToolCallStatus::Success,
+                    duration_ms: 1,
+                    output_size: None,
+                    result_summary: None,
+                    is_error: false,
+                }),
+            },
+            AgentEvent::MessageEnd {
+                role: crate::message::Role::Assistant,
+                message_id: "m2".into(),
+            },
+            AgentEvent::TurnEnd {
+                turn: 2,
+                usage: UsageInfo::default(),
+            },
+        ];
+        validate_pi_turn_lifecycle_order(&events).expect("tool turn");
+    }
+
+    #[test]
+    fn pi_turn_order_rejects_inverted_end() {
+        let events = vec![
+            AgentEvent::TurnEnd {
+                turn: 1,
+                usage: UsageInfo::default(),
+            },
+            AgentEvent::TurnStart { turn: 1 },
+        ];
+        assert!(validate_pi_turn_lifecycle_order(&events).is_err());
     }
 }

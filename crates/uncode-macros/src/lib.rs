@@ -1,7 +1,24 @@
+//! 编译期工具注册过程宏（`#[tool]`）。
+//!
+//! 在 `uncode-agent` 工具实现上生成 `__tool_schema_*()`，产出 `uncode_core::tool::ToolDefinition`
+//! 供 Agent 循环注册。参数类型从函数签名推导为 JSON Schema `properties`。
+//!
+//! **Pi:** 对应 Pi 侧工具描述 + JSON Schema 注册；uncode 用 Rust 属性而非 TS 装饰器。
+
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{FnArg, ItemFn, Pat, Type, parse_macro_input};
 
+/// 标注异步工具函数并生成 `__tool_schema_{fn}()`。
+///
+/// 函数上的 `///` 文档成为工具 `description`；`Option<T>` 参数记为可选。
+///
+/// **Pi:** 工具元数据 + schema 与 Pi coding-agent 工具注册等价；见 `docs/uncode-technologies/UNCODE_PI_MECHANISM_MAP.md` §3。
+///
+/// # 属性
+///
+/// - `label = "…"` — TUI 展示名
+/// - `execution_mode = sequential` — 串行执行（默认并发）
 #[proc_macro_attribute]
 pub fn tool(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
