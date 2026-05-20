@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use uncode_core::error::UncodeResult;
 use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
 
+const MAX_DIR_ENTRIES: usize = 500;
+
 pub struct ReadTool {
     max_size: usize,
 }
@@ -31,6 +33,7 @@ impl ToolExecutor for ReadTool {
                 .into(),
             parameters: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "path": {"type": "string", "description": "文件路径（相对或绝对）"},
                     "offset": {"type": "integer", "description": "起始行号"},
@@ -72,8 +75,14 @@ impl ToolExecutor for ReadTool {
                         name
                     }
                 })
+                .take(MAX_DIR_ENTRIES + 1)
                 .collect();
             entries.sort();
+            let truncated = entries.len() > MAX_DIR_ENTRIES;
+            if truncated {
+                entries.truncate(MAX_DIR_ENTRIES);
+                entries.push("... (truncated)".into());
+            }
             return Ok(format!(
                 "Directory listing for {}:\n{}",
                 resolved.display(),

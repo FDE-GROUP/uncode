@@ -13,6 +13,7 @@ impl ToolExecutor for FindTool {
             description: "按文件名模式查找文件".into(),
             parameters: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "pattern": {"type": "string", "description": "glob 模式，如 **/*.rs"},
                     "path": {"type": "string", "description": "搜索根目录，默认当前目录"}

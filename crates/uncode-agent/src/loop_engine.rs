@@ -38,6 +38,78 @@ use uncode_core::tool::{
 
 const MAX_TURNS: u64 = 50;
 
+/// Execute + after-hook for parallel batch phase (shared state cloned per future).
+async fn execute_prepared_tool_shared(
+    registry: Arc<ToolRegistry>,
+    cancel_token: CancellationToken,
+    event_tx: broadcast::Sender<AgentEvent>,
+    hooks: Option<Arc<dyn ToolHooks>>,
+    id: String,
+    name: String,
+    prepared_args: serde_json::Value,
+    raw_args: serde_json::Value,
+) -> ToolResult {
+    let executor = registry.get(&name);
+    let child = cancel_token.child_token();
+    let ctx = ToolContext {
+        cancel_token: child.clone(),
+        on_progress: Some(Box::new({
+            let etx = event_tx.clone();
+            let tid = id.clone();
+            move |p: ToolProgress| {
+                let detail = match &p {
+                    ToolProgress::Spinner(s) => s.clone(),
+                    ToolProgress::Percentage { detail, .. } => detail.clone(),
+                    ToolProgress::LogLine(l) => l.clone(),
+                };
+                let _ = etx.send(AgentEvent::ToolCallProgress {
+                    tool_id: tid.clone(),
+                    progress_type: uncode_core::event::ProgressType::Spinner,
+                    detail,
+                });
+            }
+        })),
+        tool_call_id: id.clone(),
+    };
+
+    let mut tool_result = if let Some(exec) = executor {
+        tokio::select! {
+            _ = child.cancelled() => ToolResult::err("cancelled"),
+            r = exec.execute_with_context(prepared_args, ctx) => {
+                match r {
+                    Ok(tr) => tr,
+                    Err(e) => ToolResult::err(format!("error: {e}")),
+                }
+            }
+        }
+    } else {
+        ToolResult::err(format!("tool not found: {name}"))
+    };
+
+    if let Some(ref h) = hooks {
+        let after_ctx = AfterToolCallContext {
+            tool_call_id: id.clone(),
+            tool_name: name.clone(),
+            args: raw_args,
+        };
+        let patch = h.after_tool_call(&after_ctx, &mut tool_result).await;
+        if let Some(new_content) = patch.content {
+            tool_result.content = new_content;
+        }
+        if let Some(new_details) = patch.details {
+            tool_result.details = Some(new_details);
+        }
+        if let Some(new_is_error) = patch.is_error {
+            tool_result.is_error = new_is_error;
+        }
+        if let Some(new_terminate) = patch.terminate {
+            tool_result.terminate = new_terminate;
+        }
+    }
+
+    tool_result
+}
+
 /// Extract the first text block from a message, or "" if none.
 fn first_text(msg: &Message) -> &str {
     msg.content
@@ -174,6 +246,18 @@ impl AgentLoop {
         self.tool_hooks = Some(hooks);
     }
 
+    /// Restrict tools visible to the LLM and executable in this loop.
+    ///
+    /// **Pi:** `setActiveTools`.
+    pub fn set_active_tools(&self, names: &[impl AsRef<str>]) -> Result<(), String> {
+        self.tool_registry.set_active_tools(names)
+    }
+
+    /// Clear active-tool filter (all registered tools are active).
+    pub fn clear_active_tools(&self) {
+        self.tool_registry.clear_active_tools();
+    }
+
     pub fn set_should_stop_after_turn(&mut self, cb: Arc<dyn Fn(u64) -> bool + Send + Sync>) {
         self.should_stop_after_turn = Some(cb);
     }
@@ -238,6 +322,60 @@ impl AgentLoop {
         let _ = self.event_tx.send(event);
     }
 
+    /// Pi parallel batch: prepare → validate → before (serial per tool).
+    async fn prepare_tool_call(
+        &self,
+        id: &str,
+        name: &str,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolResult> {
+        if self.tool_registry.get(name).is_none() {
+            return Err(ToolResult::err(format!("tool not found: {name}")));
+        }
+        if !self.tool_registry.is_active(name) {
+            return Err(ToolResult::err(format!("tool not active: {name}")));
+        }
+
+        let prepared_args = match self.tool_registry.prepare_and_validate(name, args) {
+            Ok(a) => a,
+            Err(e) => return Err(ToolResult::err(e)),
+        };
+
+        if let Some(ref hooks) = self.tool_hooks {
+            let ctx = BeforeToolCallContext {
+                tool_call_id: id.to_string(),
+                tool_name: name.to_string(),
+                args: prepared_args.clone(),
+            };
+            if let Some(reason) = hooks.before_tool_call(&ctx).await {
+                return Err(ToolResult::err(reason));
+            }
+        }
+
+        Ok(prepared_args)
+    }
+
+    /// Run execute + after hook for already-prepared arguments.
+    async fn execute_prepared_tool(
+        &self,
+        id: &str,
+        name: &str,
+        prepared_args: serde_json::Value,
+        raw_args: serde_json::Value,
+    ) -> ToolResult {
+        execute_prepared_tool_shared(
+            Arc::clone(&self.tool_registry),
+            self.cancel_token.clone(),
+            self.event_tx.clone(),
+            self.tool_hooks.clone(),
+            id.to_string(),
+            name.to_string(),
+            prepared_args,
+            raw_args,
+        )
+        .await
+    }
+
     /// Execute a single tool with full lifecycle: hooks, prepare, execute, finalize
     async fn execute_single_tool(
         &self,
@@ -246,88 +384,11 @@ impl AgentLoop {
         name: &str,
         args: serde_json::Value,
     ) -> ToolResult {
-        // before hook
-        if let Some(ref hooks) = self.tool_hooks {
-            let ctx = BeforeToolCallContext {
-                tool_call_id: id.to_string(),
-                tool_name: name.to_string(),
-                args: args.clone(),
-            };
-            if let Some(reason) = hooks.before_tool_call(&ctx).await {
-                return ToolResult::err(reason);
-            }
-        }
-
-        // prepare arguments
-        let executor = self.tool_registry.get(name);
-        let prepared_args = if let Some(ref exec) = executor {
-            match exec.prepare_arguments(args.clone()) {
-                Ok(a) => a,
-                Err(e) => return ToolResult::err(format!("argument error: {e}")),
-            }
-        } else {
-            args.clone()
+        let prepared = match self.prepare_tool_call(id, name, args.clone()).await {
+            Ok(p) => p,
+            Err(tr) => return tr,
         };
-
-        let child = self.cancel_token.child_token();
-        let ctx = ToolContext {
-            cancel_token: child.clone(),
-            on_progress: Some(Box::new({
-                let etx = self.event_tx.clone();
-                let tid = id.to_string();
-                move |p: ToolProgress| {
-                    let detail = match &p {
-                        ToolProgress::Spinner(s) => s.clone(),
-                        ToolProgress::Percentage { detail, .. } => detail.clone(),
-                        ToolProgress::LogLine(l) => l.clone(),
-                    };
-                    let _ = etx.send(AgentEvent::ToolCallProgress {
-                        tool_id: tid.clone(),
-                        progress_type: uncode_core::event::ProgressType::Spinner,
-                        detail,
-                    });
-                }
-            })),
-            tool_call_id: id.to_string(),
-        };
-
-        let mut tool_result = if let Some(exec) = executor {
-            tokio::select! {
-                _ = child.cancelled() => ToolResult::err("cancelled"),
-                r = exec.execute_with_context(prepared_args, ctx) => {
-                    match r {
-                        Ok(tr) => tr,
-                        Err(e) => ToolResult::err(format!("error: {e}")),
-                    }
-                }
-            }
-        } else {
-            ToolResult::err(format!("tool not found: {name}"))
-        };
-
-        // after hook
-        if let Some(ref hooks) = self.tool_hooks {
-            let after_ctx = AfterToolCallContext {
-                tool_call_id: id.to_string(),
-                tool_name: name.to_string(),
-                args,
-            };
-            let patch = hooks.after_tool_call(&after_ctx, &mut tool_result).await;
-            if let Some(new_content) = patch.content {
-                tool_result.content = new_content;
-            }
-            if let Some(new_details) = patch.details {
-                tool_result.details = Some(new_details);
-            }
-            if let Some(new_is_error) = patch.is_error {
-                tool_result.is_error = new_is_error;
-            }
-            if let Some(new_terminate) = patch.terminate {
-                tool_result.terminate = new_terminate;
-            }
-        }
-
-        tool_result
+        self.execute_prepared_tool(id, name, prepared, args).await
     }
 
     /// Whether an agent `run` is in progress (inner ReAct loop may span multiple Turns).
@@ -908,131 +969,69 @@ impl AgentLoop {
                                         }
                                         outcomes
                                     } else {
+                                        // Pi: prepare → validate → before serial; execute parallel
+                                        let batch_len = executions.len();
+                                        let mut slot_results: Vec<Option<ToolResult>> =
+                                            vec![None; batch_len];
+                                        let mut ready = Vec::new();
+                                        for (i, (id, name, args)) in executions.iter().enumerate() {
+                                            match self
+                                                .prepare_tool_call(id, name, args.clone())
+                                                .await
+                                            {
+                                                Ok(prepared) => ready.push((
+                                                    i,
+                                                    id.clone(),
+                                                    name.clone(),
+                                                    args.clone(),
+                                                    prepared,
+                                                )),
+                                                Err(tr) => slot_results[i] = Some(tr),
+                                            }
+                                            if self.cancel_token.is_cancelled() {
+                                                break;
+                                            }
+                                        }
+
                                         let registry = Arc::clone(&self.tool_registry);
                                         let cancel = self.cancel_token.clone();
                                         let tx = self.event_tx.clone();
                                         let hooks = self.tool_hooks.clone();
 
-                                        futures::future::join_all(executions.into_iter().map(
-                                            move |(id, name, args)| {
-                                                let reg = registry.clone();
-                                                let ct = cancel.clone();
-                                                let etx = tx.clone();
-                                                let hk = hooks.clone();
-                                                async move {
-                                                    if let Some(ref h) = hk {
-                                                        let before_ctx = BeforeToolCallContext {
-                                                            tool_call_id: id.clone(),
-                                                            tool_name: name.clone(),
-                                                            args: args.clone(),
-                                                        };
-                                                        if let Some(reason) =
-                                                            h.before_tool_call(&before_ctx).await
-                                                        {
-                                                            return (
-                                                                id,
-                                                                name,
-                                                                ToolResult::err(reason),
-                                                            );
-                                                        }
+                                        let executed =
+                                            futures::future::join_all(ready.into_iter().map(
+                                                move |(i, id, name, raw_args, prepared)| {
+                                                    let reg = registry.clone();
+                                                    let ct = cancel.clone();
+                                                    let etx = tx.clone();
+                                                    let hk = hooks.clone();
+                                                    async move {
+                                                        let tr = execute_prepared_tool_shared(
+                                                            reg, ct, etx, hk, id, name, prepared,
+                                                            raw_args,
+                                                        )
+                                                        .await;
+                                                        (i, tr)
                                                     }
+                                                },
+                                            ))
+                                            .await;
 
-                                                    let prepared_args = if let Some(exec) =
-                                                        reg.get(&name)
-                                                    {
-                                                        match exec.prepare_arguments(args.clone()) {
-                                                            Ok(a) => a,
-                                                            Err(e) => {
-                                                                return (
-                                                                    id,
-                                                                    name,
-                                                                    ToolResult::err(format!(
-                                                                        "argument error: {e}"
-                                                                    )),
-                                                                )
-                                                            }
-                                                        }
-                                                    } else {
-                                                        args.clone()
-                                                    };
+                                        for (i, tr) in executed {
+                                            slot_results[i] = Some(tr);
+                                        }
 
-                                                    let executor = reg.get(&name);
-                                                    let child = ct.child_token();
-                                                    let tid = id.clone();
-                                                    let ctx = ToolContext {
-                                                        cancel_token: child.clone(),
-                                                        on_progress: Some(Box::new(
-                                                            move |p: ToolProgress| {
-                                                                let detail = match &p {
-                                                                    ToolProgress::Spinner(s) => {
-                                                                        s.clone()
-                                                                    }
-                                                                    ToolProgress::Percentage {
-                                                                        detail,
-                                                                        ..
-                                                                    } => detail.clone(),
-                                                                    ToolProgress::LogLine(l) => {
-                                                                        l.clone()
-                                                                    }
-                                                                };
-                                                                let _ = etx.send(
-                                                                    AgentEvent::ToolCallProgress {
-                                                                        tool_id: tid.clone(),
-                                                                        progress_type:
-                                                                            uncode_core::event::ProgressType::Spinner,
-                                                                        detail,
-                                                                    },
-                                                                );
-                                                            },
-                                                        )),
-                                                        tool_call_id: id.clone(),
-                                                    };
-
-                                                    let mut tool_result =
-                                                        if let Some(exec) = executor {
-                                                            tokio::select! {
-                                                                _ = child.cancelled() => ToolResult::err("cancelled"),
-                                                                r = exec.execute_with_context(prepared_args, ctx) => {
-                                                                    match r {
-                                                                        Ok(tr) => tr,
-                                                                        Err(e) => ToolResult::err(format!("error: {e}")),
-                                                                    }
-                                                                }
-                                                            }
-                                                        } else {
-                                                            ToolResult::err(format!(
-                                                                "tool not found: {name}"
-                                                            ))
-                                                        };
-
-                                                    if let Some(ref h) = hk {
-                                                        let after_ctx = AfterToolCallContext {
-                                                            tool_call_id: id.clone(),
-                                                            tool_name: name.clone(),
-                                                            args,
-                                                        };
-                                                        let patch =
-                                                            h.after_tool_call(&after_ctx, &mut tool_result)
-                                                                .await;
-                                                        if let Some(new_content) = patch.content {
-                                                            tool_result.content = new_content;
-                                                        }
-                                                        if let Some(new_details) = patch.details {
-                                                            tool_result.details = Some(new_details);
-                                                        }
-                                                        if let Some(new_is_error) = patch.is_error {
-                                                            tool_result.is_error = new_is_error;
-                                                        }
-                                                        if let Some(new_terminate) = patch.terminate {
-                                                            tool_result.terminate = new_terminate;
-                                                        }
-                                                    }
-
-                                                    (id, name, tool_result)
-                                                }
-                                            },
-                                        ))
-                                        .await
+                                        executions
+                                            .into_iter()
+                                            .enumerate()
+                                            .map(|(i, (id, name, _args))| {
+                                                let tr =
+                                                    slot_results[i].take().unwrap_or_else(|| {
+                                                        ToolResult::err("cancelled")
+                                                    });
+                                                (id, name, tr)
+                                            })
+                                            .collect()
                                     };
 
                                 // Persist results, emit events, check terminate

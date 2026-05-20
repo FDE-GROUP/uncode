@@ -14,10 +14,11 @@ impl ToolExecutor for GrepTool {
             description: "使用正则表达式搜索文件内容".into(),
             parameters: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "pattern": {"type": "string", "description": "正则表达式"},
                     "path": {"type": "string", "description": "搜索目录路径（相对或绝对），默认当前目录"},
-                    "include": {"type": "string", "description": "文件匹配模式，如 *.rs、**/*.toml、src/*.rs"}
+                    "include": {"type": "string", "description": "文件名或相对路径 glob，如 *.rs、src/*.rs（相对搜索根目录）"}
                 },
                 "required": ["pattern"]
             }),
@@ -79,8 +80,14 @@ fn grep_files(
         }
 
         if let Some(pat) = glob_pattern {
+            let rel = entry
+                .path()
+                .strip_prefix(search_path)
+                .unwrap_or(entry.path())
+                .to_string_lossy()
+                .replace('\\', "/");
             let file_name = entry.file_name().to_string_lossy();
-            if !pat.matches(&file_name) {
+            if !pat.matches(&rel) && !pat.matches(&file_name) {
                 continue;
             }
         }

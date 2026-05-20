@@ -41,6 +41,7 @@ impl ToolExecutor for EditTool {
                 .into(),
             parameters: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "path": {"type": "string", "description": "文件路径（相对或绝对）"},
                     "edits": {
@@ -48,6 +49,7 @@ impl ToolExecutor for EditTool {
                         "description": "Array of hashline edit operations",
                         "items": {
                             "type": "object",
+                            "additionalProperties": false,
                             "properties": {
                                 "op": {"type": "string", "enum": ["replace", "prepend", "append"]},
                                 "pos": {"type": "string", "description": "Start anchor (e.g. '5#KJ')"},
@@ -88,14 +90,8 @@ impl ToolExecutor for EditTool {
             return Ok(format!("no changes: {display}"));
         }
 
-        // Atomic write
-        let tmp_path = resolved.with_extension("tmp");
-        fs::write(&tmp_path, &new_content)
+        super::atomic_write(&resolved, &new_content)
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("edit {display}: {e}")))?;
-        fs::rename(&tmp_path, &resolved).map_err(|e| {
-            let _ = fs::remove_file(&tmp_path);
-            uncode_core::error::UncodeError::Tool(format!("edit {display}: {e}"))
-        })?;
 
         Ok(unified_diff(&old_content, &new_content, &display))
     }

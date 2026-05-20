@@ -170,8 +170,11 @@ Pi **未**在 `packages/coding-agent/src/` 核心实现 Plan 模式。参考实�
 
 | 能力（Pi 扩展语义） | uncode 对应物 | 实现位置 | 主路径已接线 |
 |---------------------|---------------|----------|--------------|
-| 运行时缩小 LLM 工具集 | **无** `set_active_tools`；`ToolRegistry::definitions()` 返回全部已注册工具 | `uncode-agent/src/tools/registry.rs`、`loop_engine.rs` | ❌ |
-| 工具调用前拦截 | `ToolHooks::before_tool_call` → `Option<String>` 阻止 | `uncode-core/src/tool.rs`、`loop_engine.rs` | ✅（单实例 `Arc<dyn ToolHooks>`） |
+| 运行时缩小 LLM 工具集 | `ToolRegistry::set_active_tools` / `configure_active_tools`；`definitions()` 过滤；未激活工具执行返回 `tool not active` | `uncode-agent/src/tools/registry.rs`、`builtin.rs`、`loop_engine.rs`；CLI `--tools` / `--no-tools` / `--no-builtin-tools` | ✅（P0） |
+| 执行前参数校验 | `prepare_and_validate`：prepare → coerce → validate（对齐 Pi 顺序） | `registry.rs`、`loop_engine.rs` | ✅ |
+| 并行批次 | prepare/before **串行**，execute **并发**（无 sequential 工具时） | `loop_engine.rs` | ✅ |
+| bash 批次串行 | `BashTool` → `ExecutionMode::Sequential`；任一批次含 sequential 则整批串行 | `bash.rs`、`loop_engine.rs` | ✅ |
+| 工具调用前拦截 | `ToolHooks::before_tool_call` → `Option<String>` 阻止；TUI 经 `PermissionGate` + `PermissionToolHooks` 阻塞至用户确认 | `uncode-core/src/tool.rs`、`permission_gate.rs`、`uncode-tui` | ✅（TUI 已接线；`ChainedToolHooks` 可叠加多 hook） |
 | 工具结果改写 | `ToolHooks::after_tool_call` | 同上 | ✅ |
 | 事件级 Hook（Block/Patch） | `EventRouter::dispatch_hooks` → `HookResult` | `uncode-core/src/event.rs` | ❌（仅单测） |
 | 生命周期扩展总线 | `HookRegistry` + `Extension::on_hook` | `uncode-extensions/src/hooks.rs` | ❌ |
@@ -186,9 +189,9 @@ Pi **未**在 `packages/coding-agent/src/` 核心实现 Plan 模式。参考实�
 ```text
 用户输入 → AgentLoop::run_inner
          → build_context + 可选 transform_context
-         → LLM（tools = tool_registry.definitions() 全量）
-         → execute_single_tool
-              → ToolHooks::before_tool_call（可 block）
+         → LLM（tools = tool_registry.definitions()，受 active_tools 过滤）
+         → 工具批次（含 bash 则整批串行，否则 prepare/before 串行 + execute 并行）
+              → prepare_and_validate → ToolHooks::before_tool_call（可 block）
               → ToolExecutor
               → ToolHooks::after_tool_call（可 patch / terminate）
          → AgentEvent 广播 → TUI / Platform
@@ -207,7 +210,7 @@ Pi **未**在 `packages/coding-agent/src/` 核心实现 Plan 模式。参考实�
 | 维度 | 判定 |
 |------|------|
 | 哲学（小内核、外置 Plan） | ✅ 与 Pi 一致 |
-| 平台（扩展可拼装 Plan） | ❌ **未实现**；缺少 `set_active_tools`、扩展命令注册、多路 Hook 总线、扩展↔Agent 接线 |
+| 平台（扩展可拼装 Plan） | ⚠️ **部分**；`set_active_tools` 已落地（P0）；仍缺扩展命令注册、多路 Hook 总线、扩展↔Agent 接线 |
 | 短期变通 | Rust 模块 + `set_tool_hooks` + 改 `ToolRegistry` 或过滤 `definitions()`；或 TUI 硬编码 `/plan` |
 
 ---

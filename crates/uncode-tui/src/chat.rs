@@ -763,6 +763,9 @@ impl ChatState {
                 }
                 self.invalidate(idx);
             }
+            AgentEvent::ToolCallAwaitingApproval { tool_id, .. } => {
+                self.set_tool_await_confirm(&tool_id);
+            }
             AgentEvent::ToolCallEnd { data } => {
                 let tool_id = &data.tool_id;
                 let arguments = &data.arguments;
@@ -1011,6 +1014,33 @@ impl ChatState {
             expanded: false,
             entries: vec![entry],
         });
+    }
+
+    /// Mark a running tool card as waiting for user confirmation.
+    fn set_tool_await_confirm(&mut self, tool_id: &str) {
+        let Some((idx, entry_idx)) = self.locate_tool(tool_id) else {
+            return;
+        };
+        match entry_idx {
+            Some(ei) => {
+                if let ChatMessage::ToolTurnGroup { entries, .. } = &mut self.messages[idx]
+                    && let Some(entry) = entries.get_mut(ei)
+                {
+                    match entry {
+                        ToolGroupEntry::ToolCall { status, .. } => {
+                            *status = ToolCallRenderStatus::AwaitConfirm;
+                        }
+                        ToolGroupEntry::BashExecution { .. } => {}
+                    }
+                }
+            }
+            None => {
+                if let ChatMessage::ToolCall { status, .. } = &mut self.messages[idx] {
+                    *status = ToolCallRenderStatus::AwaitConfirm;
+                }
+            }
+        }
+        self.invalidate(idx);
     }
 
     /// `(message_index, entry_index)` — `entry_index` is `None` for legacy standalone tool cards.

@@ -6,10 +6,12 @@ use clap::{CommandFactory, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 use uncode_agent::session::store::SessionStore;
-use uncode_agent::tools::registry::ToolRegistry;
-use uncode_agent::tools::{BashTool, EditTool, GrepTool, ReadTool, WebFetchTool, WriteTool};
+use uncode_agent::tools::{ToolLaunchConfig, ToolRegistry, register_coding_tools_and_configure};
 use uncode_agent::workspace_graph::WorkspaceGraphCache;
-use uncode_agent::{AgentLoop, ContextLoader, GitHubClient, SystemPromptBuilder};
+use uncode_agent::{
+    AgentLoop, ContextLoader, GitHubClient, PermissionGate, PermissionToolHooks,
+    SystemPromptBuilder,
+};
 use uncode_ai::{
     AnthropicMessagesApi, GeminiGenerativeAiApi, OllamaNativeApi, OpenAiCompletionsApi,
 };
@@ -62,6 +64,18 @@ struct Cli {
     /// 从指定会话 fork 新分支
     #[arg(long, value_name = "SESSION_ID")]
     fork: Option<String>,
+
+    /// 逗号分隔的工具白名单（如 read,bash,edit,write,grep）
+    #[arg(long = "tools", short = 't', value_name = "TOOLS")]
+    tools: Option<String>,
+
+    /// 不向 LLM 暴露任何工具
+    #[arg(long = "no-tools", conflicts_with_all = ["tools", "no_builtin_tools"])]
+    no_tools: bool,
+
+    /// 仅向 LLM 暴露扩展工具（不含 Pi 七件套；如 web_fetch / web_search）
+    #[arg(long = "no-builtin-tools", conflicts_with_all = ["tools", "no_tools"])]
+    no_builtin_tools: bool,
 
     prompt: Option<String>,
 }
@@ -154,25 +168,35 @@ async fn main() -> anyhow::Result<()> {
     let config = load_config()?;
     let model = cli.model.clone().unwrap_or_else(|| config.model.clone());
 
-    let tool_registry = Arc::new(ToolRegistry::new());
-    tool_registry.register("read".to_string(), Arc::new(ReadTool::new()));
-    tool_registry.register("write".to_string(), Arc::new(WriteTool));
-    tool_registry.register("edit".to_string(), Arc::new(EditTool));
-    tool_registry.register("grep".to_string(), Arc::new(GrepTool));
-    tool_registry.register("bash".to_string(), Arc::new(BashTool::new()));
-    tool_registry.register("web_fetch".to_string(), Arc::new(WebFetchTool::new()));
-
     let (api_registry, model_registry) = build_registries(&config);
     let api_registry = Arc::new(api_registry);
     let model_registry = Arc::new(model_registry);
     let api_keys = build_api_keys(&config);
 
-    // Web Search — 仅在 Tavily API Key 配置时注册
-    if let Some(key) = api_keys.get("tavily")
-        && let Some(tool) = uncode_agent::tools::WebSearchTool::try_new(key)
-    {
-        tool_registry.register("web_search".to_string(), Arc::new(tool));
-    }
+    let tool_registry = Arc::new(ToolRegistry::new());
+    let tools_whitelist = cli.tools.as_ref().map(|list| {
+        list.split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect::<Vec<_>>()
+    });
+    register_coding_tools_and_configure(
+        &tool_registry,
+        &api_keys,
+        &ToolLaunchConfig {
+            no_tools: cli.no_tools,
+            no_builtin_tools: cli.no_builtin_tools,
+            tools: tools_whitelist,
+        },
+    )
+    .map_err(|e| {
+        if let Some(ref list) = cli.tools {
+            anyhow::anyhow!("invalid tool in --tools ({list}): {e}")
+        } else {
+            anyhow::anyhow!("{e}")
+        }
+    })?;
 
     let session_dir = SessionStore::default_dir().context("session dir")?;
     let session_store = Arc::new(SessionStore::new(session_dir).await?);
@@ -377,10 +401,13 @@ async fn main() -> anyhow::Result<()> {
     // 默认：启动 TUI（单例 AgentLoop：同 run 内 steer，避免每次 submit 新建 loop）
     let event_rx = agent.subscribe();
     let event_tx = agent.event_sender();
+    let permission_gate = Arc::new(PermissionGate::new(event_tx.clone()));
+    agent.set_tool_hooks(Arc::new(PermissionToolHooks::new(permission_gate.clone())));
     let shared_agent = Arc::new(tokio::sync::RwLock::new(agent));
 
     tokio::spawn(async move {
         let mut tui = uncode_tui::TuiEngine::new();
+        tui.set_permission_gate(permission_gate);
         let model_ids: Vec<String> = model_registry
             .all_models()
             .into_iter()

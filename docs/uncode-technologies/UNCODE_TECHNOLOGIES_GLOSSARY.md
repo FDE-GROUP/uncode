@@ -7,7 +7,7 @@
 |----|------|
 | **文档类型** | 术语索引 / Glossary |
 | **路径** | `docs/uncode-technologies/UNCODE_TECHNOLOGIES_GLOSSARY.md` |
-| **来源** | `UNCODE_OVERVIEW`、`UNCODE_LOOP_ENGINE`、`UNCODE_MICRO_PLANNING`、`UNCODE_TUI_MICRO_PLANNING_UX`、`UNCODE_LLM_LAYER`、`UNCODE_TOOL_SYSTEM`、`UNCODE_SESSION_MODEL`、`UNCODE_EVENT_SYSTEM`、`UNCODE_TUI_ARCHITECTURE`、`TUI_EVENT_FLOW`、`UNCODE_REQUEST_LIFECYCLE` |
+| **来源** | `UNCODE_OVERVIEW`、`UNCODE_LOOP_ENGINE`、`UNCODE_MICRO_PLANNING`、`UNCODE_TUI_MICRO_PLANNING_UX`、`UNCODE_LLM_LAYER`、`UNCODE_TOOL_SYSTEM`、`UNCODE_BUILTIN_TOOLS`、`UNCODE_TOOL_SELECTION_BY_LLM`、`UNCODE_SESSION_MODEL`、`UNCODE_EVENT_SYSTEM`、`UNCODE_TUI_ARCHITECTURE`、`TUI_EVENT_FLOW`、`UNCODE_REQUEST_LIFECYCLE` |
 | **最后更新** | 2026-05（附录 A–Z 扩全） |
 
 ---
@@ -176,7 +176,9 @@
 | ToolExecutor | ToolExecutor | `AgentTool` | Tool 定义 + 执行 | 工具 trait：`definition` + `execute` / `execute_with_context`。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
 | ToolDefinition | ToolDefinition | tool schema | Zod schema | name、JSON Schema parameters、execution_mode、label。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
 | ToolResult | ToolResult | tool result | tool output | content、is_error、details、terminate。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| ToolRegistry | ToolRegistry | 工具注册表 | ToolRegistry | 运行时注册与查找 `ToolExecutor`。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| ToolRegistry | ToolRegistry | 工具注册表 | ToolRegistry | 运行时注册与查找 `ToolExecutor`；`set_active_tools` 限制对 LLM 可见的工具。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md)、[UNCODE_TOOL_SELECTION_BY_LLM](UNCODE_TOOL_SELECTION_BY_LLM.md) |
+| active 工具集 / set_active_tools | active tools / set_active_tools | `setActiveTools` | — | 仅 `definitions()` 中暴露给 LLM 的工具；非「框架替模型选工具」。 | [UNCODE_TOOL_SELECTION_BY_LLM](UNCODE_TOOL_SELECTION_BY_LLM.md) |
+| LLM 工具选择 | LLM tool selection | model tool choice | function calling | 由模型在 ReAct 循环中决定 tool name 与参数。 | [UNCODE_TOOL_SELECTION_BY_LLM](UNCODE_TOOL_SELECTION_BY_LLM.md) |
 | #[tool] 宏 | #[tool] macro | — | — | 从函数签名生成 `ToolDefinition` 与 schema 函数。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
 | ExecutionMode | ExecutionMode | 并行/串行批次 | 执行策略 | Parallel（默认）或 Sequential；任一为 Sequential 则整批串行。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
 | 沙箱 / resolve_path | Sandbox / resolve_path | ExecutionEnv | Permission + cwd | CWD 内 `canonicalize`，越界 `SandboxViolation`。 | [UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |

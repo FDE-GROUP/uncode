@@ -58,6 +58,7 @@ impl ToolExecutor for WebSearchTool {
             description: "搜索互联网获取信息".into(),
             parameters: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "query": {"type": "string", "description": "搜索关键词"},
                     "max_results": {"type": "integer", "description": "最大结果数 (默认 5)"}

@@ -38,8 +38,11 @@ use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
+use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
+
+use uncode_agent::permission_gate::{Approval, PermissionGate};
 use uncode_core::event::AgentEvent;
 use uncode_core::message::UsageInfo;
 
@@ -251,6 +254,7 @@ pub struct TuiEngine {
     agent_busy: bool,
     current_cancel: Option<CancellationToken>,
     permission: PermissionManager,
+    permission_gate: Option<Arc<PermissionGate>>,
     activity: AgentActivity,
     footer: FooterState,
     theme: Theme,
@@ -295,6 +299,7 @@ impl TuiEngine {
             agent_busy: false,
             current_cancel: None,
             permission: PermissionManager::new(),
+            permission_gate: None,
             activity: AgentActivity::default(),
             footer,
             theme: Theme::default(),
@@ -316,6 +321,21 @@ impl TuiEngine {
         self.model = model;
     }
 
+    /// Wire TUI confirmation UI to agent-side [`PermissionToolHooks`].
+    pub fn set_permission_gate(&mut self, gate: Arc<PermissionGate>) {
+        self.permission_gate = Some(gate);
+    }
+
+    fn resolve_permission(&self, tool_id: &str, approval: Approval) {
+        if let Some(ref gate) = self.permission_gate {
+            let gate = gate.clone();
+            let id = tool_id.to_string();
+            tokio::spawn(async move {
+                gate.resolve(&id, approval).await;
+            });
+        }
+    }
+
     /// End of a full agent `run` (not a single inner Turn).
     fn finish_agent_run(&mut self) {
         self.agent_busy = false;
@@ -328,7 +348,9 @@ impl TuiEngine {
     /// ESC 键处理：按优先级 — 拒绝权限 → 中断 Agent → 清除焦点 → 关闭覆盖层
     pub fn handle_esc(&mut self) {
         if self.permission.has_pending() {
-            self.permission.deny();
+            if let Some(p) = self.permission.deny() {
+                self.resolve_permission(&p.tool_id, Approval::Deny);
+            }
             return;
         }
         if self.agent_busy {
@@ -567,13 +589,23 @@ impl TuiEngine {
                             if self.permission.has_pending() {
                                 match key_event.code {
                                     KeyCode::Char('y') | KeyCode::Enter => {
-                                        self.permission.confirm(crate::permission::ConfirmOption::Allow);
+                                        if let Some(p) = self.permission.confirm(
+                                            crate::permission::ConfirmOption::Allow,
+                                        ) {
+                                            self.resolve_permission(&p.tool_id, Approval::Allow);
+                                        }
                                     }
                                     KeyCode::Char('n') => {
-                                        self.permission.deny();
+                                        if let Some(p) = self.permission.deny() {
+                                            self.resolve_permission(&p.tool_id, Approval::Deny);
+                                        }
                                     }
                                     KeyCode::Char('e') => {
-                                        self.permission.confirm(crate::permission::ConfirmOption::Edit);
+                                        if let Some(p) = self.permission.confirm(
+                                            crate::permission::ConfirmOption::Edit,
+                                        ) {
+                                            self.resolve_permission(&p.tool_id, Approval::Allow);
+                                        }
                                     }
                                     _ => {}
                                 }
@@ -1609,6 +1641,19 @@ impl TuiEngine {
                 self.activity = AgentActivity::RunningTool {
                     name: tool_name.clone(),
                 };
+            }
+            AgentEvent::ToolCallAwaitingApproval {
+                tool_id,
+                tool_name,
+                arguments_summary,
+            } => {
+                let allow_edit = matches!(tool_name.as_str(), "edit" | "write");
+                self.permission.request_confirmation(
+                    tool_id.clone(),
+                    tool_name.clone(),
+                    arguments_summary.clone(),
+                    allow_edit,
+                );
             }
             _ => {}
         }

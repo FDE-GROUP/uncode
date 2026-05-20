@@ -14,6 +14,7 @@ impl WebFetchTool {
     pub fn new() -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
+            .redirect(reqwest::redirect::Policy::limited(5))
             .build()
             .unwrap_or_default();
         Self { client }
@@ -34,6 +35,7 @@ impl ToolExecutor for WebFetchTool {
             description: "获取 URL 内容并转换为纯文本".into(),
             parameters: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "url": {"type": "string", "description": "要获取的 URL (http/https)"},
                     "max_length": {"type": "integer", "description": "返回文本最大字节数 (默认 50KB)"}
@@ -50,12 +52,8 @@ impl ToolExecutor for WebFetchTool {
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("url required".into()))?;
 
-        // Validate scheme
-        if !url.starts_with("http://") && !url.starts_with("https://") {
-            return Err(uncode_core::error::UncodeError::Tool(
-                "only http/https URLs are supported".into(),
-            ));
-        }
+        super::url_safety::ensure_public_http_url(url)
+            .map_err(uncode_core::error::UncodeError::Tool)?;
 
         let max_length = arguments["max_length"]
             .as_u64()
@@ -140,7 +138,16 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         let msg = format!("{err}");
-        assert!(msg.contains("only http/https"));
+        assert!(msg.contains("only http/https") || msg.contains("invalid URL"));
+    }
+
+    #[test]
+    fn test_reject_loopback() {
+        let tool = WebFetchTool::new();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(tool.execute(serde_json::json!({"url": "http://127.0.0.1/"})));
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("blocked"));
     }
 
     #[test]

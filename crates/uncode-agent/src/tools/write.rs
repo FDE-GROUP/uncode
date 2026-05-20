@@ -16,6 +16,7 @@ impl ToolExecutor for WriteTool {
             description: "向文件写入内容，覆盖已有文件".into(),
             parameters: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "path": {"type": "string", "description": "文件路径（相对或绝对）"},
                     "content": {"type": "string", "description": "写入的内容"}
@@ -41,21 +42,7 @@ impl ToolExecutor for WriteTool {
 
         let old_content = fs::read_to_string(&resolved).unwrap_or_default();
 
-        if let Some(parent) = resolved.parent() {
-            fs::create_dir_all(parent).map_err(|e| {
-                uncode_core::error::UncodeError::Tool(format!("write {}: {e}", display))
-            })?;
-        }
-
-        // Atomic write: write to temp file then rename
-        let tmp_path = resolved.with_extension("tmp");
-        fs::write(&tmp_path, content).map_err(|e| {
-            uncode_core::error::UncodeError::Tool(format!("write {}: {e}", display))
-        })?;
-        fs::rename(&tmp_path, &resolved).map_err(|e| {
-            let _ = fs::remove_file(&tmp_path);
-            uncode_core::error::UncodeError::Tool(format!("write {}: {e}", display))
-        })?;
+        super::atomic_write(&resolved, content).map_err(uncode_core::error::UncodeError::Tool)?;
 
         Ok(unified_diff(&old_content, content, &display))
     }
