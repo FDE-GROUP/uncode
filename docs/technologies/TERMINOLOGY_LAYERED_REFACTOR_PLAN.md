@@ -282,11 +282,11 @@ pub async fn build_context(...) -> ...
 
 | 项 | Crate | 说明 |
 |----|-------|------|
-| rustdoc Pi 映射 | `uncode-tui` | #264 已起步（`TuiEngine`、crate `//!`）；其余 `pub` 按需补 |
-| rustdoc Pi 映射 | `uncode-extensions` | #264 已起步（`LifecycleHook` 等）；WASM 加载路径按需补 |
-| rustdoc | `uncode-macros` | 低优先级 |
-| glossary | 附录 A–Z | 不强制 Pi 列 |
-| 行为对齐（可选） | 测试 / 文档 | Pi 事件序列 fixture；JSONL 互操作说明 |
+| rustdoc Pi 映射 | `uncode-tui` | ✅ #266 批次 |
+| rustdoc Pi 映射 | `uncode-extensions` | ✅ #266 批次 |
+| rustdoc | `uncode-macros` | ✅ crate `//!` + `#[tool]` |
+| glossary | 附录 A–Z | 不强制 Pi 列（仍可选） |
+| 行为对齐（可选） | 测试 / 文档 | ✅ `validate_pi_turn_lifecycle_order` fixture；`UNCODE_SESSION_MODEL` JSONL↔Pi 表 |
 
 ---
 
