@@ -192,7 +192,9 @@ impl BranchSummaryError {
     }
 }
 
-/// Harness 编排层错误
+/// Harness 编排层错误（如并发 turn、`active_run` 守卫）。
+///
+/// **Pi:** 概念对齐 Pi harness 忙/阶段错误；错误码范围为 uncode 自有。
 #[derive(Error, Debug, Clone)]
 pub enum HarnessError {
     #[error("Agent is busy (phase: {phase})")]
@@ -224,7 +226,9 @@ impl HarnessError {
     }
 }
 
-/// uncode 统一错误类型，覆盖所有子系统的错误
+/// uncode 统一错误类型，覆盖文件/执行/压缩/Harness 等子系统。
+///
+/// **Pi:** 无单一对应类型；各子错误在概念上映射 Pi 同类失败（沙箱、工具、会话）。
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum UncodeError {
