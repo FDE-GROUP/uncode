@@ -212,6 +212,8 @@ pub trait Extension: Send + Sync {
 
 通过 `HookRegistry` 注册和调度（基于 `DashMap`），WASM 加载器为 scaffold 阶段。
 
+扩展宿主能力面、与 Pi `plan-mode` 的对照及分阶段方案见 [`../technologies/EXTENSION_COMPOSABLE_HARNESS_DESIGN.md`](../technologies/EXTENSION_COMPOSABLE_HARNESS_DESIGN.md)。
+
 ---
 
 ## 附录：Pi 事件对照速查

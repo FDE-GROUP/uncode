@@ -95,6 +95,8 @@ Pi 在 `pi-coding-agent` README 的 **Philosophy** 中明确若干「核心不�
 
 ## 5. 扩展与生态位
 
+可组合扩展宿主 API（`set_active_tools`、扩展命令、Plan 模式拼装）的设计说明与路线图见 [`EXTENSION_COMPOSABLE_HARNESS_DESIGN.md`](EXTENSION_COMPOSABLE_HARNESS_DESIGN.md)。**Turn 与 Plan 模式粒度澄清**（每个 Turn 不内建 Plan 能力）见该文 **§2.3**。
+
 | 维度 | Pi | uncode |
 |------|-----|--------|
 | 运行时扩展 | TypeScript Extension + npm/git 包 | WASM（`uncode-extensions`）+ Hook 生命周期 |

@@ -66,6 +66,8 @@ uncode 采用 [术语对齐策略](../technologies/TERMINOLOGY_ALIGNMENT_STRATEG
 | [Pi 机制对照一页纸](UNCODE_PI_MECHANISM_MAP.md) | L1：双环、三队列、会话树、事件与 Pi 映射 |
 | [架构总览](UNCODE_OVERVIEW.md) | 三层架构、依赖图、设计决策（本文档） |
 | [循环引擎](UNCODE_LOOP_ENGINE.md) | 双层循环、Turn 生命周期、Steering、压缩 |
+| [微观规划能力](UNCODE_MICRO_PLANNING.md) | ReAct Turn 内决策 vs Plan 模式；机制层判定与测试锚点 |
+| [TUI 微观规划 UX](UNCODE_TUI_MICRO_PLANNING_UX.md) | 多 Turn 链呈现、`agent_busy` 与 Turn 事件消费评价 |
 | [LLM 抽象层](UNCODE_LLM_LAYER.md) | Api trait、4 种协议、StreamEvent、模型注册 |
 | [工具系统](UNCODE_TOOL_SYSTEM.md) | ToolExecutor、工具实现、沙箱、Hooks、执行模式 |
 | [会话模型](UNCODE_SESSION_MODEL.md) | SessionEntry、SurrealDB 持久化、JSONL 互操作、树状分支、压缩摘要 |

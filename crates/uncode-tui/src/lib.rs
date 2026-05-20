@@ -51,6 +51,8 @@ struct FooterState {
     output_tokens: u64,
     cost: f64,
     context_percent: u8,
+    /// Current inner-loop turn (from `TurnStart`); 0 when idle.
+    current_turn: u64,
     turn_start: Option<std::time::Instant>,
     last_elapsed: String,
 }
@@ -84,9 +86,18 @@ impl FooterState {
             output_tokens: 0,
             cost: 0.0,
             context_percent: 0,
+            current_turn: 0,
             turn_start: None,
             last_elapsed: String::new(),
         }
+    }
+
+    fn set_current_turn(&mut self, turn: u64) {
+        self.current_turn = turn;
+    }
+
+    fn clear_run_turn(&mut self) {
+        self.current_turn = 0;
     }
 
     fn update_usage(&mut self, usage: &UsageInfo) {
@@ -145,12 +156,24 @@ impl FooterState {
         let dim = Style::default().fg(theme.ui.footer_text);
         let value_style = Style::default().fg(theme.ui.agent_text);
 
-        Line::from(vec![
+        let turn_span = if self.current_turn > 0 {
+            vec![
+                Span::styled("turn:", dim),
+                Span::styled(format!("{} ", self.current_turn), value_style),
+            ]
+        } else {
+            vec![]
+        };
+
+        let mut spans = vec![
             Span::styled("in:", dim),
             Span::styled(format!("{in_str} "), value_style),
             Span::styled("out:", dim),
             Span::styled(format!("{out_str} "), value_style),
             Span::styled(format!("{cost_str} "), value_style),
+        ];
+        spans.extend(turn_span);
+        spans.extend([
             Span::styled("ctx:", dim),
             Span::styled(
                 format!("{}% ", self.context_percent),
@@ -165,7 +188,8 @@ impl FooterState {
                     .bg(theme.tool_status.running),
             ),
             Span::styled(format!(" {level_icon}"), dim),
-        ])
+        ]);
+        Line::from(spans)
     }
 }
 
@@ -284,6 +308,15 @@ impl TuiEngine {
         self.model = model;
     }
 
+    /// End of a full agent `run` (not a single inner Turn).
+    fn finish_agent_run(&mut self) {
+        self.agent_busy = false;
+        self.activity = AgentActivity::Idle;
+        self.footer.end_turn();
+        self.footer.clear_run_turn();
+        self.current_cancel = None;
+    }
+
     /// ESC 键处理：按优先级 — 拒绝权限 → 中断 Agent → 清除焦点 → 关闭覆盖层
     pub fn handle_esc(&mut self) {
         if self.permission.has_pending() {
@@ -294,9 +327,7 @@ impl TuiEngine {
             if let Some(ref token) = self.current_cancel {
                 token.cancel();
             }
-            self.agent_busy = false;
-            self.current_cancel = None;
-            self.footer.end_turn();
+            self.finish_agent_run();
             self.chat.deactivate_thinking();
             self.chat.invalidate_all();
             self.chat.push_message(chat::ChatMessage::Summary {
@@ -381,7 +412,7 @@ impl TuiEngine {
             return;
         }
         let label = match &self.activity {
-            AgentActivity::Thinking => "Thinking".to_string(),
+            AgentActivity::Thinking => "Thinking…".to_string(),
             AgentActivity::RunningTool { name } => format!("Running {name}"),
             AgentActivity::Writing => "Writing".to_string(),
             AgentActivity::Idle => "Processing".to_string(),
@@ -705,10 +736,7 @@ impl TuiEngine {
                                         if let Some(ref token) = self.current_cancel {
                                             token.cancel();
                                         }
-                                        self.agent_busy = false;
-                                        self.activity = AgentActivity::Idle;
-                                        self.current_cancel = None;
-                                        self.footer.end_turn();
+                                        self.finish_agent_run();
                                         self.chat.deactivate_thinking();
                                         self.chat.invalidate_all();
                                         self.chat.push_message(chat::ChatMessage::Summary {
@@ -732,8 +760,7 @@ impl TuiEngine {
                                         if let Some(ref token) = self.current_cancel {
                                             token.cancel();
                                         }
-                                        self.agent_busy = false;
-                                        self.current_cancel = None;
+                                        self.finish_agent_run();
                                         self.chat.push_message(chat::ChatMessage::Summary {
                                             completed: vec!["[Interrupted] Agent stopped.".into()],
                                             next_steps: vec![],
@@ -784,9 +811,14 @@ impl TuiEngine {
                     }
                 }
                 Ok(event) = event_rx.recv() => {
-                    let is_turn_end = matches!(event, AgentEvent::TurnEnd { .. } | AgentEvent::SessionEnd { .. } | AgentEvent::AgentInterrupted { .. });
+                    let is_run_finished = matches!(
+                        event,
+                        AgentEvent::SessionEnd { .. }
+                            | AgentEvent::AgentInterrupted { .. }
+                            | AgentEvent::AgentSettled { .. }
+                    );
                     self.handle_event(event);
-                    if is_turn_end {
+                    if is_run_finished {
                         self.flush_queue(&on_submit);
                     }
                 }
@@ -1507,22 +1539,30 @@ impl TuiEngine {
             AgentEvent::SessionStart { session_id, .. } => {
                 self.session_id = session_id.clone();
             }
-            AgentEvent::TurnEnd { usage, .. } => {
-                self.agent_busy = false;
+            AgentEvent::TurnStart { turn } => {
+                self.agent_busy = true;
+                self.footer.set_current_turn(*turn);
                 self.activity = AgentActivity::Idle;
-                self.footer.end_turn();
+            }
+            AgentEvent::TurnEnd { usage, .. } => {
+                // Per-turn usage only; keep agent_busy until SessionEnd (multi-turn ReAct).
                 self.footer.update_usage(usage);
+                self.activity = AgentActivity::Idle;
             }
             AgentEvent::SessionEnd { data } => {
-                self.agent_busy = false;
-                self.activity = AgentActivity::Idle;
-                self.footer.end_turn();
+                self.finish_agent_run();
                 self.footer.update_usage(&data.total_tokens);
             }
+            AgentEvent::AgentSettled { .. } => {
+                self.finish_agent_run();
+            }
             AgentEvent::AgentInterrupted { .. } => {
-                self.agent_busy = false;
-                self.activity = AgentActivity::Idle;
-                self.footer.end_turn();
+                self.finish_agent_run();
+            }
+            AgentEvent::Error { recoverable, .. } => {
+                if !recoverable {
+                    self.finish_agent_run();
+                }
             }
             AgentEvent::ContentDelta { delta_type, .. } => match delta_type {
                 uncode_core::event::DeltaType::Thinking => {
@@ -2081,8 +2121,9 @@ mod tests {
     }
 
     #[test]
-    fn test_handle_event_turn_end_updates_footer() {
+    fn test_handle_event_turn_end_keeps_agent_busy() {
         let mut engine = TuiEngine::new();
+        engine.agent_busy = true;
         engine.handle_event(AgentEvent::TurnEnd {
             turn: 1,
             usage: UsageInfo {
@@ -2091,9 +2132,45 @@ mod tests {
                 cost: None,
             },
         });
-        assert!(!engine.agent_busy);
+        assert!(engine.agent_busy);
         assert_eq!(engine.footer.input_tokens, 10_000);
         assert_eq!(engine.footer.output_tokens, 5_000);
+    }
+
+    #[test]
+    fn test_handle_event_turn_start_sets_turn_in_footer() {
+        let mut engine = TuiEngine::new();
+        engine.handle_event(AgentEvent::TurnStart { turn: 3 });
+        assert!(engine.agent_busy);
+        assert_eq!(engine.footer.current_turn, 3);
+    }
+
+    #[test]
+    fn test_multi_turn_chain_busy_until_session_end() {
+        let mut engine = TuiEngine::new();
+        engine.agent_busy = true;
+        engine.handle_event(AgentEvent::TurnStart { turn: 1 });
+        engine.handle_event(AgentEvent::TurnEnd {
+            turn: 1,
+            usage: UsageInfo::default(),
+        });
+        assert!(engine.agent_busy);
+        engine.handle_event(AgentEvent::TurnStart { turn: 2 });
+        engine.handle_event(AgentEvent::TurnEnd {
+            turn: 2,
+            usage: UsageInfo::default(),
+        });
+        assert!(engine.agent_busy);
+        engine.handle_event(AgentEvent::SessionEnd {
+            data: Box::new(SessionEndData {
+                session_id: "s".into(),
+                total_turns: 2,
+                total_tokens: UsageInfo::default(),
+                exit_reason: "completed".into(),
+            }),
+        });
+        assert!(!engine.agent_busy);
+        assert_eq!(engine.footer.current_turn, 0);
     }
 
     #[test]

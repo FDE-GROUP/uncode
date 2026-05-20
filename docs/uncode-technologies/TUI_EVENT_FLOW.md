@@ -292,14 +292,19 @@ TuiEngine::handle_event(event)
 | AgentEvent | 状态变更 |
 |------------|----------|
 | `SessionStart` | `session_id = session_id` |
-| `TurnEnd` | `agent_busy = false`, `activity = Idle`, `footer.end_turn()`, `footer.update_usage()` |
-| `SessionEnd` | `agent_busy = false`, `activity = Idle`, `footer.end_turn()`, `footer.update_usage()` |
-| `AgentInterrupted` | `agent_busy = false`, `activity = Idle`, `footer.end_turn()` |
+| `TurnStart` | `agent_busy = true`, `footer.current_turn = turn`, `activity = Idle` |
+| `TurnEnd` | `footer.update_usage()` only；**不**改 `agent_busy`（多 Turn ReAct 链保持 busy） |
+| `SessionEnd` | `finish_agent_run()` + `footer.update_usage()` |
+| `AgentSettled` | `finish_agent_run()` |
+| `AgentInterrupted` | `finish_agent_run()` |
+| `Error`（`recoverable = false`） | `finish_agent_run()` |
 | `ContentDelta(Thinking)` | `activity = Thinking` |
 | `ContentDelta(Text)` | `activity = Writing` |
 | `ToolCallStart` | `activity = RunningTool { name }` |
 
 **Turn 结束检测**：使用 `matches!` 宏检测 `TurnEnd | SessionEnd | AgentInterrupted`，触发 `flush_queue()` 消费排队消息。
+
+> **注意（微观规划 UX）**：内层 ReAct 每一 Turn 都会 `TurnEnd`，但 TUI 在每次 `TurnEnd` 将 `agent_busy = false`，多 Turn 链中间会出现「假空闲」。详见 [`UNCODE_TUI_MICRO_PLANNING_UX.md`](UNCODE_TUI_MICRO_PLANNING_UX.md) §5.2。
 
 ### 5.3 ChatState 层消息转换
 
@@ -312,7 +317,9 @@ ToolCallStart             → ChatMessage::ToolCall | ChatMessage::BashExecution
 ToolCallProgress          → 更新已有消息的 arguments_summary / stdout
 ToolCallEnd               → 更新状态、耗时、结果摘要
 Error                     → ChatMessage::Error
-PhaseSummary              → ChatMessage::Summary
+PhaseSummary              → ChatMessage::TodoList（completed/next_steps）；issues → Summary
+TaskUpdate                → ChatMessage::TodoList（upsert by task_id）
+TurnStart (turn≥2)        → ChatMessage::TurnDivider
 CompactionComplete        → ChatMessage::CompactionSummary
 MessageQueued             → ChatMessage::QueuedMessage
 MessageDelivered          → 移除对应 QueuedMessage
