@@ -87,7 +87,7 @@
 ### 5.1 Turn 边界仍偏弱
 
 - ✅ `TurnStart`（turn≥2）插入 `── Turn N ──`；页脚 `turn:N`（见 #271）。  
-- `TurnEnd` 仍不汇总「本轮工具列表」；同 Turn 多工具无折叠组（P2）。
+- 同 Turn 多工具以 `ToolTurnGroup` 折叠组展示（P2）；`TurnEnd` 仍不汇总结构化「本轮小结」。
 
 **后果**：多 Turn 链可分界，但单 Turn 内并行工具仍按时间线平铺。
 
@@ -163,7 +163,7 @@ Agent 层 `MessageQueued` 由 `steer()` 发射；TUI 不再为 steer 重复插�
 |--------|------|----------|
 | **P0** | ✅ 已实现（#271）：`finish_agent_run()` 仅在 run 结束；`TurnEnd` 仅 `update_usage`；`flush_queue` 不在 `TurnEnd` | 多 Turn 链期间状态行持续 |
 | **P1** | ✅ 已实现（#271）：页脚 `turn:N` 来自 `TurnStart` | 多 Turn 链可数 |
-| **P2** | 同 Turn 内工具卡片分组（可折叠） | 单轮「一批决策」可扫读 |
+| **P2** | ✅ 已实现：`ToolTurnGroup` 同 Turn 可折叠分组 | 单轮「一批决策」可扫读 |
 | **P3** | ✅ 已实现：`SubmitIntent` + 单例 `AgentLoop` + `steer()` | 中途纠偏与 Pi 对齐 |
 | **P4** | Agent 或扩展在适当时机 `emit PhaseSummary` | 结构化步进小结 |
 
