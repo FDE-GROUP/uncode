@@ -35,13 +35,20 @@ fn build_anthropic_body(model: &Model, context: &Context, options: &StreamOption
         .filter(|m| m.role != Role::System)
         .map(|msg| match msg.role {
             Role::Assistant => {
-                let mut text_parts: Vec<String> = Vec::new();
-                let mut tool_calls: Vec<Value> = Vec::new();
+                let mut blocks: Vec<Value> = Vec::new();
                 for block in &msg.content {
                     match block {
-                        ContentBlock::Text { text } => text_parts.push(text.clone()),
+                        ContentBlock::Thinking { text } => {
+                            blocks.push(serde_json::json!({
+                                "type": "thinking",
+                                "thinking": text
+                            }));
+                        }
+                        ContentBlock::Text { text } => {
+                            blocks.push(serde_json::json!({"type": "text", "text": text}));
+                        }
                         ContentBlock::ToolCall(tc) => {
-                            tool_calls.push(serde_json::json!({
+                            blocks.push(serde_json::json!({
                                 "id": tc.id,
                                 "type": "tool_use",
                                 "name": tc.name,
@@ -51,21 +58,10 @@ fn build_anthropic_body(model: &Model, context: &Context, options: &StreamOption
                         _ => {}
                     }
                 }
-                let mut m = serde_json::json!({
+                serde_json::json!({
                     "role": "assistant",
-                    "content": if text_parts.is_empty() && tool_calls.is_empty() {
-                        Value::Array(vec![])
-                    } else {
-                        let mut blocks: Vec<Value> = text_parts
-                            .iter()
-                            .map(|t| serde_json::json!({"type": "text", "text": t}))
-                            .collect();
-                        blocks.extend(tool_calls);
-                        Value::Array(blocks)
-                    }
-                });
-                let _ = &mut m;
-                m
+                    "content": Value::Array(blocks)
+                })
             }
             Role::Tool => {
                 let mut content: Vec<Value> = Vec::new();
@@ -140,33 +136,33 @@ fn build_anthropic_body(model: &Model, context: &Context, options: &StreamOption
         body["tools"] = serde_json::json!(tools);
     }
 
-    // Thinking parameters for Anthropic extended thinking
-    if model.reasoning {
-        let level = options.thinking_level.unwrap_or(ThinkingLevel::Off);
-        if level != ThinkingLevel::Off {
-            let mapped = model
-                .thinking_level_map
-                .get(&level)
-                .and_then(|v| v.as_deref());
-
-            let effort = mapped.unwrap_or(match level {
-                ThinkingLevel::Minimal | ThinkingLevel::Low => "low",
-                ThinkingLevel::Medium => "medium",
-                ThinkingLevel::High | ThinkingLevel::XHigh => "high",
-                _ => "high",
-            });
-
-            let budget = options.thinking_budget_tokens.unwrap_or(10000);
-            body["thinking"] = serde_json::json!({
-                "type": "enabled",
-                "budget_tokens": budget
-            });
-            // effort is only used by models that support adaptive thinking
-            let _ = effort;
-        }
+    if let Some(budget) = resolve_anthropic_thinking_budget(model, options) {
+        body["thinking"] = serde_json::json!({
+            "type": "enabled",
+            "budget_tokens": budget
+        });
     }
 
     body
+}
+
+/// Extended-thinking token budget from `StreamOptions` or `Model.thinking_level_map` (preset strings).
+fn resolve_anthropic_thinking_budget(model: &Model, options: &StreamOptions) -> Option<u32> {
+    if !model.reasoning {
+        return None;
+    }
+    let level = options.thinking_level?;
+    if level == ThinkingLevel::Off {
+        return None;
+    }
+    if let Some(budget) = options.thinking_budget_tokens {
+        return Some(budget);
+    }
+    model
+        .thinking_level_map
+        .get(&level)
+        .and_then(|v| v.as_deref())
+        .and_then(|s| s.parse().ok())
 }
 
 struct AnthropicToolState {
@@ -196,7 +192,8 @@ fn parse_anthropic_chunk(text: &str, state: &mut AnthropicToolState) -> Vec<Stre
             match event["type"].as_str() {
                 Some("content_block_start") => {
                     let idx = event["index"].as_u64().unwrap_or(0) as usize;
-                    if event["content_block"]["type"].as_str() == Some("tool_use") {
+                    let block_type = event["content_block"]["type"].as_str();
+                    if block_type == Some("tool_use") {
                         let id = event["content_block"]["id"]
                             .as_str()
                             .unwrap_or("")
@@ -207,6 +204,12 @@ fn parse_anthropic_chunk(text: &str, state: &mut AnthropicToolState) -> Vec<Stre
                             .to_string();
                         state.active_tools.insert(idx, (id.clone(), name.clone()));
                         events.push(StreamEvent::ToolCallStart { id, name });
+                    } else if block_type == Some("thinking") {
+                        if let Some(text) = event["content_block"]["thinking"].as_str()
+                            && !text.is_empty()
+                        {
+                            events.push(StreamEvent::ThinkingDelta(text.to_string()));
+                        }
                     } else if let Some(text) = event["content_block"]["text"].as_str()
                         && !text.is_empty()
                     {
@@ -215,7 +218,14 @@ fn parse_anthropic_chunk(text: &str, state: &mut AnthropicToolState) -> Vec<Stre
                 }
                 Some("content_block_delta") => {
                     let idx = event["index"].as_u64().unwrap_or(0) as usize;
-                    if event["delta"]["type"].as_str() == Some("input_json_delta") {
+                    let delta_type = event["delta"]["type"].as_str();
+                    if delta_type == Some("thinking_delta") {
+                        if let Some(text) = event["delta"]["thinking"].as_str()
+                            && !text.is_empty()
+                        {
+                            events.push(StreamEvent::ThinkingDelta(text.to_string()));
+                        }
+                    } else if delta_type == Some("input_json_delta") {
                         if let Some(partial) = event["delta"]["partial_json"].as_str()
                             && state.active_tools.contains_key(&idx)
                         {
@@ -299,9 +309,11 @@ impl Api for AnthropicMessagesApi {
         options: &StreamOptions,
     ) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
         let body = build_anthropic_body(model, context, options);
+        crate::notify_request_payload(options, &body);
         let url = format!("{}/messages", model.base_url);
 
         let mut req = self.client.post(&url).json(&body);
+        req = crate::apply_option_headers(req, options);
 
         if let Some(ref key) = options.api_key {
             req = req.header("x-api-key", key);
@@ -324,6 +336,8 @@ impl Api for AnthropicMessagesApi {
                 .await
                 .map_err(|e| UncodeError::Network(e.to_string()))?,
         };
+
+        crate::notify_http_response(options, response.status().as_u16(), response.headers());
 
         if !response.status().is_success() {
             let status = response.status();
@@ -358,5 +372,111 @@ impl Api for AnthropicMessagesApi {
             }));
 
         Ok(Box::pin(stream))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::{ContentBlock, Message, Role};
+    use crate::provider_preset::apply_provider_preset;
+
+    fn claude_model() -> Model {
+        apply_provider_preset(Model {
+            id: "claude-test".into(),
+            name: "Claude Test".into(),
+            provider: "anthropic".into(),
+            api: "anthropic-messages".into(),
+            base_url: "https://api.anthropic.com/v1".into(),
+            reasoning: true,
+            ..Model::default()
+        })
+    }
+
+    #[test]
+    fn resolve_thinking_budget_from_level_map() {
+        let model = claude_model();
+        let options = StreamOptions {
+            thinking_level: Some(ThinkingLevel::High),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_anthropic_thinking_budget(&model, &options),
+            Some(16000)
+        );
+    }
+
+    #[test]
+    fn resolve_thinking_budget_explicit_override() {
+        let model = claude_model();
+        let options = StreamOptions {
+            thinking_level: Some(ThinkingLevel::High),
+            thinking_budget_tokens: Some(999),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_anthropic_thinking_budget(&model, &options),
+            Some(999)
+        );
+    }
+
+    #[test]
+    fn resolve_thinking_budget_off_skips() {
+        let model = claude_model();
+        let options = StreamOptions {
+            thinking_level: Some(ThinkingLevel::Off),
+            ..Default::default()
+        };
+        assert_eq!(resolve_anthropic_thinking_budget(&model, &options), None);
+    }
+
+    #[test]
+    fn build_body_includes_thinking_and_assistant_blocks() {
+        let model = claude_model();
+        let context = Context {
+            messages: vec![Message {
+                id: "m1".into(),
+                role: Role::Assistant,
+                content: vec![
+                    ContentBlock::Thinking {
+                        text: "plan".into(),
+                    },
+                    ContentBlock::Text { text: "hi".into() },
+                ],
+                usage: None,
+                stop_reason: None,
+                error_message: None,
+                timestamp: None,
+            }],
+            ..Default::default()
+        };
+        let options = StreamOptions {
+            thinking_level: Some(ThinkingLevel::Low),
+            ..Default::default()
+        };
+        let body = build_anthropic_body(&model, &context, &options);
+        assert_eq!(body["thinking"]["budget_tokens"], 4096);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], "plan");
+        assert_eq!(content[1]["type"], "text");
+    }
+
+    #[test]
+    fn parse_thinking_sse_deltas() {
+        let mut state = AnthropicToolState::new();
+        let chunk = r#"data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"a"}}
+data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"b"}}
+"#;
+        let events = parse_anthropic_chunk(chunk, &mut state);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            StreamEvent::ThinkingDelta(s) if s == "a"
+        ));
+        assert!(matches!(
+            &events[1],
+            StreamEvent::ThinkingDelta(s) if s == "b"
+        ));
     }
 }

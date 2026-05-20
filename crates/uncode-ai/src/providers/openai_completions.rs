@@ -376,9 +376,11 @@ impl Api for OpenAiCompletionsApi {
         options: &StreamOptions,
     ) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
         let body = build_request_body(model, context, options);
+        crate::notify_request_payload(options, &body);
         let url = format!("{}/chat/completions", model.base_url);
 
         let mut req = self.client.post(&url).json(&body);
+        req = crate::apply_option_headers(req, options);
 
         if let Some(ref key) = options.api_key {
             req = req.header("Authorization", format!("Bearer {key}"));
@@ -406,6 +408,8 @@ impl Api for OpenAiCompletionsApi {
                 .await
                 .map_err(|e| UncodeError::Network(e.to_string()))?,
         };
+
+        crate::notify_http_response(options, response.status().as_u16(), response.headers());
 
         if !response.status().is_success() {
             return Err(map_http_error(

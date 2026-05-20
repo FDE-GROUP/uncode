@@ -11,7 +11,10 @@ pub mod model;
 pub mod model_registry;
 pub mod provider_preset;
 pub mod providers;
+pub mod request_hooks;
 pub mod tool_def;
+
+pub use request_hooks::{apply_option_headers, notify_http_response, notify_request_payload};
 
 pub use api::{Api, StreamEvent, ToolCallEndData, UsageInfo as LlmUsageInfo};
 pub use api_registry::ApiRegistry;
@@ -40,6 +43,9 @@ pub async fn stream(
 }
 
 /// Pi `streamSimple` 对齐入口：合并厂商 Compat、钳制 thinking level 后调用 [`stream`].
+///
+/// `StreamOptions` 中的 `on_payload` / `on_response` 由各 `Api` 实现在发请求前后触发；
+/// Agent 侧在 `transform_context` 之后组装 `Context` 并传入本函数。
 pub async fn stream_simple(
     model: &model::Model,
     context: &api_types::Context,
