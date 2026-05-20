@@ -816,24 +816,34 @@ impl AgentLoop {
                                 });
                             }
 
-                            for (id, name, arguments) in &pending_tool_calls {
-                                let args: serde_json::Value = match serde_json::from_str(arguments)
-                                {
-                                    Ok(a) => a,
+                            // Merge stream ToolCallEnd with accumulated deltas; only tool calls
+                            // that will receive a tool result message go into the assistant turn
+                            // (OpenAI/Anthropic reject assistant+tool_calls without matching tool msgs).
+                            let streamed_tool_calls = std::mem::take(&mut pending_tool_calls);
+                            let mut executions = std::mem::take(&mut pending_executions);
+                            for (id, name, args_str) in streamed_tool_calls {
+                                if executions.iter().any(|(eid, _, _)| eid == &id) {
+                                    continue;
+                                }
+                                match serde_json::from_str::<serde_json::Value>(&args_str) {
+                                    Ok(args) => executions.push((id, name, args)),
                                     Err(e) => {
                                         error!(
                                             tool = %name,
+                                            tool_id = %id,
                                             error = %e,
-                                            "tool args JSON parse failed, using Null"
+                                            "tool args JSON parse failed, omitting tool call from assistant message"
                                         );
-                                        serde_json::Value::Null
                                     }
-                                };
+                                }
+                            }
+
+                            for (id, name, arguments) in &executions {
                                 assistant_content.push(ContentBlock::ToolCall(Box::new(
                                     uncode_core::message::ToolCall {
                                         id: id.clone(),
                                         name: name.clone(),
-                                        arguments: args,
+                                        arguments: arguments.clone(),
                                     },
                                 )));
                             }
@@ -871,8 +881,12 @@ impl AgentLoop {
                                 messages.push(msg);
                             }
 
-                            // Batch-execute buffered tool calls
-                            let executions = std::mem::take(&mut pending_executions);
+                            let exec_args_by_id: HashMap<String, String> = executions
+                                .iter()
+                                .map(|(id, _, args)| (id.clone(), args.to_string()))
+                                .collect();
+
+                            // Batch-execute buffered tool calls (same `executions` as assistant ToolCalls)
                             if !executions.is_empty() {
                                 // Pi strategy: if ANY tool is sequential, run ALL sequentially
                                 let has_sequential = executions.iter().any(|(_, name, _)| {
@@ -1056,11 +1070,7 @@ impl AgentLoop {
                                     });
 
                                     let args_short = summarize_tool_args(
-                                        pending_tool_calls
-                                            .iter()
-                                            .find(|(tid, ..)| tid == id)
-                                            .map(|(_, _, a)| a.as_str())
-                                            .unwrap_or(""),
+                                        exec_args_by_id.get(id).map(String::as_str).unwrap_or(""),
                                     );
                                     let label = format_tool_phase_label(name, &args_short);
                                     if is_error {

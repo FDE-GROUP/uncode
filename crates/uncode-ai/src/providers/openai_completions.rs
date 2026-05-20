@@ -320,10 +320,25 @@ fn parse_tool_calls(
     events
 }
 
+fn parse_streamed_tool_arguments(args: &str) -> Result<Value, serde_json::Error> {
+    if let Ok(v) = serde_json::from_str(args) {
+        return Ok(v);
+    }
+    let trimmed = args.trim();
+    if trimmed.starts_with('{') && !trimmed.ends_with('}') {
+        let mut repaired = trimmed.to_string();
+        repaired.push('}');
+        if let Ok(v) = serde_json::from_str(&repaired) {
+            return Ok(v);
+        }
+    }
+    serde_json::from_str(args)
+}
+
 fn flush_tool_calls(state: &mut StreamState) -> Vec<StreamEvent> {
     let mut events = Vec::new();
     for (id, args) in state.pending_args.drain() {
-        let parsed = match serde_json::from_str::<Value>(&args) {
+        let parsed = match parse_streamed_tool_arguments(&args) {
             Ok(v) => v,
             Err(e) => {
                 events.push(StreamEvent::Error {

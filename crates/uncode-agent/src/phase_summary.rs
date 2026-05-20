@@ -9,8 +9,7 @@ use uncode_core::event::PhaseSummaryData;
 use uncode_core::message::{Message, UsageInfo};
 use uncode_core::model::Model;
 
-const PHASE_SUMMARY_SYSTEM: &str =
-    "你是编码 Agent 的回合小结助手。根据本轮工具执行与助手说明，用简洁中文输出 JSON，不要 markdown 代码块。";
+const PHASE_SUMMARY_SYSTEM: &str = "你是编码 Agent 的回合小结助手。根据本轮工具执行与助手说明，用简洁中文输出 JSON，不要 markdown 代码块。";
 
 const PHASE_SUMMARY_PROMPT: &str = "\
 请为本轮（Turn {turn}）生成阶段小结。输入为工具执行摘要；若助手有文字说明则一并参考。
@@ -113,7 +112,11 @@ pub async fn try_llm_phase_summary(input: PhaseSummaryLlmInput<'_>) -> Option<Ph
         .replace("{failed_tools}", &failed_tools)
         .replace(
             "{continues}",
-            if input.has_more_tool_calls { "是" } else { "否" },
+            if input.has_more_tool_calls {
+                "是"
+            } else {
+                "否"
+            },
         );
 
     let raw = match llm_one_shot(
