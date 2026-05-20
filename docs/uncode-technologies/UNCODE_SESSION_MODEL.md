@@ -92,6 +92,17 @@ TUI `/export jsonl`（见 `uncode-tui`）将会话条目序列化为 **JSON Line
 
 导出的每行仍是完整 `SessionEntry`（或头部 + 条目）的 JSON，与「若用纯 JSONL 文件作为主库」时的可读格式兼容；**线上写入路径**为 SurrealDB `append_entry`，不逐行写单一 `.jsonl` 文件。
 
+### 与 Pi 主存储（JSONL）的对照
+
+| 维度 | Pi | uncode |
+|------|-----|--------|
+| 线上主库 | 按会话目录 `sessions/*.jsonl` 追加 | SurrealDB（`SessionStore::append_entry`） |
+| 树形条目 | `SessionEntry` 一行一条 | 同逻辑模型，见 [`SESSION_SCHEMA`](../SESSION_SCHEMA.md) |
+| 迁移/备份 | 直接复制 JSONL | `import_jsonl_dir()` 导入；TUI `/export jsonl` 导出 |
+| 互操作目标 | Pi CLI / 外部 grep 工具链 | 导出后与 Pi 式 JSONL **形状兼容**，非字节级同一文件布局 |
+
+导入实现见 `crates/uncode-agent/src/session/import.rs`；行为级事件对照见 [`UNCODE_PI_MECHANISM_MAP`](UNCODE_PI_MECHANISM_MAP.md) §5–§6。
+
 ---
 
 ## SessionHeader
