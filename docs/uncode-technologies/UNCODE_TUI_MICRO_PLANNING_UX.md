@@ -28,7 +28,7 @@
 | 单步可追溯性 | **8/10** | Thinking / 正文 / 工具卡片按时间堆叠，信息完整 |
 | 多 Turn 链可感知性 | **4/10** | 无 Turn 分隔；`TurnStart` 未进入聊天区 |
 | 「仍在规划/执行中」状态 | **5/10** | 有状态行，但 `agent_busy` 与 `TurnEnd` 绑定存在缺口 |
-| 纠偏与排队 | **6/10** | 排队可见；TUI → Agent `steering` 未贯通 |
+| 纠偏与排队 | **8/10** | Enter 同 run `steer`；`/later` 排队 follow-up |
 | 信息密度控制 | **7/10** | 可折叠 thinking/工具；`read` 不自动展开 |
 
 **一句话**：Agent 已在做多 Turn 微观规划，TUI 将其呈现为 **连续 scrollback + 工具卡片**——适合跟读审计，不适合一眼判断「第几轮决策、整条链是否尚未结束」。
@@ -115,13 +115,13 @@ AgentEvent::TurnEnd { usage, .. } => {
 
 微观规划在引擎上是 **一次 `run` 内多 Turn**；TUI 却多次表现为 **idle**，这是当前最大的体验缺口。
 
-### 5.3 Steering 未从 TUI 接到 Agent
+### 5.3 Steering（已实现）
 
-- TUI `MessageQueue` 含 `QueueType::Steering`，但 `submit_text` 在 busy 时只 `enqueue(FollowUp)`。  
-- CLI `on_submit` 未调用 `AgentLoop::steer()`。  
-- Agent 层 `MessageQueued` / `MessageDelivered` 事件在 TUI 可渲染，但**用户输入路径未产生 steering**。
+- **空闲**：`SubmitIntent::NewRun` → CLI 单例 `AgentLoop::run()`。  
+- **忙碌**：默认 Enter → `SubmitIntent::Steer` → `AgentLoop::steer()`（同 run 内纠偏）。  
+- **`/later <msg>`**：入 TUI `FollowUp` 队列，在 `SessionEnd` 后 `flush_queue` 再 `NewRun`。
 
-**后果**：中途纠偏无法体现为 Pi 式「同 run 内 steer」；只能排队或等看似 idle 后再发消息。
+Agent 层 `MessageQueued` 由 `steer()` 发射；TUI 不再为 steer 重复插入 `QueuedMessage` 行。
 
 ### 5.4 `PhaseSummary` 有 UI、引擎未发射
 
@@ -152,7 +152,7 @@ AgentEvent::TurnEnd { usage, .. } => {
 | 整条任务是否还没结束？ | **不可靠** | `TurnEnd` → `agent_busy=false` |
 | 这是第几次「想→做」？ | **不能** | 无 Turn 标记 |
 | 为什么选了这个工具？ | 部分能 | 工具摘要 + thinking（若有） |
-| 能在同一次 run 里纠偏吗？ | **弱** | steering 未接线 |
+| 能在同一次 run 里纠偏吗？ | **能** | busy 时 Enter → `steer` |
 | 多步之间结构清晰吗？ | **弱** | 连续 scrollback |
 
 ---
@@ -164,7 +164,7 @@ AgentEvent::TurnEnd { usage, .. } => {
 | **P0** | ✅ 已实现（#271）：`finish_agent_run()` 仅在 run 结束；`TurnEnd` 仅 `update_usage`；`flush_queue` 不在 `TurnEnd` | 多 Turn 链期间状态行持续 |
 | **P1** | ✅ 已实现（#271）：页脚 `turn:N` 来自 `TurnStart` | 多 Turn 链可数 |
 | **P2** | 同 Turn 内工具卡片分组（可折叠） | 单轮「一批决策」可扫读 |
-| **P3** | 提交路径区分 steer / follow-up，CLI 调 `agent.steer()` | 中途纠偏与 Pi 对齐 |
+| **P3** | ✅ 已实现：`SubmitIntent` + 单例 `AgentLoop` + `steer()` | 中途纠偏与 Pi 对齐 |
 | **P4** | Agent 或扩展在适当时机 `emit PhaseSummary` | 结构化步进小结 |
 
 实现时应配 GitHub Issue；与 Plan 模式扩展（`set_active_tools` 等）正交。

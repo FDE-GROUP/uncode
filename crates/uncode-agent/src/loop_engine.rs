@@ -326,9 +326,14 @@ impl AgentLoop {
         tool_result
     }
 
+    /// Whether an agent `run` is in progress (inner ReAct loop may span multiple Turns).
+    pub fn is_run_active(&self) -> bool {
+        self.active_run.load(Ordering::Acquire)
+    }
+
     /// Wait until no run is active (for external synchronization)
     pub async fn wait_for_idle(&self) {
-        while self.active_run.load(Ordering::Acquire) {
+        while self.is_run_active() {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
     }
