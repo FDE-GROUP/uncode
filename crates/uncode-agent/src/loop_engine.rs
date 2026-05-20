@@ -12,6 +12,10 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
+use crate::phase_summary::{
+    PhaseSummaryLlmInput, assistant_snippet_for_phase, build_phase_summary_heuristic,
+    format_tool_phase_label, summarize_tool_args, try_llm_phase_summary,
+};
 use crate::session::store::SessionStore;
 use crate::steering::MessageQueue;
 use crate::tools::registry::ToolRegistry;
@@ -24,7 +28,7 @@ use uncode_core::api_types::{
 use uncode_core::error::HarnessError;
 use uncode_core::error::UncodeError;
 use uncode_core::event::AgentEvent;
-use uncode_core::event::{PhaseSummaryData, SessionEndData, ToolCallEndEventData, ToolCallStatus};
+use uncode_core::event::{SessionEndData, ToolCallEndEventData, ToolCallStatus};
 use uncode_core::message::{ContentBlock, Message, Role, UsageInfo};
 use uncode_core::session::{SessionEntry, ThinkingLevelChangeEntry, generate_entry_id};
 use uncode_core::tool::{
@@ -645,6 +649,7 @@ impl AgentLoop {
                 let mut tool_start_times: HashMap<String, std::time::Instant> = HashMap::new();
                 let mut turn_phase_completed: Vec<String> = Vec::new();
                 let mut turn_phase_issues: Vec<String> = Vec::new();
+                let mut turn_assistant_snippet = String::new();
 
                 // ── Stream processing loop ──
                 loop {
@@ -804,6 +809,8 @@ impl AgentLoop {
                             }
 
                             if !current_text.is_empty() {
+                                turn_assistant_snippet =
+                                    assistant_snippet_for_phase(&current_text, 400);
                                 assistant_content.push(ContentBlock::Text {
                                     text: std::mem::take(&mut current_text),
                                 });
@@ -1123,14 +1130,32 @@ impl AgentLoop {
                         usage: turn_usage.clone(),
                     });
                     if !turn_phase_completed.is_empty() || !turn_phase_issues.is_empty() {
-                        self.emit(AgentEvent::PhaseSummary {
-                            data: Box::new(build_phase_summary(
+                        let heuristic = build_phase_summary_heuristic(
+                            turn,
+                            turn_phase_completed.clone(),
+                            turn_phase_issues.clone(),
+                            has_more_tool_calls,
+                            turn_usage.clone(),
+                        );
+                        let summary_data = if self.cancel_token.is_cancelled() {
+                            heuristic
+                        } else {
+                            try_llm_phase_summary(PhaseSummaryLlmInput {
                                 turn,
-                                turn_phase_completed,
-                                turn_phase_issues,
+                                completed_labels: &turn_phase_completed,
+                                issue_labels: &turn_phase_issues,
+                                assistant_snippet: &turn_assistant_snippet,
                                 has_more_tool_calls,
-                                turn_usage,
-                            )),
+                                token_usage: turn_usage,
+                                api_registry: &self.api_registry,
+                                model,
+                                api_keys: self.api_keys.as_ref(),
+                            })
+                            .await
+                            .unwrap_or(heuristic)
+                        };
+                        self.emit(AgentEvent::PhaseSummary {
+                            data: Box::new(summary_data),
                         });
                     }
                 }
@@ -1208,48 +1233,6 @@ impl AgentLoop {
     }
 }
 
-/// Shorten tool arguments for phase summary lines (TUI / Platform).
-fn summarize_tool_args(raw: &str) -> String {
-    let t = raw.trim();
-    if t.is_empty() {
-        return String::new();
-    }
-    if t.chars().count() <= 48 {
-        t.to_string()
-    } else {
-        format!("{}…", t.chars().take(48).collect::<String>())
-    }
-}
-
-fn format_tool_phase_label(tool_name: &str, args_short: &str) -> String {
-    if args_short.is_empty() {
-        tool_name.to_string()
-    } else {
-        format!("{tool_name}({args_short})")
-    }
-}
-
-fn build_phase_summary(
-    turn: u64,
-    completed: Vec<String>,
-    issues: Vec<String>,
-    has_more_tool_calls: bool,
-    token_usage: UsageInfo,
-) -> PhaseSummaryData {
-    let next_steps = if has_more_tool_calls {
-        vec!["Model may continue with more tools in the next turn.".to_string()]
-    } else {
-        Vec::new()
-    };
-    PhaseSummaryData {
-        phase: turn,
-        completed,
-        issues,
-        next_steps,
-        token_usage,
-    }
-}
-
 /// Check if a partial JSON string contains a recognizable identifier field
 /// (path, file_path, or command) with a non-empty quoted value.
 fn has_identifiable_field(partial: &str) -> bool {
@@ -1275,6 +1258,7 @@ fn has_identifiable_field(partial: &str) -> bool {
 #[cfg(test)]
 mod phase_summary_tests {
     use super::*;
+    use crate::phase_summary::build_phase_summary_heuristic;
 
     #[test]
     fn summarize_tool_args_truncates_long_json() {
@@ -1286,7 +1270,7 @@ mod phase_summary_tests {
 
     #[test]
     fn build_phase_summary_includes_next_steps_when_more_tools() {
-        let data = build_phase_summary(
+        let data = build_phase_summary_heuristic(
             2,
             vec!["read(src/main.rs)".into()],
             vec![],
@@ -1300,7 +1284,7 @@ mod phase_summary_tests {
 
     #[test]
     fn build_phase_summary_splits_failures_into_issues() {
-        let data = build_phase_summary(
+        let data = build_phase_summary_heuristic(
             1,
             vec!["grep(foo)".into()],
             vec!["bash(cargo test)".into()],

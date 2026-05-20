@@ -14,6 +14,7 @@ pub mod github;
 pub mod harness;
 pub mod loop_engine;
 pub mod model_switch;
+pub mod phase_summary;
 pub mod session;
 pub mod steering;
 pub mod stop;

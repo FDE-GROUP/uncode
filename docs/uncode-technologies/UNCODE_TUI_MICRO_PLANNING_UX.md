@@ -126,7 +126,11 @@ Agent 层 `MessageQueued` 由 `steer()` 发射；TUI 不再为 steer 重复插�
 ### 5.4 `PhaseSummary`（已实现）
 
 每 Turn 在 `TurnEnd` 之后、若本 Turn 执行过工具，则 `emit PhaseSummary`：  
-`completed` 为成功工具行（`tool(args)`），`issues` 为失败工具，`next_steps` 在内层工具链未结束时提示可能继续。  
+
+- **默认**：调用当前模型生成自然语言 bullet（`uncode-agent/src/phase_summary.rs`），`completed` / `issues` / `next_steps` 为中文短句，而非照抄 `tool(args)`。  
+- **回退**：LLM 失败、JSON 解析失败或 `UNCODE_PHASE_SUMMARY_LLM=0` 时，使用启发式 `tool(args)` 行（P4 行为）。  
+- **上下文**：成功/失败工具标签 + 本轮助手文字摘要（≤400 字）+ 是否可能继续调工具。  
+
 TUI 经 `apply_phase_summary` 渲染为 TodoList / Summary 卡片。
 
 ### 5.5 缺少「本轮决策」分组
