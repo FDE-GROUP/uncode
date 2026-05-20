@@ -278,7 +278,7 @@ pub async fn build_context(...) -> ...
 | 3 | #262 | ✅ 已完成 | 核心 crate `/// **Pi:**`；见 `CONTRIBUTING.md` 约定 |
 | 4 | — | ⏸ 默认不做 | 须单独 Issue |
 
-**Backlog（可选，非 Epic 范围）**：
+**Backlog（可选，非 Epic 范围）**：跟踪 [Issue #265](https://github.com/FDE-GROUP/uncode/issues/265)。
 
 | 项 | Crate | 说明 |
 |----|-------|------|
@@ -286,6 +286,7 @@ pub async fn build_context(...) -> ...
 | rustdoc Pi 映射 | `uncode-extensions` | #264 已起步（`LifecycleHook` 等）；WASM 加载路径按需补 |
 | rustdoc | `uncode-macros` | 低优先级 |
 | glossary | 附录 A–Z | 不强制 Pi 列 |
+| 行为对齐（可选） | 测试 / 文档 | Pi 事件序列 fixture；JSONL 互操作说明 |
 
 ---
 
