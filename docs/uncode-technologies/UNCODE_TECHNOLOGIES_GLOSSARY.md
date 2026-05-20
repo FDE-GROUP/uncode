@@ -8,7 +8,7 @@
 | **文档类型** | 术语索引 / Glossary |
 | **路径** | `docs/uncode-technologies/UNCODE_TECHNOLOGIES_GLOSSARY.md` |
 | **来源** | `UNCODE_OVERVIEW`、`UNCODE_LOOP_ENGINE`、`UNCODE_LLM_LAYER`、`UNCODE_TOOL_SYSTEM`、`UNCODE_SESSION_MODEL`、`UNCODE_EVENT_SYSTEM`、`UNCODE_TUI_ARCHITECTURE`、`TUI_EVENT_FLOW`、`UNCODE_REQUEST_LIFECYCLE` |
-| **最后更新** | 2026-05 |
+| **最后更新** | 2026-05（附录 A–Z 扩全） |
 
 ---
 
@@ -197,7 +197,9 @@
 | ToolCallStart/Progress/End | ToolCallStart/Progress/End | `tool_execution_*` | tool 事件 | 工具执行生命周期事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
 | EventRouter | EventRouter | Harness `on()` | Plugin 路由 | 观察型 handler + 控制型 hook handler。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
 | HookResult | HookResult | hook 返回值 | — | Continue、Block、PatchMessages、PatchToolResult、CancelCompaction。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| event_tag | event_tag | event.type | — | 按 serde tag 名匹配，避免序列化开销。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| agent_event_tag | agent_event_tag | event.type | — | 公开 `agent_event_tag()`，按 serde tag 匹配，避免序列化开销。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| pi_equivalent_event_name | pi_equivalent_event_name | Pi UI 事件名 | — | 文档级 1:1 Pi 事件名查询（§5.1）。 | [UNCODE_PI_MECHANISM_MAP](UNCODE_PI_MECHANISM_MAP.md) |
+| validate_pi_turn_lifecycle_order | validate_pi_turn_lifecycle_order | turn 顺序（测试） | — | fixture 级 Pi 式 turn 内事件顺序校验。 | [UNCODE_PI_MECHANISM_MAP](UNCODE_PI_MECHANISM_MAP.md) |
 | LifecycleHook | LifecycleHook | Harness Hook 子集 | Plugin 生命周期 | extensions 层 8 个生命周期钩子枚举。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
 | Extension trait | Extension trait | Extension | Plugin | WASM/扩展实现 `on_hook`。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
 | HookRegistry | HookRegistry | — | Plugin 注册 | 基于 DashMap 的扩展钩子注册调度。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
@@ -242,36 +244,153 @@
 
 ## 附录：英文 A–Z（速查）
 
+> 覆盖上文 **一–十一** 主题章节中的英文专名与 API 标识（142 条）。机制对照见 [`UNCODE_PI_MECHANISM_MAP.md`](UNCODE_PI_MECHANISM_MAP.md)；行业概念见 [`HARNESS_ENGINEERING_GLOSSARY.md`](../technologies/HARNESS_ENGINEERING_GLOSSARY.md) 附录 A。
+
 | English | 中文 | 参见章节 |
 |---------|------|----------|
+| #[tool] macro | 工具注册宏 | 八 |
+| active_run | 活跃运行锁 | 三 |
+| agent_busy | Agent 忙碌状态 | 十 |
+| agent_event_tag | 事件 serde 标签 | 九 |
 | AgentEvent | 代理事件 | 九 |
 | AgentHarness | 编排器 | 三 |
+| AgentInterrupted | 中断事件 | 四 |
 | AgentLoop | 循环引擎 | 三 |
+| AgentSettled | 安定状态事件 | 四 |
+| anthropic-messages | Anthropic 协议 | 七 |
 | Api trait | LLM API 特质 | 七 |
+| API-first (LLM) | API-first 架构 | 二 |
+| ApiRegistry | API 注册表 | 七 |
+| AppConfig | 应用配置 | 十一 |
 | append_entry | 追加会话条目 | 五 |
+| Branch entry | 分支条目 | 五 |
 | Branch summarization | 分支摘要 | 六 |
+| branch_with_summary | 带摘要分支 | 六 |
+| BranchSummary entry | 分支摘要条目 | 五 |
 | broadcast channel | 广播通道 | 九 |
 | BuiltContext | 构建后上下文 | 三 |
 | CancellationToken | 取消令牌 | 四 |
+| ChatState | 聊天状态 | 十 |
+| CLI one-shot | CLI 单次执行 | 十一 |
+| collect_assistant_message | 流式消息组装 | 七 |
+| compact_if_needed | 按需压缩 | 六 |
 | Compaction | 上下文压缩 | 六 |
+| Compaction entry | 压缩条目 | 五 |
+| CompactionComplete | 压缩完成事件 | 六 |
 | CompatConfig | 兼容配置 | 七 |
 | ContentDelta | 内容增量事件 | 九 |
+| Context | LLM 请求上下文 | 七 |
+| Context Builder | 上下文构建器 | 三 |
+| ContextLoader | 项目上下文加载 | 三 |
+| Custom / CustomMessage | 自定义条目 | 五 |
+| Dependency direction | 依赖方向约束 | 二 |
+| Dual-loop | 双层循环 | 三 |
+| ErrorCategory | 错误分类 | 九 |
+| EventRouter | 事件路由器 | 九 |
 | ExecutionEnv | 执行环境 | 八 |
 | ExecutionMode | 执行模式 | 八 |
+| expand_file_refs | 展开 @file 引用 | 十 |
+| Extension trait | 扩展特质 | 九 |
+| find / ls | find/ls 工具（可选） | 八 |
+| find_cut_point | 压缩截断点 | 六 |
+| flush_queue | 刷新 TUI 队列 | 十 |
 | Follow-up | 后续消息通道 | 四 |
+| fork_session | 分叉会话 | 五 |
+| get_path_to_root | 回溯到根路径 | 五 |
+| google-generative-ai | Gemini 协议 | 七 |
+| hashline | 行哈希编辑 | 八 |
+| HookRegistry | 钩子注册表 | 九 |
 | HookResult | 钩子结果 | 九 |
+| import_jsonl_dir | JSONL 目录导入 | 五 |
+| Incremental summarization | 迭代式压缩摘要 | 六 |
+| InputEditor | 输入编辑器 | 十 |
+| Issue mode | Issue 模式 | 十一 |
 | JSONL interoperability | JSONL 互操作 | 五 |
+| Label entry | 标签条目 | 五 |
+| Leaf / leaf pointer | 叶节点指针 | 五 |
+| LifecycleHook | 生命周期钩子 | 九 |
+| load_entries | 加载会话条目 | 五 |
+| Logical vs physical (session) | 逻辑与物理会话 | 一 |
+| LoopEngine | 循环引擎（文档别名） | 三 |
+| MAX_TURNS | 最大轮次上限 | 三 |
+| Message entry | 消息条目 | 五 |
+| MessageDelivered | 消息投递事件 | 四 |
 | MessageQueue | 三通道消息队列 | 四 |
+| MessageQueued | 消息入队事件 | 四 |
+| MessageStart / MessageEnd | 消息起止事件 | 九 |
+| migrate_v1_to_v2 | 会话 v1→v2 迁移 | 五 |
+| Model | 模型描述 | 七 |
+| ModelChange entry | 模型变更条目 | 五 |
+| ModelRegistry | 模型注册表 | 七 |
+| MSRV 1.85 | 最低 Rust 工具链 | 十一 |
+| NextTurn | 下轮预排队 | 四 |
+| ollama-native | Ollama 原生协议 | 七 |
+| on_submit | 用户提交回调 | 十 |
+| openai-completions | OpenAI 兼容协议 | 七 |
+| parent_id | 父条目 ID | 五 |
+| pending_messages | 待注入消息缓冲 | 四 |
+| PermissionManager | 权限确认 | 十 |
+| Pi alignment | 与 Pi 对齐 | 一 |
+| pi_equivalent_event_name | Pi 事件名映射 | 九 |
+| prepare_next_turn | 准备下一轮回调 | 三 |
+| resolve_path / Sandbox | 沙箱路径解析 | 八 |
+| run_inner | 主循环体 | 三 |
 | SessionEntry | 会话树条目 | 五 |
+| SessionHeader | 会话头 | 五 |
+| SessionInfo entry | 会话信息条目 | 五 |
+| SessionManager | 会话管理器 | 五 |
+| SessionStart / SessionEnd | 会话起止事件 | 九 |
 | SessionStore | 会话存储门面 | 五 |
+| should_compact_session | 压缩触发判断 | 六 |
+| should_stop_after_turn | 轮后停止回调 | 三 |
+| SkillRegistry | 技能注册表 | 十一 |
+| SlashCommands | 斜杠命令 | 十 |
 | Steering | 中途纠偏 | 四 |
+| StopReason | 流结束原因 | 七 |
 | StreamEvent | 流式事件 | 七 |
+| Streaming-first | 流式优先 | 十一 |
+| StreamOptions | 流式请求选项 | 七 |
 | SurrealSessionStore | SurrealDB 存储 | 五 |
+| System entry | 系统事件条目 | 五 |
+| System Prompt Builder | 系统提示构建 | 三 |
+| terminate (tool, AND semantics) | 工具终止（AND） | 四 |
+| ThinkingFormat | 思考块格式 | 七 |
+| ThinkingLevel | 思考级别 | 七 |
+| ThinkingLevelChange entry | 思考级别变更条目 | 五 |
+| Three-layer architecture | 三层架构 | 二 |
+| tokio::select! (biased) | biased 事件多路复用 | 十 |
+| Tool-call three-stage protocol | 工具调用三阶段 | 七 |
+| ToolCallStart / Progress / End | 工具调用生命周期事件 | 九 |
+| ToolContext | 工具执行上下文 | 八 |
+| ToolDefinition | 工具定义 | 八 |
 | ToolExecutor | 工具执行器 | 八 |
+| ToolHooks | 工具前后钩子 | 八 |
+| ToolRegistry | 工具注册表 | 八 |
+| ToolRenderer | 工具 TUI 渲染 | 十 |
+| ToolRendererRegistry | 工具渲染注册表 | 十 |
+| ToolResult | 工具结果 | 八 |
+| transform_context | 发送前变换上下文 | 三 |
+| TUI mode | TUI 模式 | 十一 |
 | TuiEngine | TUI 引擎 | 十 |
 | Turn | 轮次 | 四 |
+| TurnStart / TurnEnd | 轮次起止事件 | 九 |
+| uncode | uncode 产品 | 一 |
+| uncode technologies doc series | 实现层文档系列 | 一 |
+| uncode-agent | Agent 引擎 crate | 二 |
+| uncode-ai | LLM 层 crate | 二 |
+| uncode-cli | CLI 入口 crate | 二 |
+| uncode-core | 核心类型 crate | 二 |
+| uncode-extensions | 扩展 crate | 二 |
+| uncode-macros | 过程宏 crate | 二 |
+| uncode-platform | Platform crate | 二 |
+| uncode-shared | 共享配置 crate | 二 |
+| uncode-tui | TUI crate | 二 |
 | UncodeError | 统一错误类型 | 十一 |
-| Workspace Graph | 工作区图 | 三 |
+| validate_pi_turn_lifecycle_order | Pi 式 turn 顺序校验 | 九 |
+| Virtual scrolling | 虚拟滚动 | 十 |
+| working_dir validation | 工作目录校验 | 五 |
+| Workspace Graph | 工作区结构图 | 三 |
+
 
 ---
 
