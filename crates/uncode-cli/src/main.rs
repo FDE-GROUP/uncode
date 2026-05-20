@@ -425,9 +425,16 @@ async fn main() -> anyhow::Result<()> {
                             message: format!("{e}"),
                             recoverable: false,
                         });
-                        let _ = tx.send(AgentEvent::TurnEnd {
-                            turn: 0,
-                            usage: UsageInfo::default(),
+                        let _ = tx.send(AgentEvent::SessionEnd {
+                            data: Box::new(uncode_core::event::SessionEndData {
+                                session_id: a
+                                    .session_id()
+                                    .map(|s| s.to_string())
+                                    .unwrap_or_default(),
+                                total_turns: 0,
+                                total_tokens: UsageInfo::default(),
+                                exit_reason: format!("error: {e}"),
+                            }),
                         });
                     }
                 });
