@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use crate::model::{Model, builtin_models};
 
-/// 模型注册表——按 id 查找 Model 数据
+/// 模型注册表——按 id 查找 Model 数据。
+///
+/// **Pi:** 对应内置模型表 + 用户覆盖；API-first，不按厂商单独驱动 crate。
 pub struct ModelRegistry {
     models: HashMap<String, Model>,
 }

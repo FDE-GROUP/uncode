@@ -79,6 +79,7 @@ cargo clippy             # lint 检查
 - 跨层通信通过事件流，上层不直接依赖下层实现
 - LLM 驱动层以 API 协议为组织单位，新增供应商通过 Model 声明接入，不新增驱动实现
 - 技术对标 Pi 时，架构哲学优先对齐（API-first），工程细节次之（具体字段/选项）
+- **术语（策略 C）**：L0 用 Harness 综述表；L1 机制与 Pi 对齐（见 `UNCODE_PI_MECHANISM_MAP.md`）；L2 Rust API 自有命名；文档写「同 Pi 的 X」而非批量改 API 名
 
 ## 外部规则引用
 
@@ -96,6 +97,9 @@ cargo clippy             # lint 检查
 - OpenCode 与 Pi 架构/功能/哲学对比（独立技术分析） → `OPENCODE_VS_PI.md`
 - OpenCode 上游实现层文档（`~/EA/opencode` 源码） → `docs/opencode-technologies/OPENCODE_OVERVIEW.md` 系列
 - 术语是否与 Pi/OpenCode 趋同或引用 → `TERMINOLOGY_ALIGNMENT_STRATEGY.md`
+- 术语分层重构（策略 C 落地）→ `TERMINOLOGY_LAYERED_REFACTOR_PLAN.md`
+- uncode 实现层术语表（含 Pi/OpenCode 列）→ `docs/uncode-technologies/UNCODE_TECHNOLOGIES_GLOSSARY.md`
+- uncode ↔ Pi 机制对照（L1）→ `docs/uncode-technologies/UNCODE_PI_MECHANISM_MAP.md`
 - uncode 对 Pi 的 Rust 复刻：哲学/机制/存储/扩展深度评价 → `UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`
 
 后续设计文档编写时，请读取 @docs/VISION.md 确保一致性，参考 opencode 的 AGENTS.md 规范格式。

@@ -1,6 +1,9 @@
 //! 会话存储层 — SurrealDB v3 异步后端
 //!
 //! 所有方法为 async，调用方需在 tokio runtime 内使用。
+//!
+//! **Pi:** 逻辑 API 对齐 Pi Session 的 append / load / `getBranch`；**物理**为 SurrealDB 而非 JSONL 主存。
+//! JSONL 导入/导出见 `import` 模块。
 
 use std::path::PathBuf;
 
@@ -23,7 +26,9 @@ pub enum SessionError {
 
 pub type SessionResult<T> = Result<T, SessionError>;
 
-/// 会话存储 — SurrealDB 后端异步封装
+/// 会话存储 — SurrealDB 后端异步封装。
+///
+/// **Pi:** 对应 Session 持久化门面（Pi 默认 JSONL 文件；uncode 为嵌入式 DB + 可选 JSONL 互操作）。
 pub struct SessionStore {
     inner: SurrealSessionStore,
 }

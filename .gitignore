@@ -20,3 +20,6 @@ backup/
 
 # Local clone for upstream comparison (not part of uncode workspace)
 pi_agent_rust/
+
+# Generated / local doc exports
+docs/**/*.pdf

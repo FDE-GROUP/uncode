@@ -2,6 +2,8 @@
 
 > AgentEvent（18 variants）+ EventRouter + HookResult | 基于源码分析，2026-05 修订
 
+> **L1 对照：** Pi 四层 `AgentEvent`（10 种）与 Harness Hook 的映射见 [`UNCODE_PI_MECHANISM_MAP.md`](UNCODE_PI_MECHANISM_MAP.md) §5；Pi 侧见 [`PI_EVENT_SYSTEM.md`](../pi-technologies/PI_EVENT_SYSTEM.md)。
+
 uncode 的跨层通信通过 `AgentEvent` 枚举实现。上层（TUI / Platform / RPC）通过 `broadcast::Receiver<AgentEvent>` 订阅事件流，实现发布-订阅解耦。
 
 ---
@@ -209,6 +211,20 @@ pub trait Extension: Send + Sync {
 ```
 
 通过 `HookRegistry` 注册和调度（基于 `DashMap`），WASM 加载器为 scaffold 阶段。
+
+---
+
+## 附录：Pi 事件对照速查
+
+完整矩阵（含 Harness Hook、1:1 / 1:N 标注）见 [`UNCODE_PI_MECHANISM_MAP.md`](UNCODE_PI_MECHANISM_MAP.md) §5。  
+uncode 共 **18** 个 `AgentEvent` 变体；Pi UI 层 **10** 种四层事件 + 20+ Harness Hook。
+
+| Pi 四层事件 | uncode 主要变体 |
+|-------------|-----------------|
+| `agent_start` / `agent_end` | `SessionStart` / `SessionEnd`（近似） |
+| `turn_start` / `turn_end` | `TurnStart` / `TurnEnd` |
+| `message_*` | `MessageStart` / `MessageEnd` + `ContentDelta` |
+| `tool_execution_*` | `ToolCallStart` / `ToolCallProgress` / `ToolCallEnd` |
 
 ---
 

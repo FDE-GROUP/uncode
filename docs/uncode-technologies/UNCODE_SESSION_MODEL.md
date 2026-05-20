@@ -1,8 +1,9 @@
 # uncode 会话模型
 
 > SessionEntry 树状模型 + SurrealDB 持久化 + JSONL 互操作 + 压缩摘要  
-> 基于 `crates/uncode-core/src/session.rs` + `crates/uncode-agent/src/session/` 源码分析  
-> **与 Pi 的对齐说明**：[`../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`](../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md)
+> 基于 `crates/uncode-core/src/session.rs` + `crates/uncode-agent/src/session/` 源码分析
+
+> **L1 机制对齐（Pi）**：`SessionEntry` 树、`parent_id`、Compaction / BranchSummary 与 Pi 会话树**逻辑同构**；**物理存储**为 SurrealDB（非 Pi 的 JSONL 主存）。对照见 [`UNCODE_PI_MECHANISM_MAP.md`](UNCODE_PI_MECHANISM_MAP.md)、[`PI_SESSION_MODEL.md`](../pi-technologies/PI_SESSION_MODEL.md)。
 
 uncode 的会话在 **逻辑上** 与 Pi 终端 harness 的「树状事件流」**同构**：`SessionEntry` 构成带 `parent_id` 的树，支持分支、压缩摘要、分支摘要与完整回放。  
 **物理持久化** 默认使用 **嵌入式 SurrealDB v3**（`SurrealSessionStore`，`kv-rocksdb`），由异步 `SessionStore` 封装；**JSONL** 作为 **互操作格式**（旧版迁移导入、导出审计），而非线上主存储。

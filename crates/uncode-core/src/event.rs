@@ -45,7 +45,10 @@ pub struct PhaseSummaryData {
     pub token_usage: UsageInfo,
 }
 
-/// Agent 向 TUI/Platform 广播的事件，驱动对话区更新
+/// Agent 向 TUI/Platform 广播的事件，驱动对话区更新。
+///
+/// **Pi:** 对应终端四层 `AgentEvent`（`agent_*` / `turn_*` / `message_*` / `tool_execution_*`）
+/// 及 Harness 观察事件；完整 1:1 / 1:N 对照见 `docs/uncode-technologies/UNCODE_PI_MECHANISM_MAP.md` §5。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -193,7 +196,9 @@ pub enum ErrorCategory {
     Config,
 }
 
-/// Hook 返回值 — 事件监听器可返回控制指令修改 Agent 行为
+/// Hook 返回值 — 事件监听器可返回控制指令修改 Agent 行为。
+///
+/// **Pi:** 对应 Harness hook 的 typed return（block context / patch tool result / cancel compact 等）。
 #[derive(Debug, Clone, Default)]
 pub enum HookResult {
     /// 无干预，继续正常流程
@@ -227,6 +232,8 @@ pub type AsyncHookHandler =
 /// 双通道设计：
 /// - sync_handlers：观察型，fire-and-forget
 /// - hook_handlers：控制型，异步返回 HookResult
+///
+/// **Pi:** 对应 `AgentHarness.on(event, handler)`；非 Pi 全套 Harness Hook 的超集实现。
 pub struct EventRouter {
     sync_handlers: std::collections::HashMap<String, Vec<SyncEventHandler>>,
     hook_handlers: std::collections::HashMap<String, Vec<AsyncHookHandler>>,

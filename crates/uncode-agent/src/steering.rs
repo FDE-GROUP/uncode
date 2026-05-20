@@ -7,6 +7,9 @@ fn drain_receiver(rx: &mut mpsc::Receiver<Message>) -> Vec<Message> {
     std::iter::from_fn(|| rx.try_recv().ok()).collect()
 }
 
+/// 三通道运行时消息队列（steering / follow_up / next_turn）。
+///
+/// **Pi:** 对应 `steering`、`followUp`、`nextTurn` 三个队列（各 `mpsc`，容量 64）。
 pub struct MessageQueue {
     steering_tx: mpsc::Sender<Message>,
     steering_rx: mpsc::Receiver<Message>,

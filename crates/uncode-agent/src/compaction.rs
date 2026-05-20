@@ -1,3 +1,7 @@
+//! 上下文压缩：token 估算、会话级 Compaction 条目写入。
+//!
+//! **Pi:** 对应 Compaction 流程与 `session_before_compact` Hook；阈值约 context_window × 80%。
+
 use std::collections::HashMap;
 
 use crate::session::store::SessionStore;
@@ -119,6 +123,8 @@ pub(crate) fn extract_text(content: &[ContentBlock]) -> String {
 // ── Session-aware Pi-style compaction ──
 
 /// Check if a session needs compaction based on stored entry token estimate.
+///
+/// **Pi:** 对应压缩触发判断（约 context_window × 80%）。
 pub async fn should_compact_session(
     store: &SessionStore,
     session_id: &str,
@@ -136,6 +142,8 @@ pub async fn should_compact_session(
 /// Compact a session by summarizing old entries and persisting a CompactionEntry.
 ///
 /// Returns `Some(CompactionEntry)` if compaction was performed, `None` if not needed.
+///
+/// **Pi:** 对应 Compaction + 迭代摘要；Hook 点见 `session_before_compact`。
 pub async fn compact_session(
     store: &SessionStore,
     session_id: &str,

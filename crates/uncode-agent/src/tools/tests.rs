@@ -676,6 +676,8 @@ async fn test_bash_description_in_args() {
         }))
         .await
         .unwrap();
-    assert!(result.contains("ok"), "description should not affect execution");
+    assert!(
+        result.contains("ok"),
+        "description should not affect execution"
+    );
 }
-

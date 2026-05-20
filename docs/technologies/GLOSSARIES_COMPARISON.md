@@ -104,20 +104,24 @@ flowchart TB
 
 读 **Pi / OpenCode / uncode** 实现文档时查对应列；读方案与培训时以 **Harness 综述表** 为准。
 
-| 概念（中文） | Harness | Pi | OpenCode | uncode | 备注 |
-|--------------|---------|-----|----------|--------|------|
-| Agent（广义） | Agent | Agent / AgentHarness | Agent 角色配置 | uncode-agent | |
-| Harness | Harness | AgentHarness | Agent 运行时包 | AgentHarness | |
-| 上下文压缩 | Compaction | Compaction | compaction.* 事件 | Compaction | |
-| 编排循环 | ReAct / 编排循环 | 双层 while | SessionProcessor 多轮 | Dual-loop | |
-| Turn | — | Turn | △ step.* | Turn | |
+| 概念（中文） | Harness | Pi | OpenCode | uncode（L1 冻结） | 备注 |
+|--------------|---------|-----|----------|-------------------|------|
+| Agent（广义） | Agent | Agent / AgentHarness | Agent 角色配置 | uncode-agent / `AgentLoop` | |
+| Harness | Harness | AgentHarness | Agent 运行时包 | `AgentHarness` | |
+| 上下文压缩 | Compaction | Compaction | compaction.* 事件 | `Compaction` / `CompactionComplete` | |
+| 编排循环 | ReAct / 编排循环 | 双层 while / `agentLoop` | SessionProcessor 多轮 | Dual-loop / `AgentLoop::run_inner` | |
+| Turn | — | Turn | △ step.* | Turn / `TurnStart`·`TurnEnd` | |
 | Steering | **人改 Harness** | Steering queue | △ 重入 prompt | Steering channel | **同名异义** |
-| 工具 | Tools | AgentTool | ToolRegistry | ToolExecutor | |
-| 沙箱 | Sandbox | ExecutionEnv | Permission + 目录 | resolve_path | |
-| 技能 | Skills | Skills | SkillTool | SkillRegistry | |
-| 钩子 | Hooks | Harness Hook 20+ | Plugin / Bus | EventRouter | |
-| 模型 | Model | Model | Provider + Model | Model | |
+| Follow-up | — | followUp queue | — | follow_up channel | L1 与 Pi 对齐 |
+| 工具 | Tools | AgentTool | ToolRegistry | `ToolExecutor` | |
+| 沙箱 | Sandbox | ExecutionEnv | Permission + 目录 | `resolve_path` | |
+| 技能 | Skills | Skills | SkillTool | `SkillRegistry` | |
+| 钩子 | Hooks | Harness Hook 20+ | Plugin / Bus | `EventRouter` / `ToolHooks` | |
+| 模型 | Model | Model | Provider + Model | `Model` | |
+| 会话树 | — | SessionTreeEntry | MessageV2 | `SessionEntry` | 逻辑同构；uncode 主存 SurrealDB |
 | 子 Agent | P+G+E 角色 | —（哲学回避） | TaskTool 子 session | — | OpenCode 产品内建 |
+
+> uncode L1 机制对照矩阵见 [`UNCODE_PI_MECHANISM_MAP.md`](../uncode-technologies/UNCODE_PI_MECHANISM_MAP.md)（#261）；词条级映射见 [`UNCODE_TECHNOLOGIES_GLOSSARY.md`](../uncode-technologies/UNCODE_TECHNOLOGIES_GLOSSARY.md) Pi/OpenCode 列。
 
 ---
 
