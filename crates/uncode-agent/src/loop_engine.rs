@@ -1160,6 +1160,7 @@ impl AgentLoop {
                                 api_registry: &self.api_registry,
                                 model,
                                 api_keys: self.api_keys.as_ref(),
+                                cancel_token: self.cancel_token.clone(),
                             })
                             .await
                             .unwrap_or(heuristic)

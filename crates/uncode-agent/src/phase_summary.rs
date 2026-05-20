@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use futures::StreamExt;
+use tokio_util::sync::CancellationToken;
 use uncode_ai::{ApiRegistry, StreamEvent};
 use uncode_core::api_types::{Context, StreamOptions};
 use uncode_core::event::PhaseSummaryData;
@@ -45,6 +46,7 @@ pub struct PhaseSummaryLlmInput<'a> {
     pub api_registry: &'a ApiRegistry,
     pub model: &'a Model,
     pub api_keys: &'a HashMap<String, String>,
+    pub cancel_token: CancellationToken,
 }
 
 /// 是否启用 LLM 阶段小结（默认开启；`UNCODE_PHASE_SUMMARY_LLM=0|false` 关闭）。
@@ -85,7 +87,7 @@ pub fn build_phase_summary_heuristic(
 
 /// 尝试 LLM 自然语言小结；解析失败或 API 错误时返回 `None`。
 pub async fn try_llm_phase_summary(input: PhaseSummaryLlmInput<'_>) -> Option<PhaseSummaryData> {
-    if !llm_phase_summary_enabled() {
+    if !llm_phase_summary_enabled() || input.cancel_token.is_cancelled() {
         return None;
     }
 
@@ -126,6 +128,7 @@ pub async fn try_llm_phase_summary(input: PhaseSummaryLlmInput<'_>) -> Option<Ph
         input.model,
         input.api_keys,
         512,
+        &input.cancel_token,
     )
     .await
     {
@@ -198,6 +201,7 @@ async fn llm_one_shot(
     model: &Model,
     api_keys: &HashMap<String, String>,
     max_tokens: u32,
+    cancel_token: &CancellationToken,
 ) -> anyhow::Result<String> {
     let api_key = api_keys.get(&model.provider).cloned();
     let context = Context {
@@ -214,7 +218,16 @@ async fn llm_one_shot(
 
     let mut stream = uncode_ai::stream_simple(model, &context, &options, api_registry).await?;
     let mut out = String::with_capacity(256);
-    while let Some(event) = stream.next().await {
+    loop {
+        let event = tokio::select! {
+            _ = cancel_token.cancelled() => {
+                return Err(anyhow::anyhow!("phase summary cancelled"));
+            }
+            event = stream.next() => event,
+        };
+        let Some(event) = event else {
+            break;
+        };
         if let StreamEvent::TextDelta(text) = event {
             out.push_str(&text);
         }

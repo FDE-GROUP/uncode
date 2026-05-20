@@ -504,6 +504,8 @@ Agent TurnEnd / SessionEnd / AgentInterrupted:
   → chat.push_message(Summary { "[Interrupted] Agent stopped." })
 
 注意: ESC 返回 continue，Ctrl+C 在 agent_busy=false 时 break 主循环
+
+Steer（忙碌时 Enter）必须复用同一 `CancellationToken` 并 `set_cancel_token` 到 `AgentLoop`，否则 ESC 只取消 TUI 侧新 token、Agent 仍在跑。
 ```
 
 ### 7.4 卡片聚焦与展开流程

@@ -397,6 +397,10 @@ async fn main() -> anyhow::Result<()> {
                     let expanded = expand_url_refs(&text).await;
                     match intent {
                         uncode_tui::message_queue::SubmitIntent::Steer => {
+                            {
+                                let mut a = agent.write().await;
+                                a.set_cancel_token(cancel_token);
+                            }
                             let a = agent.read().await;
                             if a.is_run_active() {
                                 a.steer(Message::user(expanded)).await;

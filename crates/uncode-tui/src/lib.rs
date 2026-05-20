@@ -267,6 +267,14 @@ impl TuiEngine {
         token
     }
 
+    /// Reuse the active run's cancel token (steer must not replace the token Agent holds).
+    fn current_or_new_cancel_token(&mut self) -> CancellationToken {
+        if let Some(token) = self.current_cancel.clone() {
+            return token;
+        }
+        self.new_cancel_token()
+    }
+
     pub fn new() -> Self {
         let footer = FooterState::new();
         let mut chat = ChatState::new();
@@ -961,7 +969,7 @@ impl TuiEngine {
                 &text,
                 &std::env::current_dir().unwrap_or_default(),
             );
-            let token = self.new_cancel_token();
+            let token = self.current_or_new_cancel_token();
             on_submit(
                 file_expanded,
                 token,
