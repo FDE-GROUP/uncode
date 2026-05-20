@@ -1,6 +1,6 @@
 # LLM 模型层 Pi 对齐重构方案
 
-> 状态：Phase 1 实施中  
+> 状态：Phase 1 已落地；Phase 2 已落地（本分支）  
 > 关联：[PI_LLM_LAYER.md](../pi-technologies/PI_LLM_LAYER.md)、[MODEL_LAYER_DESIGN.md](../pi-technologies/MODEL_LAYER_DESIGN.md)、[UNCODE_PI_ALIGNMENT_AND_EVALUATION.md](UNCODE_PI_ALIGNMENT_AND_EVALUATION.md) §3.4
 
 ## 1. 动机
@@ -77,8 +77,8 @@ pub async fn stream_simple(
 
 | 阶段 | 内容 | 验收 |
 |------|------|------|
-| **P1**（当前） | `ProviderPreset`、`effective_compat`、`stream_simple`、LoopEngine/Compaction 改用 `stream_simple` | `cargo test -p uncode-ai`；手动 deepseek/glm thinking |
-| **P2** | 内置模型表瘦身；`from_user_config` 按 provider 套 preset；文档同步 `UNCODE_LLM_LAYER.md` | 新增模型仅改 preset + 一行 Model |
+| **P1** | `ProviderPreset`、`effective_compat`、`stream_simple`、LoopEngine/Compaction 改用 `stream_simple` | ✅ |
+| **P2** | 内置模型表瘦身；`from_user_config` / `from_model_config` 套 preset；文档同步 `UNCODE_LLM_LAYER.md` | ✅ |
 | **P3** | Anthropic thinking block SSE；`StreamOptions` 全链路（transport/retry 与 Pi 对齐） | Anthropic reasoning 流可见 |
 | **P4** | Harness hooks：`transform_context` / proxy stream（可选） | 与 Pi 高级特性表一致 |
 
