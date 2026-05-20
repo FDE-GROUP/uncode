@@ -225,12 +225,13 @@ OpenCode 影响力大，但 uncode **已选 Pi 为架构主轴**，故：
 
 ## 9. 建议的后续动作（可选）
 
-按优先级，**非必须一次完成**：
+**可执行方案**已写入 [`TERMINOLOGY_LAYERED_REFACTOR_PLAN.md`](TERMINOLOGY_LAYERED_REFACTOR_PLAN.md)（Phase 1–4、crate 清单、PR 检查项、验收标准）。摘要：
 
-1. 在 `UNCODE_TECHNOLOGIES_GLOSSARY` 正文中为高频词条增加可选列「Pi 对应」「OpenCode 对应」（附录已有部分映射）。  
-2. 在 `uncode-agent` / `uncode-core` 核心公开类型的 `///` 文档中补一行 Pi 映射（机械但利于 IDE 读者）。  
-3. 若对外发布开发者文档：增加一页「与 Pi 的概念对照」（可从 `GLOSSARIES_COMPARISON` §7.1 抽出）。  
-4. **不要**发起「全局改名为 Pi 风格」类重构，除非有明确版本边界与迁移说明。
+1. Phase 1：术语表 Pi/OpenCode 列 + `UNCODE_PI_MECHANISM_MAP` + 系列文档 L1 声明。  
+2. Phase 2：事件 / 会话 / 循环对照矩阵。  
+3. Phase 3：核心 `pub` API 的 `/// **Pi:**` rustdoc（不改符号名）。  
+4. Phase 4（默认不做）：可选 deprecated 别名，须单独立项。  
+5. **不要**发起「全局改名为 Pi 风格」类重构，除非有明确版本边界与迁移说明。
 
 ---
 
@@ -251,6 +252,7 @@ OpenCode 影响力大，但 uncode **已选 Pi 为架构主轴**，故：
 | [OPENCODE_VS_PI.md](OPENCODE_VS_PI.md) | OpenCode 与 Pi 对比 |
 | [UNCODE_TECHNOLOGIES_GLOSSARY.md](../uncode-technologies/UNCODE_TECHNOLOGIES_GLOSSARY.md) | uncode 术语表 |
 | [AGENTS.md](../../AGENTS.md) | 协作与文档约定 |
+| [TERMINOLOGY_LAYERED_REFACTOR_PLAN.md](TERMINOLOGY_LAYERED_REFACTOR_PLAN.md) | 策略 C 分阶段重构方案 |
 
 ---
 

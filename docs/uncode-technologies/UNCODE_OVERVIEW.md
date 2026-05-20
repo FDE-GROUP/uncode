@@ -13,6 +13,21 @@ uncode 是一个 **以 Pi（earendil-works/pi）为架构与哲学参照** 的 R
 
 ---
 
+## 术语分层（L0–L3）
+
+uncode 采用 [术语对齐策略](../technologies/TERMINOLOGY_ALIGNMENT_STRATEGY.md) **策略 C：分层混合**（落地任务见 Epic [#255](https://github.com/FDE-GROUP/uncode/issues/255)）：
+
+| 层级 | 读什么 | 写什么 |
+|------|--------|--------|
+| **L0 行业概念** | [Harness 综述术语表](../technologies/HARNESS_ENGINEERING_GLOSSARY.md) | 对外说明用「Harness / Agent / Tool / Compaction」等通用词 |
+| **L1 机制概念** | [Pi 术语表](../pi-technologies/PI_TECHNOLOGIES_GLOSSARY.md)、[UNCODE_PI_MECHANISM_MAP](UNCODE_PI_MECHANISM_MAP.md) | 文档写「同 Pi 的 Turn / Steering / 双环」；**概念对齐，非 API 兼容** |
+| **L2 实现 API** | [UNCODE_TECHNOLOGIES_GLOSSARY](UNCODE_TECHNOLOGIES_GLOSSARY.md)（含 Pi/OpenCode 映射列） | Rust 自有命名（如 `build_context`），不改名为 Pi 的 TS 专名 |
+| **L3 产品交付** | 本系列 TUI/Platform 文档 | `~/.uncode/`、SurrealDB、ratatui；OpenCode 仅作能力对照（见 [OPENCODE_VS_PI](../technologies/OPENCODE_VS_PI.md)） |
+
+**注意**：Pi/uncode 的 **Steering** 指运行时中途纠偏队列；[Harness 综述表](../technologies/HARNESS_ENGINEERING_GLOSSARY.md) 中的 Steering 多指「人改 Harness」治理闭环，勿混用。
+
+---
+
 ## 三层架构
 
 ```
@@ -47,6 +62,8 @@ uncode 是一个 **以 Pi（earendil-works/pi）为架构与哲学参照** 的 R
 |------|------|
 | [术语索引](UNCODE_TECHNOLOGIES_GLOSSARY.md) | **中英对照术语表**（读本系列前的速查） |
 | [术语对齐策略](../technologies/TERMINOLOGY_ALIGNMENT_STRATEGY.md) | 与 Pi/OpenCode 趋同还是引用的策略论述 |
+| [术语分层重构方案](../technologies/TERMINOLOGY_LAYERED_REFACTOR_PLAN.md) | 策略 C（L0–L3）分阶段落地与验收 |
+| [Pi 机制对照一页纸](UNCODE_PI_MECHANISM_MAP.md) | L1：双环、三队列、会话树、事件与 Pi 映射 |
 | [架构总览](UNCODE_OVERVIEW.md) | 三层架构、依赖图、设计决策（本文档） |
 | [循环引擎](UNCODE_LOOP_ENGINE.md) | 双层循环、Turn 生命周期、Steering、压缩 |
 | [LLM 抽象层](UNCODE_LLM_LAYER.md) | Api trait、4 种协议、StreamEvent、模型注册 |

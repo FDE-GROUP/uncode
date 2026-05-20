@@ -1,7 +1,7 @@
 # uncode 技术文档术语索引
 
 > 从 [`docs/uncode-technologies/`](.) 系列文档抽取的 **中英对照术语表**，便于阅读 uncode 实现层文档及与 Pi 对齐说明时统一用语。  
-> Pi 侧对应术语见 [`../pi-technologies/PI_TECHNOLOGIES_GLOSSARY.md`](../pi-technologies/PI_TECHNOLOGIES_GLOSSARY.md)；对齐评价见 [`../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`](../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md)。
+> Pi 侧对应术语见 [`../pi-technologies/PI_TECHNOLOGIES_GLOSSARY.md`](../pi-technologies/PI_TECHNOLOGIES_GLOSSARY.md)；机制一页纸见 [`UNCODE_PI_MECHANISM_MAP.md`](UNCODE_PI_MECHANISM_MAP.md)；对齐评价见 [`../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`](../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md)。
 
 | 项 | 说明 |
 |----|------|
@@ -14,20 +14,20 @@
 
 ## 使用说明
 
-- 每条格式：**中文** | **English** — 简要定义；**参见** 指向本目录内文档。
-- 保留 crate/API 专名（如 `SessionStore`、`AgentEvent`）；英文栏给出可读译名。
-- 查法：按 **主题分类** 浏览；英文速查见文末 **附录（英文 A–Z）**。
+- 每条格式：**中文** | **English** | **Pi 对应** | **OpenCode 对应** | 定义 | **参见**（L1 机制词条须填 Pi 列；无直接概念填 `—`）。
+- 保留 crate/API 专名（如 `SessionStore`、`AgentEvent`）；**L2** 不改 API 名为 Pi 专名。
+- 查法：按 **主题分类** 浏览；机制总表见 [`UNCODE_PI_MECHANISM_MAP.md`](UNCODE_PI_MECHANISM_MAP.md)；英文速查见 **附录（英文 A–Z）**。
 
 ---
 
 ## 一、文档与对象
 
-| 中文 | English | 定义 | 参见 |
-|------|---------|------|------|
-| uncode | uncode | Rust 原生 Agent Coding 系统（CLI + TUI + Platform 规划）。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| uncode 技术文档系列 | uncode technologies doc series | `docs/uncode-technologies/` 下与源码同步的实现层说明。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| 与 Pi 对齐 | Pi alignment | 逻辑会话树、双层循环、事件驱动 Harness 等心智对齐 Pi；物理存储等有工程取舍。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md)、[UNCODE_PI_ALIGNMENT](../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md) |
-| 逻辑 vs 物理（会话） | Logical vs physical (session) | **逻辑**：`SessionEntry` 树与 Pi 同构；**物理**：默认 SurrealDB，JSONL 仅互操作。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| 中文 | English | Pi 对应 | OpenCode 对应 | 定义 | 参见 |
+|------|---------|---------|----------------|------|------|
+| uncode | uncode | — | OpenCode（独立产品） | Rust 原生 Agent Coding 系统（CLI + TUI + Platform 规划）。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| uncode 技术文档系列 | uncode technologies doc series | — | opencode-technologies | `docs/uncode-technologies/` 下与源码同步的实现层说明。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| 与 Pi 对齐 | Pi alignment | Pi alignment | — | 逻辑会话树、双层循环、事件驱动 Harness 等心智对齐 Pi；物理存储等有工程取舍。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md)、[UNCODE_PI_ALIGNMENT](../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md) |
+| 逻辑 vs 物理（会话） | Logical vs physical (session) | JSONL 主存 vs 树逻辑 | MessageV2 / 存储后端 | **逻辑**：`SessionEntry` 树与 Pi 同构；**物理**：默认 SurrealDB，JSONL 仅互操作。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
 
 ---
 
@@ -52,92 +52,92 @@
 
 ## 三、循环引擎与编排
 
-| 中文 | English | 定义 | 参见 |
-|------|---------|------|------|
-| AgentLoop / LoopEngine | AgentLoop | 双层循环核心（`loop_engine.rs`）；文档亦称 LoopEngine。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| AgentHarness | AgentHarness | 高层编排：steer、会话、压缩等（与 AgentLoop 协作）。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md)、[UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| 双层循环 | Dual-loop | 外层 `'outer` + follow-up；内层 `while` + tool-call + steering。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| run_inner | run_inner | Agent 主循环体：会话初始化 → 持久化 → build_context → LLM → 工具。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| MAX_TURNS | MAX_TURNS | 单轮 run 最大 turn 数（如 50），防无限工具循环。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| active_run（原子锁） | active_run (AtomicBool) | 防止并发 `run()`；忙时返回 `HarnessError::Busy`。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| should_stop_after_turn | should_stop_after_turn | 外部回调：turn 后是否终止循环。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| prepare_next_turn | prepare_next_turn | 外部回调：turn 间切换 context/model。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| transform_context | transform_context | 发送 LLM 前最后修改 `Vec<Message>`。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| Context Builder | context_builder | `build_context()`：SessionStore → LLM 消息 + 有效 model/thinking。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md)、[UNCODE_REQUEST_LIFECYCLE](UNCODE_REQUEST_LIFECYCLE.md) |
-| BuiltContext | BuiltContext | `messages`、`effective_model`、`effective_thinking_level`。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| System Prompt Builder | SystemPromptBuilder | 组装 Agent 系统提示（含工作目录、技能等）。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| Workspace Graph | WorkspaceGraph | 项目文件结构图，注入 system 消息 bundle。 | [UNCODE_REQUEST_LIFECYCLE](UNCODE_REQUEST_LIFECYCLE.md) |
-| ContextLoader | ContextLoader | 加载 AGENTS.md / UNCODE.md 等项目上下文。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| 中文 | English | Pi 对应 | OpenCode 对应 | 定义 | 参见 |
+|------|---------|---------|----------------|------|------|
+| AgentLoop / LoopEngine | AgentLoop | `agentLoop` | SessionProcessor（工具循环） | 双层循环核心（`loop_engine.rs`）；文档亦称 LoopEngine。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| AgentHarness | AgentHarness | `AgentHarness` | — | 高层编排：steer、会话、压缩等（与 AgentLoop 协作）。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md)、[UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| 双层循环 | Dual-loop | dual `while` | tool loop in processor | 外层 `'outer` + follow-up；内层 `while` + tool-call + steering。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| run_inner | run_inner | `agentLoop` 主体 | — | Agent 主循环体：会话初始化 → 持久化 → build_context → LLM → 工具。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| MAX_TURNS | MAX_TURNS | turn 上限 | — | 单轮 run 最大 turn 数（如 50），防无限工具循环。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| active_run（原子锁） | active_run (AtomicBool) | — | — | 防止并发 `run()`；忙时返回 `HarnessError::Busy`。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| should_stop_after_turn | should_stop_after_turn | — | — | 外部回调：turn 后是否终止循环。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| prepare_next_turn | prepare_next_turn | — | — | 外部回调：turn 间切换 context/model。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| transform_context | transform_context | `transformContext` | — | 发送 LLM 前最后修改 `Vec<Message>`。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| Context Builder | context_builder | `buildContext()` | MessageV2 组装 | `build_context()`：SessionStore → LLM 消息 + 有效 model/thinking。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md)、[UNCODE_REQUEST_LIFECYCLE](UNCODE_REQUEST_LIFECYCLE.md) |
+| BuiltContext | BuiltContext | `SessionContext` | — | `messages`、`effective_model`、`effective_thinking_level`。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| System Prompt Builder | SystemPromptBuilder | system prompt bundle | system 注入 | 组装 Agent 系统提示（含工作目录、技能等）。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| Workspace Graph | WorkspaceGraph | — | — | 项目文件结构图，注入 system 消息 bundle。 | [UNCODE_REQUEST_LIFECYCLE](UNCODE_REQUEST_LIFECYCLE.md) |
+| ContextLoader | ContextLoader | — | rules / AGENTS | 加载 AGENTS.md / UNCODE.md 等项目上下文。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
 
 ---
 
 ## 四、Turn、Steering 与终止
 
-| 中文 | English | 定义 | 参见 |
-|------|---------|------|------|
-| Turn | Turn | 一轮 LLM 调用 + 工具执行；`TurnStart` / `TurnEnd`。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| MessageQueue（三通道） | MessageQueue (three channels) | steering / follow_up / next_turn 三个 `mpsc`（容量 64）。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| Steering | Steering | 每 turn 结束后 drain，中途纠偏。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| Follow-up | Follow-up | 内层退出后 drain，会话延续。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| NextTurn | NextTurn | 首次进内层前 drain，预排队。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| pending_messages | pending_messages | 待注入内层循环的消息缓冲。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| MessageQueued / MessageDelivered | MessageQueued / MessageDelivered | 用户消息入队/投递事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| CancellationToken | CancellationToken | tokio 取消令牌；流式与工具执行多检查点。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md)、[UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
-| terminate（工具，AND 语义） | terminate (tool, AND semantics) | 批次内**全部**工具 `terminate=true` 才结束内层循环。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
-| AgentInterrupted | AgentInterrupted | 用户/系统取消导致的中断事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
-| AgentSettled | AgentSettled | 会话结束后的安定状态事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| 中文 | English | Pi 对应 | OpenCode 对应 | 定义 | 参见 |
+|------|---------|---------|----------------|------|------|
+| Turn | Turn | Turn | step / 轮次 | 一轮 LLM 调用 + 工具执行；`TurnStart` / `TurnEnd`。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| MessageQueue（三通道） | MessageQueue (three channels) | steering / followUp / nextTurn | — | steering / follow_up / next_turn 三个 `mpsc`（容量 64）。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| Steering | Steering | `steering` | — | 每 turn 结束后 drain，中途纠偏。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| Follow-up | Follow-up | `followUp` | — | 内层退出后 drain，会话延续。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| NextTurn | NextTurn | `nextTurn` | — | 首次进内层前 drain，预排队。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| pending_messages | pending_messages | pending queue | — | 待注入内层循环的消息缓冲。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| MessageQueued / MessageDelivered | MessageQueued / MessageDelivered | queue visibility | — | 用户消息入队/投递事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| CancellationToken | CancellationToken | abort signal | abort | tokio 取消令牌；流式与工具执行多检查点。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md)、[UNCODE_TOOL_SYSTEM](UNCODE_TOOL_SYSTEM.md) |
+| terminate（工具，AND 语义） | terminate (tool, AND semantics) | terminate AND | — | 批次内**全部**工具 `terminate=true` 才结束内层循环。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| AgentInterrupted | AgentInterrupted | interrupt | — | 用户/系统取消导致的中断事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
+| AgentSettled | AgentSettled | idle / settled | — | 会话结束后的安定状态事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md) |
 
 ---
 
 ## 五、会话：SessionEntry 与存储
 
-| 中文 | English | 定义 | 参见 |
-|------|---------|------|------|
-| SessionEntry | SessionEntry | 树状会话条目枚举（serde 外部 tag）。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| SessionHeader | SessionHeader | 会话元数据：id、version、model、working_dir、title 等。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| parent_id | parent_id | 条目父指针，构成树。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| Leaf / leaf 指针 | Leaf / leaf pointer | `LeafEntry` / `get_leaf_id` / `set_leaf` 树导航。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| SessionStore | SessionStore | 异步会话存储门面，封装 `SurrealSessionStore`。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| SurrealSessionStore | SurrealSessionStore | 嵌入式 SurrealDB v3（`kv-rocksdb`）实现。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| append_entry | append_entry | 原子追加一条 `SessionEntry`。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| load_entries | load_entries | 加载会话完整条目序列。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| get_path_to_root | get_path_to_root | 沿 `parent_id` 回溯到根。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| fork_session | fork_session | 创建子会话并建立 Branch 语义。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| SessionManager | SessionManager | 对 `SessionStore` 的高级包装 API。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| JSONL 互操作 | JSONL interoperability | **非主存**：`import_jsonl_dir` 导入；TUI `/export jsonl` 导出。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| migrate_v1_to_v2 | migrate_v1_to_v2 | 为 v1 条目补 `parent_id` 链（`migration.rs`）。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| working_dir 校验 | working_dir validation | 读 header 时缺失 CWD 打 warn（非 Pi 式引导）。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| 中文 | English | Pi 对应 | OpenCode 对应 | 定义 | 参见 |
+|------|---------|---------|----------------|------|------|
+| SessionEntry | SessionEntry | `SessionTreeEntry` | MessageV2 / Part | 树状会话条目枚举（serde 外部 tag）。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| SessionHeader | SessionHeader | session metadata | Session 元数据 | 会话元数据：id、version、model、working_dir、title 等。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| parent_id | parent_id | `parentId` | parent 链 | 条目父指针，构成树。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| Leaf / leaf 指针 | Leaf / leaf pointer | `leafId` / `leaf` | — | `LeafEntry` / `get_leaf_id` / `set_leaf` 树导航。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| SessionStore | SessionStore | Session 存储 API | Storage 抽象 | 异步会话存储门面，封装 `SurrealSessionStore`。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| SurrealSessionStore | SurrealSessionStore | JSONL 文件主存 | DB 后端 | 嵌入式 SurrealDB v3（`kv-rocksdb`）实现。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| append_entry | append_entry | append entry | 写入消息 | 原子追加一条 `SessionEntry`。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| load_entries | load_entries | load session | 读取会话 | 加载会话完整条目序列。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| get_path_to_root | get_path_to_root | `getBranch()` | — | 沿 `parent_id` 回溯到根。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| fork_session | fork_session | `fork()` | — | 创建子会话并建立 Branch 语义。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| SessionManager | SessionManager | — | — | 对 `SessionStore` 的高级包装 API。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| JSONL 互操作 | JSONL interoperability | JSONL 主存 | — | **非主存**：`import_jsonl_dir` 导入；TUI `/export jsonl` 导出。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| migrate_v1_to_v2 | migrate_v1_to_v2 | — | — | 为 v1 条目补 `parent_id` 链（`migration.rs`）。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| working_dir 校验 | working_dir validation | working dir | project cwd | 读 header 时缺失 CWD 打 warn（非 Pi 式引导）。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
 
 ### SessionEntry 类型
 
-| 中文 | English | 定义 | 参见 |
-|------|---------|------|------|
-| Message 条目 | Message entry | 用户/助手/工具消息。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| System 条目 | System entry | Start/End/PhaseSummary/Error/Compaction 等系统事件。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| Branch 条目 | Branch entry | 分支：parent_session_id、reason。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| Compaction 条目 | Compaction entry | 压缩摘要与 first_kept_entry_id 等。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| BranchSummary 条目 | BranchSummary entry | 被遗弃分支的结构化摘要。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| ModelChange 条目 | ModelChange entry | 模型切换记录。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| ThinkingLevelChange 条目 | ThinkingLevelChange entry | 推理级别变更记录。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| Label 条目 | Label entry | 为条目打标签。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| Custom / CustomMessage | Custom / CustomMessage | 扩展数据或消息。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| SessionInfo 条目 | SessionInfo entry | 会话元信息。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| 中文 | English | Pi 对应 | OpenCode 对应 | 定义 | 参见 |
+|------|---------|---------|----------------|------|------|
+| Message 条目 | Message entry | `message` | MessageV2 | 用户/助手/工具消息。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| System 条目 | System entry | system events | — | Start/End/PhaseSummary/Error/Compaction 等系统事件。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| Branch 条目 | Branch entry | 隐含分支 | — | 分支：parent_session_id、reason。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| Compaction 条目 | Compaction entry | `compaction` | compaction | 压缩摘要与 first_kept_entry_id 等。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| BranchSummary 条目 | BranchSummary entry | `branch_summary` | — | 被遗弃分支的结构化摘要。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| ModelChange 条目 | ModelChange entry | `model_change` | — | 模型切换记录。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| ThinkingLevelChange 条目 | ThinkingLevelChange entry | `thinking_level_change` | — | 推理级别变更记录。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| Label 条目 | Label entry | `label` | — | 为条目打标签。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| Custom / CustomMessage | Custom / CustomMessage | `custom` / `custom_message` | — | 扩展数据或消息。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| SessionInfo 条目 | SessionInfo entry | `session_info` | — | 会话元信息。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
 
 ---
 
 ## 六、压缩与分支摘要
 
-| 中文 | English | 定义 | 参见 |
-|------|---------|------|------|
-| Compaction | Compaction | 上下文过长时 LLM 摘要历史并写 `CompactionEntry`。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| should_compact_session | should_compact_session | 估算 token > context_window × 80% 触发。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| find_cut_point | find_cut_point | 从末尾向前找 turn 边界截断点。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| CompactionComplete | CompactionComplete | 压缩完成 Agent 事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md)、[UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| 迭代摘要 | Incremental summarization | 存在旧 Compaction 时用 UPDATE 提示词。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| 文件操作追踪（压缩） | File ops in compaction | files_read / files_modified 写入摘要。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| branch_with_summary | branch_with_summary | 分支时生成并持久化 BranchSummary。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
-| Branch Summarization | Branch summarization | agent 模块分支摘要流程。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
-| compact_if_needed | compact_if_needed | 每 turn 检查并可能压缩（loop_engine）。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
+| 中文 | English | Pi 对应 | OpenCode 对应 | 定义 | 参见 |
+|------|---------|---------|----------------|------|------|
+| Compaction | Compaction | Compaction | compaction / prune | 上下文过长时 LLM 摘要历史并写 `CompactionEntry`。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| should_compact_session | should_compact_session | compact 触发 | — | 估算 token > context_window × 80% 触发。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| find_cut_point | find_cut_point | cut point | — | 从末尾向前找 turn 边界截断点。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| CompactionComplete | CompactionComplete | compaction event | — | 压缩完成 Agent 事件。 | [UNCODE_EVENT_SYSTEM](UNCODE_EVENT_SYSTEM.md)、[UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| 迭代摘要 | Incremental summarization | incremental summary | — | 存在旧 Compaction 时用 UPDATE 提示词。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| 文件操作追踪（压缩） | File ops in compaction | file ops in summary | — | files_read / files_modified 写入摘要。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| branch_with_summary | branch_with_summary | `moveTo` + summary | — | 分支时生成并持久化 BranchSummary。 | [UNCODE_SESSION_MODEL](UNCODE_SESSION_MODEL.md) |
+| Branch Summarization | Branch summarization | branch summary | — | agent 模块分支摘要流程。 | [UNCODE_OVERVIEW](UNCODE_OVERVIEW.md) |
+| compact_if_needed | compact_if_needed | compact hook | — | 每 turn 检查并可能压缩（loop_engine）。 | [UNCODE_LOOP_ENGINE](UNCODE_LOOP_ENGINE.md) |
 
 ---
 
@@ -281,7 +281,9 @@
 |------|------|
 | [../technologies/GLOSSARIES_COMPARISON.md](../technologies/GLOSSARIES_COMPARISON.md) | 四份术语索引对照说明 |
 | [UNCODE_OVERVIEW.md](UNCODE_OVERVIEW.md) | 系列索引与 Crate 一览 |
+| [UNCODE_PI_MECHANISM_MAP.md](UNCODE_PI_MECHANISM_MAP.md) | L1 机制对照一页纸 |
 | [../pi-technologies/PI_TECHNOLOGIES_GLOSSARY.md](../pi-technologies/PI_TECHNOLOGIES_GLOSSARY.md) | Pi 侧术语索引 |
+| [../opencode-technologies/OPENCODE_TECHNOLOGIES_GLOSSARY.md](../opencode-technologies/OPENCODE_TECHNOLOGIES_GLOSSARY.md) | OpenCode 侧术语索引 |
 | [../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md](../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md) | uncode 对 Pi 对齐与评价 |
 | [../technologies/HARNESS_ENGINEERING_GLOSSARY.md](../technologies/HARNESS_ENGINEERING_GLOSSARY.md) | 广义 Harness 工程术语 |
 

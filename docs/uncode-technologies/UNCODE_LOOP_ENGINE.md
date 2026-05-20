@@ -2,6 +2,8 @@
 
 > AgentLoop 双层循环架构 | 基于 `crates/uncode-agent/src/loop_engine.rs` 源码分析
 
+> **L1 机制对齐（Pi）**：双层 `while` 循环、`Turn`、`Steering` / `Follow-up` / `NextTurn` 三通道、`terminate` 批次 AND 语义与 Pi `agentLoop` 同构。对照表见 [`UNCODE_PI_MECHANISM_MAP.md`](UNCODE_PI_MECHANISM_MAP.md)；Pi 侧见 [`PI_LOOP_ENGINE.md`](../pi-technologies/PI_LOOP_ENGINE.md)。
+
 uncode 的核心是一个双标签循环（outer `'outer` + inner `while`），与 Pi 的双层 while 同构。外层处理 followUp（会话延续），内层处理 ReAct 闭环（工具调用链）。
 
 与 Pi 的整体对齐与取舍见 [`../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`](../technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md)。
