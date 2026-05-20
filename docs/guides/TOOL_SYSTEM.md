@@ -15,6 +15,8 @@ uncode-tui    →  权限拦截 + 渲染展示
 
 Agent 不直接访问文件系统或执行命令，而是通过 LLM 生成工具调用 → 注册表分发 → 工具执行 → 结果返回 → LLM 继续推理的循环完成所有操作。
 
+**说明：** 「哪个工具由谁选」、active 工具集与 API 数据流的完整阐述见 [`../uncode-technologies/UNCODE_TOOL_SELECTION_BY_LLM.md`](../uncode-technologies/UNCODE_TOOL_SELECTION_BY_LLM.md)。
+
 ---
 
 ## 工具执行生命周期
@@ -34,6 +36,8 @@ Agent 不直接访问文件系统或执行命令，而是通过 LLM 生成工具
 ---
 
 ## 内置工具
+
+**设计原理与逐个说明**（参数、限制、与 Pi 分工）：[`../uncode-technologies/UNCODE_BUILTIN_TOOLS.md`](../uncode-technologies/UNCODE_BUILTIN_TOOLS.md)。
 
 **默认 CLI 注册**（`uncode-cli/src/main.rs`）：`read`、`write`、`edit`、`grep`、`bash`、`web_fetch`；若配置 Tavily API Key 则额外注册 `web_search`。  
 **另有实现**（可按 demo/测试或自定义入口注册）：`find`、`ls` 以及 `diff`、`hashline`、`local_env` 等，见 `uncode-agent/src/tools/`。

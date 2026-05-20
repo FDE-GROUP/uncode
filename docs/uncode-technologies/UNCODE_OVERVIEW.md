@@ -70,6 +70,8 @@ uncode 采用 [术语对齐策略](../technologies/TERMINOLOGY_ALIGNMENT_STRATEG
 | [TUI 微观规划 UX](UNCODE_TUI_MICRO_PLANNING_UX.md) | 多 Turn 链呈现、`agent_busy` 与 Turn 事件消费评价 |
 | [LLM 抽象层](UNCODE_LLM_LAYER.md) | Api trait、4 种协议、StreamEvent、模型注册 |
 | [工具系统](UNCODE_TOOL_SYSTEM.md) | ToolExecutor、工具实现、沙箱、Hooks、执行模式 |
+| [内置工具详解](UNCODE_BUILTIN_TOOLS.md) | 九个工具的用途、参数、设计原理与组合工作流 |
+| [LLM 如何选择工具](UNCODE_TOOL_SELECTION_BY_LLM.md) | function calling、active 工具集、责任边界与数据流 |
 | [会话模型](UNCODE_SESSION_MODEL.md) | SessionEntry、SurrealDB 持久化、JSONL 互操作、树状分支、压缩摘要 |
 | [事件系统](UNCODE_EVENT_SYSTEM.md) | AgentEvent 18 variants、EventRouter、HookResult、事件序列 |
 | [TUI 架构](UNCODE_TUI_ARCHITECTURE.md) | 虚拟滚动、增量渲染、syntect 高亮、Markdown 渲染、工具渲染器 |

@@ -41,13 +41,15 @@ fn parse_args(
         .as_str()
         .ok_or_else(|| uncode_core::error::UncodeError::Tool("command required".into()))?
         .to_string();
-    let workdir = arguments["workdir"].as_str().unwrap_or(".").to_string();
+    let workdir_raw = arguments["workdir"].as_str().unwrap_or(".");
+    let workdir =
+        super::resolve_path(workdir_raw).map_err(uncode_core::error::UncodeError::Tool)?;
     let timeout_secs = arguments["timeout"]
         .as_u64()
         .unwrap_or(DEFAULT_TIMEOUT_SECS);
     Ok(ParsedArgs {
         command,
-        workdir,
+        workdir: workdir.to_string_lossy().into_owned(),
         timeout_secs,
     })
 }
@@ -101,33 +103,56 @@ impl ToolExecutor for BashTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "bash".into(),
-            description: "在沙箱中执行 bash 命令，支持描述、工作目录、超时和实时取消".into(),
+            description: "在项目目录内执行 bash 命令（workdir 受路径沙箱约束），支持超时和实时取消"
+                .into(),
             parameters: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "command": {"type": "string", "description": "要执行的 bash 命令"},
                     "description": {"type": "string", "description": "5-10 个词的清晰简洁描述"},
                     "workdir": {"type": "string", "description": "工作目录（相对于项目根目录）"},
-                    "timeout": {"type": "integer", "description": "超时秒数，默认 120"}
+                    "timeout": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 86400,
+                        "description": "超时秒数，默认 120"
+                    }
                 },
                 "required": ["command"]
             }),
             label: Some("Shell Command".into()),
-            execution_mode: ExecutionMode::default(),
+            // Pi: bash runs sequential so a batch with bash does not parallelize shell side effects.
+            execution_mode: ExecutionMode::Sequential,
         }
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
         let args = parse_args(&arguments)?;
         let mut cmd = build_command(&args.command, &args.workdir);
+        cmd.stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
 
-        let output = tokio::time::timeout(
+        let child = cmd
+            .spawn()
+            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("bash: {e}")))?;
+        let pgid = child.id().unwrap_or(0);
+
+        let output = match tokio::time::timeout(
             std::time::Duration::from_secs(args.timeout_secs),
-            cmd.output(),
+            child.wait_with_output(),
         )
         .await
-        .map_err(|_| uncode_core::error::UncodeError::Tool("timeout".into()))?
-        .map_err(|e| uncode_core::error::UncodeError::Tool(format!("bash: {e}")))?;
+        {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => {
+                return Err(uncode_core::error::UncodeError::Tool(format!("bash: {e}")));
+            }
+            Err(_) => {
+                kill_process_group(pgid);
+                return Err(uncode_core::error::UncodeError::Tool("timeout".into()));
+            }
+        };
 
         let stdout = clean_binary_output(&output.stdout);
         let stderr = clean_binary_output(&output.stderr);
@@ -176,11 +201,21 @@ impl ToolExecutor for BashTool {
                 line = stdout_lines.next_line() => {
                     match line {
                         Ok(Some(l)) => {
+                            if output.len() >= self.max_output_bytes {
+                                kill_process_group(pgid);
+                                output.push_str("\n[truncated]");
+                                break;
+                            }
                             if let Some(ref cb) = ctx.on_progress {
                                 cb(ToolProgress::LogLine(l.clone()));
                             }
                             output.push_str(&l);
                             output.push('\n');
+                            if output.len() >= self.max_output_bytes {
+                                kill_process_group(pgid);
+                                output.push_str("\n[truncated]");
+                                break;
+                            }
                         }
                         Ok(None) => break,
                         Err(_) => break,
@@ -230,7 +265,8 @@ impl ToolExecutor for BashTool {
         let exit_ok = status.success();
         let exit_code = status.code();
         if !exit_ok {
-            output.push_str(&format!("exit code: {}\n", exit_code.unwrap_or(-1)));
+            use std::fmt::Write;
+            let _ = writeln!(output, "exit code: {}", exit_code.unwrap_or(-1));
         }
 
         let output = truncate_output(&output, self.max_output_bytes);

@@ -268,13 +268,13 @@ pub fn clamp_thinking_level(requested: ThinkingLevel, model: &Model) -> Thinking
     }
 
     let req_idx = LEVELS.iter().position(|&l| l == requested).unwrap_or(0);
-    for &level in LEVELS.iter().rev().skip(LEVELS.len() - req_idx) {
-        if model.thinking_level_map.contains_key(&level) {
-            return level;
-        }
-    }
-
-    ThinkingLevel::Off
+    LEVELS
+        .iter()
+        .rev()
+        .skip(LEVELS.len().saturating_sub(req_idx))
+        .copied()
+        .find(|level| model.thinking_level_map.contains_key(level))
+        .unwrap_or(ThinkingLevel::Off)
 }
 
 fn default_context_window() -> u32 {
@@ -285,8 +285,8 @@ fn default_max_output_tokens() -> u32 {
     8192
 }
 
-/// 内置模型声明：仅写模型级 delta；`api`/`base_url`/Compat/thinking 映射由 [`crate::provider_preset::apply_provider_preset`] 合并。
-fn builtin_model(
+/// 内置模型表的一行：字段分组，避免 `builtin_model` 参数过长（Clippy / 可读性）。
+struct BuiltinModelSpec {
     id: &'static str,
     name: &'static str,
     provider: &'static str,
@@ -296,17 +296,20 @@ fn builtin_model(
     pricing: ModelPricingPerMillion,
     input_modalities: Vec<InputModality>,
     headers: HashMap<String, String>,
-) -> Model {
+}
+
+/// 内置模型声明：仅写模型级 delta；`api`/`base_url`/Compat/thinking 映射由 [`crate::provider_preset::apply_provider_preset`] 合并。
+fn builtin_model(spec: BuiltinModelSpec) -> Model {
     Model {
-        id: id.into(),
-        name: name.into(),
-        provider: provider.into(),
-        context_window,
-        max_output_tokens,
-        reasoning,
-        pricing,
-        input_modalities,
-        headers,
+        id: spec.id.into(),
+        name: spec.name.into(),
+        provider: spec.provider.into(),
+        context_window: spec.context_window,
+        max_output_tokens: spec.max_output_tokens,
+        reasoning: spec.reasoning,
+        pricing: spec.pricing,
+        input_modalities: spec.input_modalities,
+        headers: spec.headers,
         ..Model::default()
     }
 }
@@ -314,190 +317,190 @@ fn builtin_model(
 /// 内置模型数据集（注册时经 `ModelRegistry::from_builtin` 套用厂商 preset）。
 pub fn builtin_models() -> Vec<Model> {
     vec![
-        builtin_model(
-            "deepseek-chat",
-            "DeepSeek V3",
-            "deepseek",
-            128_000,
-            8192,
-            true,
-            ModelPricingPerMillion {
+        builtin_model(BuiltinModelSpec {
+            id: "deepseek-chat",
+            name: "DeepSeek V3",
+            provider: "deepseek",
+            context_window: 128_000,
+            max_output_tokens: 8192,
+            reasoning: true,
+            pricing: ModelPricingPerMillion {
                 input: 0.27,
                 output: 1.10,
                 cache_read: 0.07,
                 cache_write: 0.27,
             },
-            vec![InputModality::Text],
-            HashMap::new(),
-        ),
-        builtin_model(
-            "deepseek-v4-pro",
-            "DeepSeek V4 Pro",
-            "deepseek",
-            128_000,
-            8192,
-            true,
-            ModelPricingPerMillion {
+            input_modalities: vec![InputModality::Text],
+            headers: HashMap::new(),
+        }),
+        builtin_model(BuiltinModelSpec {
+            id: "deepseek-v4-pro",
+            name: "DeepSeek V4 Pro",
+            provider: "deepseek",
+            context_window: 128_000,
+            max_output_tokens: 8192,
+            reasoning: true,
+            pricing: ModelPricingPerMillion {
                 input: 0.27,
                 output: 1.10,
                 cache_read: 0.07,
                 cache_write: 0.27,
             },
-            vec![InputModality::Text],
-            HashMap::new(),
-        ),
-        builtin_model(
-            "deepseek-reasoner",
-            "DeepSeek R1",
-            "deepseek",
-            128_000,
-            8192,
-            true,
-            ModelPricingPerMillion {
+            input_modalities: vec![InputModality::Text],
+            headers: HashMap::new(),
+        }),
+        builtin_model(BuiltinModelSpec {
+            id: "deepseek-reasoner",
+            name: "DeepSeek R1",
+            provider: "deepseek",
+            context_window: 128_000,
+            max_output_tokens: 8192,
+            reasoning: true,
+            pricing: ModelPricingPerMillion {
                 input: 0.55,
                 output: 2.19,
                 cache_read: 0.14,
                 cache_write: 0.55,
             },
-            vec![InputModality::Text],
-            HashMap::new(),
-        ),
-        builtin_model(
-            "glm-4-flash",
-            "GLM-4 Flash",
-            "glm",
-            128_000,
-            4096,
-            false,
-            ModelPricingPerMillion::default(),
-            vec![InputModality::Text],
-            HashMap::new(),
-        ),
-        builtin_model(
-            "glm-5.1",
-            "GLM 5.1",
-            "glm",
-            200_000,
-            8192,
-            true,
-            ModelPricingPerMillion::default(),
-            vec![InputModality::Text, InputModality::Image],
-            HashMap::new(),
-        ),
-        builtin_model(
-            "gpt-4o-mini",
-            "GPT-4o Mini",
-            "openai",
-            128_000,
-            16_384,
-            false,
-            ModelPricingPerMillion {
+            input_modalities: vec![InputModality::Text],
+            headers: HashMap::new(),
+        }),
+        builtin_model(BuiltinModelSpec {
+            id: "glm-4-flash",
+            name: "GLM-4 Flash",
+            provider: "glm",
+            context_window: 128_000,
+            max_output_tokens: 4096,
+            reasoning: false,
+            pricing: ModelPricingPerMillion::default(),
+            input_modalities: vec![InputModality::Text],
+            headers: HashMap::new(),
+        }),
+        builtin_model(BuiltinModelSpec {
+            id: "glm-5.1",
+            name: "GLM 5.1",
+            provider: "glm",
+            context_window: 200_000,
+            max_output_tokens: 8192,
+            reasoning: true,
+            pricing: ModelPricingPerMillion::default(),
+            input_modalities: vec![InputModality::Text, InputModality::Image],
+            headers: HashMap::new(),
+        }),
+        builtin_model(BuiltinModelSpec {
+            id: "gpt-4o-mini",
+            name: "GPT-4o Mini",
+            provider: "openai",
+            context_window: 128_000,
+            max_output_tokens: 16_384,
+            reasoning: false,
+            pricing: ModelPricingPerMillion {
                 input: 0.15,
                 output: 0.60,
                 ..Default::default()
             },
-            vec![InputModality::Text, InputModality::Image],
-            HashMap::new(),
-        ),
-        builtin_model(
-            "gpt-4o",
-            "GPT-4o",
-            "openai",
-            128_000,
-            16_384,
-            false,
-            ModelPricingPerMillion {
+            input_modalities: vec![InputModality::Text, InputModality::Image],
+            headers: HashMap::new(),
+        }),
+        builtin_model(BuiltinModelSpec {
+            id: "gpt-4o",
+            name: "GPT-4o",
+            provider: "openai",
+            context_window: 128_000,
+            max_output_tokens: 16_384,
+            reasoning: false,
+            pricing: ModelPricingPerMillion {
                 input: 2.50,
                 output: 10.00,
                 ..Default::default()
             },
-            vec![InputModality::Text, InputModality::Image],
-            HashMap::new(),
-        ),
-        builtin_model(
-            "claude-sonnet-4-6",
-            "Claude Sonnet 4.6",
-            "anthropic",
-            200_000,
-            16_384,
-            true,
-            ModelPricingPerMillion {
+            input_modalities: vec![InputModality::Text, InputModality::Image],
+            headers: HashMap::new(),
+        }),
+        builtin_model(BuiltinModelSpec {
+            id: "claude-sonnet-4-6",
+            name: "Claude Sonnet 4.6",
+            provider: "anthropic",
+            context_window: 200_000,
+            max_output_tokens: 16_384,
+            reasoning: true,
+            pricing: ModelPricingPerMillion {
                 input: 3.00,
                 output: 15.00,
                 cache_read: 0.30,
                 cache_write: 3.75,
             },
-            vec![InputModality::Text, InputModality::Image],
-            HashMap::new(),
-        ),
-        builtin_model(
-            "gemini-2.0-flash",
-            "Gemini 2.0 Flash",
-            "gemini",
-            1_048_576,
-            8192,
-            false,
-            ModelPricingPerMillion::default(),
-            vec![InputModality::Text, InputModality::Image],
-            HashMap::new(),
-        ),
-        builtin_model(
-            "openrouter-auto",
-            "OpenRouter Auto",
-            "openrouter",
-            128_000,
-            8192,
-            false,
-            ModelPricingPerMillion::default(),
-            vec![InputModality::Text],
-            HashMap::from([(
+            input_modalities: vec![InputModality::Text, InputModality::Image],
+            headers: HashMap::new(),
+        }),
+        builtin_model(BuiltinModelSpec {
+            id: "gemini-2.0-flash",
+            name: "Gemini 2.0 Flash",
+            provider: "gemini",
+            context_window: 1_048_576,
+            max_output_tokens: 8192,
+            reasoning: false,
+            pricing: ModelPricingPerMillion::default(),
+            input_modalities: vec![InputModality::Text, InputModality::Image],
+            headers: HashMap::new(),
+        }),
+        builtin_model(BuiltinModelSpec {
+            id: "openrouter-auto",
+            name: "OpenRouter Auto",
+            provider: "openrouter",
+            context_window: 128_000,
+            max_output_tokens: 8192,
+            reasoning: false,
+            pricing: ModelPricingPerMillion::default(),
+            input_modalities: vec![InputModality::Text],
+            headers: HashMap::from([(
                 "HTTP-Referer".into(),
                 "https://github.com/FDE-GROUP/uncode".into(),
             )]),
-        ),
-        builtin_model(
-            "llama-3.3-70b-versatile",
-            "Llama 3.3 70B (Groq)",
-            "groq",
-            128_000,
-            8192,
-            false,
-            ModelPricingPerMillion::default(),
-            vec![InputModality::Text],
-            HashMap::new(),
-        ),
-        builtin_model(
-            "llama-3.3-70b",
-            "Llama 3.3 70B (Cerebras)",
-            "cerebras",
-            128_000,
-            8192,
-            false,
-            ModelPricingPerMillion::default(),
-            vec![InputModality::Text],
-            HashMap::new(),
-        ),
-        builtin_model(
-            "mistral-large-latest",
-            "Mistral Large",
-            "mistral",
-            128_000,
-            8192,
-            false,
-            ModelPricingPerMillion::default(),
-            vec![InputModality::Text],
-            HashMap::new(),
-        ),
-        builtin_model(
-            "grok-3-mini",
-            "Grok 3 Mini",
-            "xai",
-            128_000,
-            8192,
-            true,
-            ModelPricingPerMillion::default(),
-            vec![InputModality::Text],
-            HashMap::new(),
-        ),
+        }),
+        builtin_model(BuiltinModelSpec {
+            id: "llama-3.3-70b-versatile",
+            name: "Llama 3.3 70B (Groq)",
+            provider: "groq",
+            context_window: 128_000,
+            max_output_tokens: 8192,
+            reasoning: false,
+            pricing: ModelPricingPerMillion::default(),
+            input_modalities: vec![InputModality::Text],
+            headers: HashMap::new(),
+        }),
+        builtin_model(BuiltinModelSpec {
+            id: "llama-3.3-70b",
+            name: "Llama 3.3 70B (Cerebras)",
+            provider: "cerebras",
+            context_window: 128_000,
+            max_output_tokens: 8192,
+            reasoning: false,
+            pricing: ModelPricingPerMillion::default(),
+            input_modalities: vec![InputModality::Text],
+            headers: HashMap::new(),
+        }),
+        builtin_model(BuiltinModelSpec {
+            id: "mistral-large-latest",
+            name: "Mistral Large",
+            provider: "mistral",
+            context_window: 128_000,
+            max_output_tokens: 8192,
+            reasoning: false,
+            pricing: ModelPricingPerMillion::default(),
+            input_modalities: vec![InputModality::Text],
+            headers: HashMap::new(),
+        }),
+        builtin_model(BuiltinModelSpec {
+            id: "grok-3-mini",
+            name: "Grok 3 Mini",
+            provider: "xai",
+            context_window: 128_000,
+            max_output_tokens: 8192,
+            reasoning: true,
+            pricing: ModelPricingPerMillion::default(),
+            input_modalities: vec![InputModality::Text],
+            headers: HashMap::new(),
+        }),
     ]
 }

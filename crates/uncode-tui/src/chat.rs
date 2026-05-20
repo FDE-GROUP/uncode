@@ -763,6 +763,9 @@ impl ChatState {
                 }
                 self.invalidate(idx);
             }
+            AgentEvent::ToolCallAwaitingApproval { tool_id, .. } => {
+                self.set_tool_await_confirm(&tool_id);
+            }
             AgentEvent::ToolCallEnd { data } => {
                 let tool_id = &data.tool_id;
                 let arguments = &data.arguments;
@@ -1013,6 +1016,33 @@ impl ChatState {
         });
     }
 
+    /// Mark a running tool card as waiting for user confirmation.
+    fn set_tool_await_confirm(&mut self, tool_id: &str) {
+        let Some((idx, entry_idx)) = self.locate_tool(tool_id) else {
+            return;
+        };
+        match entry_idx {
+            Some(ei) => {
+                if let ChatMessage::ToolTurnGroup { entries, .. } = &mut self.messages[idx]
+                    && let Some(entry) = entries.get_mut(ei)
+                {
+                    match entry {
+                        ToolGroupEntry::ToolCall { status, .. } => {
+                            *status = ToolCallRenderStatus::AwaitConfirm;
+                        }
+                        ToolGroupEntry::BashExecution { .. } => {}
+                    }
+                }
+            }
+            None => {
+                if let ChatMessage::ToolCall { status, .. } = &mut self.messages[idx] {
+                    *status = ToolCallRenderStatus::AwaitConfirm;
+                }
+            }
+        }
+        self.invalidate(idx);
+    }
+
     /// `(message_index, entry_index)` — `entry_index` is `None` for legacy standalone tool cards.
     fn locate_tool(&self, tool_id: &str) -> Option<(usize, Option<usize>)> {
         for (mi, msg) in self.messages.iter().enumerate().rev() {
@@ -1182,13 +1212,7 @@ fn message_text_len(msg: &ChatMessage) -> usize {
 
 fn truncate_preview(s: &str, max_chars: usize) -> String {
     let t = s.trim().replace('\n', " ");
-    if t.chars().count() <= max_chars {
-        t
-    } else {
-        let mut out: String = t.chars().take(max_chars).collect();
-        out.push('…');
-        out
-    }
+    uncode_core::text::truncate_chars(&t, max_chars)
 }
 
 /// 从助手 Markdown 提取 `- [ ]` / `- [x]` 待办（必要时展示 Todos）

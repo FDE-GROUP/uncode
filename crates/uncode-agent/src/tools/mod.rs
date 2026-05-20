@@ -4,6 +4,7 @@
 //! All tools implement the `ToolExecutor` trait and are registered via `ToolRegistry`.
 
 pub mod bash;
+pub mod builtin;
 pub mod diff;
 pub mod edit;
 pub mod find;
@@ -13,11 +14,17 @@ pub mod local_env;
 pub mod ls;
 pub mod read;
 pub mod registry;
+pub mod url_safety;
 pub mod web_fetch;
 pub mod web_search;
 pub mod write;
 
 pub use bash::BashTool;
+pub use builtin::{
+    PI_BUILTIN_TOOL_NAMES, ToolLaunchConfig, apply_pi_default_active_tools, configure_active_tools,
+    is_pi_builtin_tool, new_pi_coding_registry, register_coding_tools,
+    register_coding_tools_and_configure,
+};
 pub use diff::unified_diff;
 pub use diff::{DiffLine, DiffStats, Hunk, Patch};
 pub use edit::EditTool;
@@ -59,6 +66,29 @@ fn normalize_path(full: &std::path::Path) -> Result<std::path::PathBuf, String> 
         result.push(name);
     }
     Ok(result)
+}
+
+/// Write `content` to `path` atomically using a unique temp file in the target directory.
+pub(crate) fn atomic_write(path: &std::path::Path, content: &str) -> Result<(), String> {
+    use std::io::Write;
+
+    let display = path.display().to_string();
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+
+    std::fs::create_dir_all(parent).map_err(|e| format!("write {display}: {e}"))?;
+
+    let mut tmp = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|e| format!("write {display}: temp file: {e}"))?;
+    tmp.write_all(content.as_bytes())
+        .map_err(|e| format!("write {display}: {e}"))?;
+    tmp.flush().map_err(|e| format!("write {display}: {e}"))?;
+
+    tmp.persist(path)
+        .map_err(|e| format!("write {display}: {}", e.error))?;
+    Ok(())
 }
 
 /// Resolve and validate a path argument.

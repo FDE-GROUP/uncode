@@ -12,13 +12,17 @@ pub mod context;
 pub mod context_builder;
 pub mod github;
 pub mod harness;
+pub mod hooks;
 pub mod loop_engine;
 pub mod model_switch;
+pub mod permission_gate;
+pub mod phase_summary;
 pub mod session;
 pub mod steering;
 pub mod stop;
 pub mod system_prompt;
 pub mod token;
+pub mod tool_permission;
 pub mod tools;
 pub mod workspace_graph;
 
@@ -29,7 +33,9 @@ pub use compaction::{
 pub use context::ContextLoader;
 pub use github::GitHubClient;
 pub use harness::{AgentHarness, AgentHarnessPhase, HarnessResources};
+pub use hooks::{ChainedToolHooks, PermissionToolHooks};
 pub use loop_engine::AgentLoop;
+pub use permission_gate::{Approval, PermissionGate};
 pub use stop::{StopCondition, StopReason, step_count_is, text_contains};
 pub use system_prompt::SystemPromptBuilder;
 pub use token::{estimate_cost, estimate_message_tokens, estimate_tokens};

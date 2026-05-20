@@ -72,11 +72,15 @@ Pi 在 `pi-coding-agent` README 的 **Philosophy** 中明确若干「核心不�
 
 | 维度 | Pi | uncode |
 |------|-----|--------|
-| 默认集 | read / write / edit / bash（+ grep/find/ls 等） | read / write / edit / grep / bash + web_fetch / web_search（条件）等 |
+| 默认集 | read / write / edit / bash（+ grep/find/ls 等） | 同左 + `find`/`ls` 已注册；`web_fetch`/`web_search` 注册但默认不对 LLM 暴露 |
+| 运行时工具集 | `setActiveTools` | `set_active_tools` + CLI `--tools` / `--no-tools` / `--no-builtin-tools` |
+| 执行流水线 | prepare → validate → before → execute | `prepare_and_validate` + hooks，顺序已对齐 |
+| 参数校验 | TypeBox 全量 | 轻量 JSON Schema + prepare 后 **coerce**（string→int/bool 等子集） |
+| 并行批次 | prepare/before 串行，execute 并发 | 同左（`loop_engine` 两阶段批次） |
+| 批次串行降级 | 任一批次含 `sequential` 则整批串行 | 同左；`bash` 为 `Sequential` |
 | 扩展方式 | Skill markdown、Extension、Pi Package | `#[tool]` 宏注册 + Skill 目录 + 未来 WASM |
-| 并行 | 每工具 `executionMode` + 全局 `toolExecution` | `ToolDefinition::execution_mode` + 批量执行策略 |
 
-**评价**：工具**面向上略宽**（网络类工具默认进栈），偏向「开箱能干活」；与 Pi「四件套最小」相比略激进，但仍可通过配置/注册表收紧，**不属于对 Pi 哲学的背叛**，而是产品默认值选择。
+**评价**：默认工具面略宽（网络类可选），但可通过 `set_active_tools` 收紧到 Pi 七件套；**机制层（流水线、批次串行、active 集）对齐度高**。TypeBox 级校验仍为工程差距，非哲学分歧。实现细节见 [`UNCODE_TOOL_SYSTEM.md`](../uncode-technologies/UNCODE_TOOL_SYSTEM.md)。
 
 ---
 

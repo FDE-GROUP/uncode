@@ -14,4 +14,7 @@ pub use manager::SessionManager;
 pub use store::{SessionError, SessionResult, SessionStore};
 
 #[cfg(test)]
+mod export_integration;
+
+#[cfg(test)]
 mod tests;

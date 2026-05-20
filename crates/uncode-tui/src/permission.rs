@@ -1,39 +1,6 @@
-/// 权限管理 — 危险操作确认
+/// 权限管理 — 危险操作确认（UI 状态；阻塞逻辑在 `uncode_agent::PermissionGate`）。
 ///
-/// 工具分类：
-///  - 自动允许：read, grep, find, ls
-///  - 需确认：edit, write
-///  - bash：命令白名单检查
-///
-/// 只读 bash 命令白名单
-const SAFE_COMMANDS: &[&str] = &[
-    "ls",
-    "cat",
-    "head",
-    "tail",
-    "find",
-    "grep",
-    "git status",
-    "git log",
-    "git diff",
-    "git branch",
-    "cargo check",
-    "cargo test",
-    "cargo build",
-    "cargo clippy",
-    "cargo fmt",
-    "pwd",
-    "echo",
-    "which",
-    "env",
-    "wc",
-    "sort",
-    "uniq",
-    "diff",
-    "tree",
-    "rg",
-    "fd",
-];
+/// 策略见 `uncode_agent::tool_permission`。
 
 /// 确认选项
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,19 +40,12 @@ impl PermissionManager {
 
     /// 判断工具调用是否需要确认
     pub fn needs_confirmation(&self, tool_name: &str, arguments: &str) -> bool {
-        match tool_name {
-            // 只读工具：自动允许
-            "read" | "grep" | "find" | "ls" => !self.auto_allow_readonly,
-            // 写入工具：需确认
-            "edit" | "write" => true,
-            // Bash：检查命令白名单
-            "bash" => {
-                let command = extract_command(arguments);
-                !self.auto_allow_bash_safe || !is_safe_command(&command)
-            }
-            // 其他工具：默认需确认
-            _ => true,
-        }
+        uncode_agent::tool_permission::needs_confirmation(
+            tool_name,
+            arguments,
+            self.auto_allow_readonly,
+            self.auto_allow_bash_safe,
+        )
     }
 
     /// 创建待确认项
@@ -138,27 +98,6 @@ impl Default for PermissionManager {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// 从 bash 工具参数中提取命令
-fn extract_command(args: &str) -> String {
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(args)
-        && let Some(cmd) = val.get("command").and_then(|v| v.as_str())
-    {
-        return cmd.to_string();
-    }
-    args.to_string()
-}
-
-/// 检查命令是否在白名单中
-fn is_safe_command(command: &str) -> bool {
-    let cmd = command.trim();
-    // Check if command starts with any safe prefix
-    SAFE_COMMANDS.iter().any(|safe| {
-        cmd == *safe
-            || cmd.starts_with(&format!("{safe} "))
-            || cmd.starts_with(&format!("{safe}\t"))
-    })
 }
 
 #[cfg(test)]

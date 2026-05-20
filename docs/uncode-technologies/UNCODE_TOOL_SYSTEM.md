@@ -4,6 +4,8 @@
 
 uncode 的工具系统由三层构成：`uncode-core` 定义 trait，`uncode-macros` 编译时生成 Schema，`uncode-agent` 提供具体实现。所有文件操作工具共享沙箱路径校验和统一的执行生命周期。
 
+**谁决定调用哪个工具？** 由 LLM 在 function calling 下自行选择；框架只限制 active 工具集并负责执行。详见 [`UNCODE_TOOL_SELECTION_BY_LLM.md`](UNCODE_TOOL_SELECTION_BY_LLM.md)。
+
 ---
 
 ## ToolExecutor trait
@@ -74,17 +76,19 @@ fn read(path: String, offset: Option<usize>) -> String { ... }
 
 ## 已实现的工具（9 个）
 
+逐个工具的用途、参数、设计原理与限制见 **[`UNCODE_BUILTIN_TOOLS.md`](UNCODE_BUILTIN_TOOLS.md)**。
+
 | 工具 | 实现文件 | 功能 | CLI 注册 | 执行模式 |
 |------|----------|------|----------|----------|
 | `ReadTool` | `read.rs` | 读取文件（支持 offset/limit 行范围、hashline） | 是 | Parallel |
 | `WriteTool` | `write.rs` | 创建或完整覆写文件 | 是 | Parallel |
 | `EditTool` | `edit.rs` | hashline 精确编辑 + legacy 字符串替换 | 是 | Parallel |
 | `GrepTool` | `grep.rs` | 正则搜索文件内容 | 是 | Parallel |
-| `BashTool` | `bash.rs` | 执行 bash 命令（支持 timeout、workdir、实时取消） | 是 | Parallel |
-| `WebFetch` | `web_fetch.rs` | HTTP 抓取网页内容 | 是 | Parallel |
-| `WebSearch` | `web_search.rs` | Tavily 网络搜索（需 API key） | 条件 | Parallel |
-| `FindTool` | `find.rs` | 按名称/模式查找文件（已实现，未注册） | 否 | Parallel |
-| `LsTool` | `ls.rs` | 列出目录内容（已实现，未注册） | 否 | Parallel |
+| `BashTool` | `bash.rs` | 执行 bash 命令（支持 timeout、workdir、实时取消） | 是 | **Sequential**（对齐 Pi：含 bash 的批次整批串行） |
+| `WebFetch` | `web_fetch.rs` | HTTP 抓取网页内容 | 是（默认不 active） | Parallel |
+| `WebSearch` | `web_search.rs` | Tavily 网络搜索（需 API key） | 条件（默认不 active） | Parallel |
+| `FindTool` | `find.rs` | 按名称/模式查找文件 | 是 | Parallel |
+| `LsTool` | `ls.rs` | 列出目录内容 | 是 | Parallel |
 
 辅助模块（非工具）：`diff.rs`（统一 diff 生成）、`hashline.rs`（行哈希锚点）、`local_env.rs`（文件系统/Shell 抽象）。
 
@@ -119,18 +123,45 @@ fn resolve_path(raw: &str) -> Result<PathBuf, UncodeError> {
 单个工具的执行流程（`execute_single_tool`）：
 
 ```
-① before_tool_call hook
+① prepare_arguments（对齐 Pi prepareArguments）
+    ↓ 工具特定的参数转换 / 垫片
+② ToolRegistry::validate（对齐 Pi validateToolArguments，校验 prepared 结果）
+    ↓ Err → `Validation failed for tool "…"`（含参数 JSON）
+③ before_tool_call hook（入参为 prepared args）
     ↓ 返回 Some(reason) → 拒绝执行，返回错误
     ↓ 返回 None → 继续
-② prepare_arguments(args)
-    ↓ 工具特定的参数转换
-③ 创建子 CancellationToken + ToolContext
-④ execute_with_context(prepared_args, ctx)
+④ 创建子 CancellationToken + ToolContext
+⑤ execute_with_context(prepared_args, ctx)
     ↓ tokio::select! { 执行 / 取消 }
-⑤ after_tool_call hook
+⑥ after_tool_call hook
     ↓ 可修改 content、details、is_error、terminate
-⑥ 返回 ToolResult
+⑦ 返回 ToolResult
 ```
+
+### CLI 与 Pi 默认工具集
+
+| 选项 | 行为 |
+|------|------|
+| （默认） | Pi 七件套 active；`web_*` 已注册但不对 LLM 暴露 |
+| `--tools a,b` | 白名单 active |
+| `--no-tools` | 空 active |
+| `--no-builtin-tools` | 仅扩展工具 active（通常 `web_fetch` / `web_search`） |
+
+入口：`register_coding_tools_and_configure`（`builtin.rs`）；测试/ harness 可用 `new_pi_coding_registry`。
+
+### JSON Schema 校验（轻量）
+
+`ToolRegistry::validate` / `prepare_and_validate` 在 Pi 流水线中校验 **prepare 之后** 的参数，当前支持：
+
+- `required`、`properties` 类型
+- `enum`（如 `edit.edits[].op`）
+- `array` 的 `items` 嵌套
+- `object` 嵌套 `required` / `properties`
+- `additionalProperties: false`
+
+已支持：`minimum`/`maximum`（整数）、`minLength`（字符串）；`prepare_and_validate` 前对 schema 做轻量 **coerce**（字符串 → integer/number/boolean，对齐 Pi `Value.Convert` 子集）。
+
+未覆盖：TypeBox 级 `allOf`/`oneOf` 等（与 Pi TypeBox 仍有差距）。
 
 ### ToolContext
 
@@ -154,21 +185,16 @@ let has_sequential = executions.iter().any(|(_, name, _)| {
 });
 
 if has_sequential {
-    // 串行：for 循环逐个执行
-    for (id, name, args) in executions {
-        let result = self.execute_single_tool(...).await;
-        all_outcomes.push(result);
-    }
+    // 整批串行：每个工具完整走 execute_single_tool
+    for (id, name, args) in executions { ... }
 } else {
-    // 并行：futures::future::join_all
-    let futures: Vec<_> = executions.into_iter().map(|(id, name, args)| {
-        self.execute_single_tool(...)
-    }).collect();
-    all_outcomes = join_all(futures).await;
+    // Pi 并行批次：prepare → validate → before 按顺序逐个；execute 再 join_all 并发
+    for item in &executions { prepare_tool_call(...).await; }
+    join_all(ready.map(|item| execute_prepared_tool_shared(...)));
 }
 ```
 
-**策略**：批次中任一工具声明 `Sequential` → 整批串行执行。否则全部并行。当前 7 个内置工具均使用默认 `Parallel` 模式。
+**策略**：批次中任一工具为 `Sequential`（含 `bash`）→ 整批串行。否则 prepare/before 串行、execute 并行（对齐 Pi `parallel` 模式）。
 
 ---
 

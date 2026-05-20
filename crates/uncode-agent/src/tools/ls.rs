@@ -13,6 +13,7 @@ impl ToolExecutor for LsTool {
             description: "列出目录内容".into(),
             parameters: serde_json::json!({
                 "type": "object",
+                "additionalProperties": false,
                 "properties": {
                     "path": {"type": "string", "description": "目录路径（相对或绝对），默认当前目录"}
                 }

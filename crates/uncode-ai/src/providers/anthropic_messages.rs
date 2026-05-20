@@ -115,7 +115,7 @@ fn build_anthropic_body(model: &Model, context: &Context, options: &StreamOption
         "stream": true,
     });
 
-    if let Some(ref system) = context.system_prompt {
+    if let Some(system) = context.system_prompt.as_deref() {
         body["system"] = serde_json::json!(system);
     }
     if let Some(t) = options.temperature {
@@ -340,23 +340,25 @@ impl Api for AnthropicMessagesApi {
         crate::notify_http_response(options, response.status().as_u16(), response.headers());
 
         if !response.status().is_success() {
-            let status = response.status();
-            return Err(match status.as_u16() {
-                401 | 403 => UncodeError::LlmAuth(response.text().await.unwrap_or_default()),
-                429 => UncodeError::LlmRateLimit(response.text().await.unwrap_or_default()),
-                _ => UncodeError::Llm(format!(
-                    "HTTP {status}: {}",
-                    response.text().await.unwrap_or_default()
-                )),
-            });
+            return Err(crate::providers::http_error_from_response(response).await);
         }
 
         let state = AnthropicToolState::new();
+        let line_buf = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::providers::NdjsonLineBuffer::new(),
+        ));
         let stream = response
             .bytes_stream()
-            .scan(state, |state, chunk| {
+            .scan((state, line_buf), |(state, line_buf), chunk| {
                 let events: Vec<StreamEvent> = match chunk {
-                    Ok(c) => parse_anthropic_chunk(&String::from_utf8_lossy(&c), state),
+                    Ok(c) => {
+                        let mut all_events = Vec::new();
+                        let mut guard = line_buf.lock().expect("anthropic sse buffer lock");
+                        for line in guard.push_chunk_and_drain_lines(&c) {
+                            all_events.extend(parse_anthropic_chunk(&line, state));
+                        }
+                        all_events
+                    }
                     Err(e) => vec![StreamEvent::Error {
                         reason: crate::api_types::StopReason::Error,
                         message: e.to_string(),
@@ -478,5 +480,44 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","
             &events[1],
             StreamEvent::ThinkingDelta(s) if s == "b"
         ));
+    }
+
+    #[test]
+    fn stream_buffer_text_delta_via_ndjson_lines() {
+        let mut state = AnthropicToolState::new();
+        let mut buf = crate::providers::NdjsonLineBuffer::new();
+        let chunk = br#"data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Hi"}}
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}}
+"#;
+        let mut events = Vec::new();
+        for line in buf.push_chunk_and_drain_lines(chunk) {
+            events.extend(parse_anthropic_chunk(&line, &mut state));
+        }
+        assert!(matches!(&events[0], StreamEvent::TextDelta(s) if s == "Hi"));
+        assert!(matches!(&events[1], StreamEvent::TextDelta(s) if s == "!"));
+    }
+
+    #[test]
+    fn stream_buffer_tool_use_lifecycle() {
+        let mut state = AnthropicToolState::new();
+        let mut buf = crate::providers::NdjsonLineBuffer::new();
+        let chunk = br#"data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tu_1","name":"read"}}
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"path\":"}}
+data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"x\"}"}}
+data: {"type":"content_block_stop","index":0}
+"#;
+        let mut events = Vec::new();
+        for line in buf.push_chunk_and_drain_lines(chunk) {
+            events.extend(parse_anthropic_chunk(&line, &mut state));
+        }
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, StreamEvent::ToolCallStart { name, .. } if name == "read"))
+        );
+        assert!(events.iter().any(|e| matches!(
+            e,
+            StreamEvent::ToolCallEnd(d) if d.name == "read" && d.arguments["path"] == "x"
+        )));
     }
 }

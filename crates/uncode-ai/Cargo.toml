@@ -26,5 +26,8 @@ eventsource-stream.workspace = true
 uuid.workspace = true
 tokio-util.workspace = true
 
+[dev-dependencies]
+http = "1"
+
 [lints]
 workspace = true

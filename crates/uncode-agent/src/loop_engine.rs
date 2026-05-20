@@ -12,6 +12,10 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info};
 
+use crate::phase_summary::{
+    PhaseSummaryLlmInput, assistant_snippet_for_phase, build_phase_summary_heuristic,
+    format_tool_phase_label, summarize_tool_args, try_llm_phase_summary,
+};
 use crate::session::store::SessionStore;
 use crate::steering::MessageQueue;
 use crate::tools::registry::ToolRegistry;
@@ -24,7 +28,7 @@ use uncode_core::api_types::{
 use uncode_core::error::HarnessError;
 use uncode_core::error::UncodeError;
 use uncode_core::event::AgentEvent;
-use uncode_core::event::{PhaseSummaryData, SessionEndData, ToolCallEndEventData, ToolCallStatus};
+use uncode_core::event::{SessionEndData, ToolCallEndEventData, ToolCallStatus};
 use uncode_core::message::{ContentBlock, Message, Role, UsageInfo};
 use uncode_core::session::{SessionEntry, ThinkingLevelChangeEntry, generate_entry_id};
 use uncode_core::tool::{
@@ -33,6 +37,78 @@ use uncode_core::tool::{
 };
 
 const MAX_TURNS: u64 = 50;
+
+/// Execute + after-hook for parallel batch phase (shared state cloned per future).
+async fn execute_prepared_tool_shared(
+    registry: Arc<ToolRegistry>,
+    cancel_token: CancellationToken,
+    event_tx: broadcast::Sender<AgentEvent>,
+    hooks: Option<Arc<dyn ToolHooks>>,
+    id: String,
+    name: String,
+    prepared_args: serde_json::Value,
+    raw_args: serde_json::Value,
+) -> ToolResult {
+    let executor = registry.get(&name);
+    let child = cancel_token.child_token();
+    let ctx = ToolContext {
+        cancel_token: child.clone(),
+        on_progress: Some(Box::new({
+            let etx = event_tx.clone();
+            let tid = id.clone();
+            move |p: ToolProgress| {
+                let detail = match &p {
+                    ToolProgress::Spinner(s) => s.clone(),
+                    ToolProgress::Percentage { detail, .. } => detail.clone(),
+                    ToolProgress::LogLine(l) => l.clone(),
+                };
+                let _ = etx.send(AgentEvent::ToolCallProgress {
+                    tool_id: tid.clone(),
+                    progress_type: uncode_core::event::ProgressType::Spinner,
+                    detail,
+                });
+            }
+        })),
+        tool_call_id: id.clone(),
+    };
+
+    let mut tool_result = if let Some(exec) = executor {
+        tokio::select! {
+            _ = child.cancelled() => ToolResult::err("cancelled"),
+            r = exec.execute_with_context(prepared_args, ctx) => {
+                match r {
+                    Ok(tr) => tr,
+                    Err(e) => ToolResult::err(format!("error: {e}")),
+                }
+            }
+        }
+    } else {
+        ToolResult::err(format!("tool not found: {name}"))
+    };
+
+    if let Some(ref h) = hooks {
+        let after_ctx = AfterToolCallContext {
+            tool_call_id: id.clone(),
+            tool_name: name.clone(),
+            args: raw_args,
+        };
+        let patch = h.after_tool_call(&after_ctx, &mut tool_result).await;
+        if let Some(new_content) = patch.content {
+            tool_result.content = new_content;
+        }
+        if let Some(new_details) = patch.details {
+            tool_result.details = Some(new_details);
+        }
+        if let Some(new_is_error) = patch.is_error {
+            tool_result.is_error = new_is_error;
+        }
+        if let Some(new_terminate) = patch.terminate {
+            tool_result.terminate = new_terminate;
+        }
+    }
+
+    tool_result
+}
 
 /// Extract the first text block from a message, or "" if none.
 fn first_text(msg: &Message) -> &str {
@@ -170,6 +246,18 @@ impl AgentLoop {
         self.tool_hooks = Some(hooks);
     }
 
+    /// Restrict tools visible to the LLM and executable in this loop.
+    ///
+    /// **Pi:** `setActiveTools`.
+    pub fn set_active_tools(&self, names: &[impl AsRef<str>]) -> Result<(), String> {
+        self.tool_registry.set_active_tools(names)
+    }
+
+    /// Clear active-tool filter (all registered tools are active).
+    pub fn clear_active_tools(&self) {
+        self.tool_registry.clear_active_tools();
+    }
+
     pub fn set_should_stop_after_turn(&mut self, cb: Arc<dyn Fn(u64) -> bool + Send + Sync>) {
         self.should_stop_after_turn = Some(cb);
     }
@@ -234,6 +322,60 @@ impl AgentLoop {
         let _ = self.event_tx.send(event);
     }
 
+    /// Pi parallel batch: prepare → validate → before (serial per tool).
+    async fn prepare_tool_call(
+        &self,
+        id: &str,
+        name: &str,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolResult> {
+        if self.tool_registry.get(name).is_none() {
+            return Err(ToolResult::err(format!("tool not found: {name}")));
+        }
+        if !self.tool_registry.is_active(name) {
+            return Err(ToolResult::err(format!("tool not active: {name}")));
+        }
+
+        let prepared_args = match self.tool_registry.prepare_and_validate(name, args) {
+            Ok(a) => a,
+            Err(e) => return Err(ToolResult::err(e)),
+        };
+
+        if let Some(ref hooks) = self.tool_hooks {
+            let ctx = BeforeToolCallContext {
+                tool_call_id: id.to_string(),
+                tool_name: name.to_string(),
+                args: prepared_args.clone(),
+            };
+            if let Some(reason) = hooks.before_tool_call(&ctx).await {
+                return Err(ToolResult::err(reason));
+            }
+        }
+
+        Ok(prepared_args)
+    }
+
+    /// Run execute + after hook for already-prepared arguments.
+    async fn execute_prepared_tool(
+        &self,
+        id: &str,
+        name: &str,
+        prepared_args: serde_json::Value,
+        raw_args: serde_json::Value,
+    ) -> ToolResult {
+        execute_prepared_tool_shared(
+            Arc::clone(&self.tool_registry),
+            self.cancel_token.clone(),
+            self.event_tx.clone(),
+            self.tool_hooks.clone(),
+            id.to_string(),
+            name.to_string(),
+            prepared_args,
+            raw_args,
+        )
+        .await
+    }
+
     /// Execute a single tool with full lifecycle: hooks, prepare, execute, finalize
     async fn execute_single_tool(
         &self,
@@ -242,88 +384,11 @@ impl AgentLoop {
         name: &str,
         args: serde_json::Value,
     ) -> ToolResult {
-        // before hook
-        if let Some(ref hooks) = self.tool_hooks {
-            let ctx = BeforeToolCallContext {
-                tool_call_id: id.to_string(),
-                tool_name: name.to_string(),
-                args: args.clone(),
-            };
-            if let Some(reason) = hooks.before_tool_call(&ctx).await {
-                return ToolResult::err(reason);
-            }
-        }
-
-        // prepare arguments
-        let executor = self.tool_registry.get(name);
-        let prepared_args = if let Some(ref exec) = executor {
-            match exec.prepare_arguments(args.clone()) {
-                Ok(a) => a,
-                Err(e) => return ToolResult::err(format!("argument error: {e}")),
-            }
-        } else {
-            args.clone()
+        let prepared = match self.prepare_tool_call(id, name, args.clone()).await {
+            Ok(p) => p,
+            Err(tr) => return tr,
         };
-
-        let child = self.cancel_token.child_token();
-        let ctx = ToolContext {
-            cancel_token: child.clone(),
-            on_progress: Some(Box::new({
-                let etx = self.event_tx.clone();
-                let tid = id.to_string();
-                move |p: ToolProgress| {
-                    let detail = match &p {
-                        ToolProgress::Spinner(s) => s.clone(),
-                        ToolProgress::Percentage { detail, .. } => detail.clone(),
-                        ToolProgress::LogLine(l) => l.clone(),
-                    };
-                    let _ = etx.send(AgentEvent::ToolCallProgress {
-                        tool_id: tid.clone(),
-                        progress_type: uncode_core::event::ProgressType::Spinner,
-                        detail,
-                    });
-                }
-            })),
-            tool_call_id: id.to_string(),
-        };
-
-        let mut tool_result = if let Some(exec) = executor {
-            tokio::select! {
-                _ = child.cancelled() => ToolResult::err("cancelled"),
-                r = exec.execute_with_context(prepared_args, ctx) => {
-                    match r {
-                        Ok(tr) => tr,
-                        Err(e) => ToolResult::err(format!("error: {e}")),
-                    }
-                }
-            }
-        } else {
-            ToolResult::err(format!("tool not found: {name}"))
-        };
-
-        // after hook
-        if let Some(ref hooks) = self.tool_hooks {
-            let after_ctx = AfterToolCallContext {
-                tool_call_id: id.to_string(),
-                tool_name: name.to_string(),
-                args,
-            };
-            let patch = hooks.after_tool_call(&after_ctx, &mut tool_result).await;
-            if let Some(new_content) = patch.content {
-                tool_result.content = new_content;
-            }
-            if let Some(new_details) = patch.details {
-                tool_result.details = Some(new_details);
-            }
-            if let Some(new_is_error) = patch.is_error {
-                tool_result.is_error = new_is_error;
-            }
-            if let Some(new_terminate) = patch.terminate {
-                tool_result.terminate = new_terminate;
-            }
-        }
-
-        tool_result
+        self.execute_prepared_tool(id, name, prepared, args).await
     }
 
     /// Whether an agent `run` is in progress (inner ReAct loop may span multiple Turns).
@@ -645,6 +710,7 @@ impl AgentLoop {
                 let mut tool_start_times: HashMap<String, std::time::Instant> = HashMap::new();
                 let mut turn_phase_completed: Vec<String> = Vec::new();
                 let mut turn_phase_issues: Vec<String> = Vec::new();
+                let mut turn_assistant_snippet = String::new();
 
                 // ── Stream processing loop ──
                 loop {
@@ -804,29 +870,41 @@ impl AgentLoop {
                             }
 
                             if !current_text.is_empty() {
+                                turn_assistant_snippet =
+                                    assistant_snippet_for_phase(&current_text, 400);
                                 assistant_content.push(ContentBlock::Text {
                                     text: std::mem::take(&mut current_text),
                                 });
                             }
 
-                            for (id, name, arguments) in &pending_tool_calls {
-                                let args: serde_json::Value = match serde_json::from_str(arguments)
-                                {
-                                    Ok(a) => a,
+                            // Merge stream ToolCallEnd with accumulated deltas; only tool calls
+                            // that will receive a tool result message go into the assistant turn
+                            // (OpenAI/Anthropic reject assistant+tool_calls without matching tool msgs).
+                            let streamed_tool_calls = std::mem::take(&mut pending_tool_calls);
+                            let mut executions = std::mem::take(&mut pending_executions);
+                            for (id, name, args_str) in streamed_tool_calls {
+                                if executions.iter().any(|(eid, _, _)| eid == &id) {
+                                    continue;
+                                }
+                                match serde_json::from_str::<serde_json::Value>(&args_str) {
+                                    Ok(args) => executions.push((id, name, args)),
                                     Err(e) => {
                                         error!(
                                             tool = %name,
+                                            tool_id = %id,
                                             error = %e,
-                                            "tool args JSON parse failed, using Null"
+                                            "tool args JSON parse failed, omitting tool call from assistant message"
                                         );
-                                        serde_json::Value::Null
                                     }
-                                };
+                                }
+                            }
+
+                            for (id, name, arguments) in &executions {
                                 assistant_content.push(ContentBlock::ToolCall(Box::new(
                                     uncode_core::message::ToolCall {
                                         id: id.clone(),
                                         name: name.clone(),
-                                        arguments: args,
+                                        arguments: arguments.clone(),
                                     },
                                 )));
                             }
@@ -864,8 +942,12 @@ impl AgentLoop {
                                 messages.push(msg);
                             }
 
-                            // Batch-execute buffered tool calls
-                            let executions = std::mem::take(&mut pending_executions);
+                            let exec_args_by_id: HashMap<String, String> = executions
+                                .iter()
+                                .map(|(id, _, args)| (id.clone(), args.to_string()))
+                                .collect();
+
+                            // Batch-execute buffered tool calls (same `executions` as assistant ToolCalls)
                             if !executions.is_empty() {
                                 // Pi strategy: if ANY tool is sequential, run ALL sequentially
                                 let has_sequential = executions.iter().any(|(_, name, _)| {
@@ -887,131 +969,69 @@ impl AgentLoop {
                                         }
                                         outcomes
                                     } else {
+                                        // Pi: prepare → validate → before serial; execute parallel
+                                        let batch_len = executions.len();
+                                        let mut slot_results: Vec<Option<ToolResult>> =
+                                            vec![None; batch_len];
+                                        let mut ready = Vec::new();
+                                        for (i, (id, name, args)) in executions.iter().enumerate() {
+                                            match self
+                                                .prepare_tool_call(id, name, args.clone())
+                                                .await
+                                            {
+                                                Ok(prepared) => ready.push((
+                                                    i,
+                                                    id.clone(),
+                                                    name.clone(),
+                                                    args.clone(),
+                                                    prepared,
+                                                )),
+                                                Err(tr) => slot_results[i] = Some(tr),
+                                            }
+                                            if self.cancel_token.is_cancelled() {
+                                                break;
+                                            }
+                                        }
+
                                         let registry = Arc::clone(&self.tool_registry);
                                         let cancel = self.cancel_token.clone();
                                         let tx = self.event_tx.clone();
                                         let hooks = self.tool_hooks.clone();
 
-                                        futures::future::join_all(executions.into_iter().map(
-                                            move |(id, name, args)| {
-                                                let reg = registry.clone();
-                                                let ct = cancel.clone();
-                                                let etx = tx.clone();
-                                                let hk = hooks.clone();
-                                                async move {
-                                                    if let Some(ref h) = hk {
-                                                        let before_ctx = BeforeToolCallContext {
-                                                            tool_call_id: id.clone(),
-                                                            tool_name: name.clone(),
-                                                            args: args.clone(),
-                                                        };
-                                                        if let Some(reason) =
-                                                            h.before_tool_call(&before_ctx).await
-                                                        {
-                                                            return (
-                                                                id,
-                                                                name,
-                                                                ToolResult::err(reason),
-                                                            );
-                                                        }
+                                        let executed =
+                                            futures::future::join_all(ready.into_iter().map(
+                                                move |(i, id, name, raw_args, prepared)| {
+                                                    let reg = registry.clone();
+                                                    let ct = cancel.clone();
+                                                    let etx = tx.clone();
+                                                    let hk = hooks.clone();
+                                                    async move {
+                                                        let tr = execute_prepared_tool_shared(
+                                                            reg, ct, etx, hk, id, name, prepared,
+                                                            raw_args,
+                                                        )
+                                                        .await;
+                                                        (i, tr)
                                                     }
+                                                },
+                                            ))
+                                            .await;
 
-                                                    let prepared_args = if let Some(exec) =
-                                                        reg.get(&name)
-                                                    {
-                                                        match exec.prepare_arguments(args.clone()) {
-                                                            Ok(a) => a,
-                                                            Err(e) => {
-                                                                return (
-                                                                    id,
-                                                                    name,
-                                                                    ToolResult::err(format!(
-                                                                        "argument error: {e}"
-                                                                    )),
-                                                                )
-                                                            }
-                                                        }
-                                                    } else {
-                                                        args.clone()
-                                                    };
+                                        for (i, tr) in executed {
+                                            slot_results[i] = Some(tr);
+                                        }
 
-                                                    let executor = reg.get(&name);
-                                                    let child = ct.child_token();
-                                                    let tid = id.clone();
-                                                    let ctx = ToolContext {
-                                                        cancel_token: child.clone(),
-                                                        on_progress: Some(Box::new(
-                                                            move |p: ToolProgress| {
-                                                                let detail = match &p {
-                                                                    ToolProgress::Spinner(s) => {
-                                                                        s.clone()
-                                                                    }
-                                                                    ToolProgress::Percentage {
-                                                                        detail,
-                                                                        ..
-                                                                    } => detail.clone(),
-                                                                    ToolProgress::LogLine(l) => {
-                                                                        l.clone()
-                                                                    }
-                                                                };
-                                                                let _ = etx.send(
-                                                                    AgentEvent::ToolCallProgress {
-                                                                        tool_id: tid.clone(),
-                                                                        progress_type:
-                                                                            uncode_core::event::ProgressType::Spinner,
-                                                                        detail,
-                                                                    },
-                                                                );
-                                                            },
-                                                        )),
-                                                        tool_call_id: id.clone(),
-                                                    };
-
-                                                    let mut tool_result =
-                                                        if let Some(exec) = executor {
-                                                            tokio::select! {
-                                                                _ = child.cancelled() => ToolResult::err("cancelled"),
-                                                                r = exec.execute_with_context(prepared_args, ctx) => {
-                                                                    match r {
-                                                                        Ok(tr) => tr,
-                                                                        Err(e) => ToolResult::err(format!("error: {e}")),
-                                                                    }
-                                                                }
-                                                            }
-                                                        } else {
-                                                            ToolResult::err(format!(
-                                                                "tool not found: {name}"
-                                                            ))
-                                                        };
-
-                                                    if let Some(ref h) = hk {
-                                                        let after_ctx = AfterToolCallContext {
-                                                            tool_call_id: id.clone(),
-                                                            tool_name: name.clone(),
-                                                            args,
-                                                        };
-                                                        let patch =
-                                                            h.after_tool_call(&after_ctx, &mut tool_result)
-                                                                .await;
-                                                        if let Some(new_content) = patch.content {
-                                                            tool_result.content = new_content;
-                                                        }
-                                                        if let Some(new_details) = patch.details {
-                                                            tool_result.details = Some(new_details);
-                                                        }
-                                                        if let Some(new_is_error) = patch.is_error {
-                                                            tool_result.is_error = new_is_error;
-                                                        }
-                                                        if let Some(new_terminate) = patch.terminate {
-                                                            tool_result.terminate = new_terminate;
-                                                        }
-                                                    }
-
-                                                    (id, name, tool_result)
-                                                }
-                                            },
-                                        ))
-                                        .await
+                                        executions
+                                            .into_iter()
+                                            .enumerate()
+                                            .map(|(i, (id, name, _args))| {
+                                                let tr =
+                                                    slot_results[i].take().unwrap_or_else(|| {
+                                                        ToolResult::err("cancelled")
+                                                    });
+                                                (id, name, tr)
+                                            })
+                                            .collect()
                                     };
 
                                 // Persist results, emit events, check terminate
@@ -1049,11 +1069,7 @@ impl AgentLoop {
                                     });
 
                                     let args_short = summarize_tool_args(
-                                        pending_tool_calls
-                                            .iter()
-                                            .find(|(tid, ..)| tid == id)
-                                            .map(|(_, _, a)| a.as_str())
-                                            .unwrap_or(""),
+                                        exec_args_by_id.get(id).map(|s| s.as_str()).unwrap_or(""),
                                     );
                                     let label = format_tool_phase_label(name, &args_short);
                                     if is_error {
@@ -1123,14 +1139,33 @@ impl AgentLoop {
                         usage: turn_usage.clone(),
                     });
                     if !turn_phase_completed.is_empty() || !turn_phase_issues.is_empty() {
-                        self.emit(AgentEvent::PhaseSummary {
-                            data: Box::new(build_phase_summary(
+                        let heuristic = build_phase_summary_heuristic(
+                            turn,
+                            turn_phase_completed.clone(),
+                            turn_phase_issues.clone(),
+                            has_more_tool_calls,
+                            turn_usage.clone(),
+                        );
+                        let summary_data = if self.cancel_token.is_cancelled() {
+                            heuristic
+                        } else {
+                            try_llm_phase_summary(PhaseSummaryLlmInput {
                                 turn,
-                                turn_phase_completed,
-                                turn_phase_issues,
+                                completed_labels: &turn_phase_completed,
+                                issue_labels: &turn_phase_issues,
+                                assistant_snippet: &turn_assistant_snippet,
                                 has_more_tool_calls,
-                                turn_usage,
-                            )),
+                                token_usage: turn_usage,
+                                api_registry: &self.api_registry,
+                                model,
+                                api_keys: self.api_keys.as_ref(),
+                                cancel_token: self.cancel_token.clone(),
+                            })
+                            .await
+                            .unwrap_or(heuristic)
+                        };
+                        self.emit(AgentEvent::PhaseSummary {
+                            data: Box::new(summary_data),
                         });
                     }
                 }
@@ -1208,48 +1243,6 @@ impl AgentLoop {
     }
 }
 
-/// Shorten tool arguments for phase summary lines (TUI / Platform).
-fn summarize_tool_args(raw: &str) -> String {
-    let t = raw.trim();
-    if t.is_empty() {
-        return String::new();
-    }
-    if t.chars().count() <= 48 {
-        t.to_string()
-    } else {
-        format!("{}…", t.chars().take(48).collect::<String>())
-    }
-}
-
-fn format_tool_phase_label(tool_name: &str, args_short: &str) -> String {
-    if args_short.is_empty() {
-        tool_name.to_string()
-    } else {
-        format!("{tool_name}({args_short})")
-    }
-}
-
-fn build_phase_summary(
-    turn: u64,
-    completed: Vec<String>,
-    issues: Vec<String>,
-    has_more_tool_calls: bool,
-    token_usage: UsageInfo,
-) -> PhaseSummaryData {
-    let next_steps = if has_more_tool_calls {
-        vec!["Model may continue with more tools in the next turn.".to_string()]
-    } else {
-        Vec::new()
-    };
-    PhaseSummaryData {
-        phase: turn,
-        completed,
-        issues,
-        next_steps,
-        token_usage,
-    }
-}
-
 /// Check if a partial JSON string contains a recognizable identifier field
 /// (path, file_path, or command) with a non-empty quoted value.
 fn has_identifiable_field(partial: &str) -> bool {
@@ -1275,6 +1268,7 @@ fn has_identifiable_field(partial: &str) -> bool {
 #[cfg(test)]
 mod phase_summary_tests {
     use super::*;
+    use crate::phase_summary::build_phase_summary_heuristic;
 
     #[test]
     fn summarize_tool_args_truncates_long_json() {
@@ -1286,7 +1280,7 @@ mod phase_summary_tests {
 
     #[test]
     fn build_phase_summary_includes_next_steps_when_more_tools() {
-        let data = build_phase_summary(
+        let data = build_phase_summary_heuristic(
             2,
             vec!["read(src/main.rs)".into()],
             vec![],
@@ -1300,7 +1294,7 @@ mod phase_summary_tests {
 
     #[test]
     fn build_phase_summary_splits_failures_into_issues() {
-        let data = build_phase_summary(
+        let data = build_phase_summary_heuristic(
             1,
             vec!["grep(foo)".into()],
             vec!["bash(cargo test)".into()],
