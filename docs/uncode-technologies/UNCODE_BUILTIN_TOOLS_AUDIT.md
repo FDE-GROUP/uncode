@@ -12,6 +12,8 @@
 | [#283](https://github.com/FDE-GROUP/uncode/issues/283) | `bash` `workdir` 走 `resolve_path`；`execute` 超时杀进程组；流式 stdout 累积上限 |
 | [#284](https://github.com/FDE-GROUP/uncode/issues/284) | `url_safety::ensure_public_http_url`；`web_fetch` 限制重定向 |
 
+| [#285](https://github.com/FDE-GROUP/uncode/issues/285) | `grep` 使用 `ignore` 遍历（`.gitignore`）+ 单文件 1MB 上限；集成测试 |
+
 额外（无单独 Issue）：`read` 目录 listing 上限 500 条，与 `ls` 一致。
 
 ---

@@ -628,6 +628,30 @@ async fn test_grep_include_matches_relative_path() {
 }
 
 #[tokio::test]
+async fn test_grep_respects_gitignore() {
+    let (_dir, _guard) = sandbox_dir();
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .status()
+        .expect("git init for .gitignore test");
+    std::fs::create_dir_all("ignored").unwrap();
+    fs::write("ignored/secret.rs", "fn secret_grep_marker() {}\n").unwrap();
+    fs::write("visible.rs", "fn secret_grep_marker() {}\n").unwrap();
+    fs::write(".gitignore", "ignored/\n").unwrap();
+
+    let tool = GrepTool;
+    let result = tool
+        .execute(serde_json::json!({
+            "pattern": "secret_grep_marker",
+            "path": "."
+        }))
+        .await
+        .unwrap();
+    assert!(result.contains("visible.rs"));
+    assert!(!result.contains("ignored/secret.rs"));
+}
+
+#[tokio::test]
 async fn test_write_distinct_temp_paths_for_same_stem() {
     let (_dir, _guard) = sandbox_dir();
     let tool = WriteTool;

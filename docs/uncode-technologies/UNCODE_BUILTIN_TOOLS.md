@@ -214,11 +214,11 @@
 |------|------|------|------|
 | `pattern` | string | 是 | Rust `regex` 语法 |
 | `path` | string | 否 | 搜索根，默认 `.` |
-| `include` | string | 否 | 文件名 glob，如 `*.rs` |
+| `include` | string | 否 | 相对路径或文件名 glob，如 `src/*.rs`、`*.rs` |
 
 ### 设计原理
 
-1. **WalkDir + 深度 20**：平衡覆盖面与性能，避免无限深 node_modules（仍可能很慢，依赖 `include` 收窄）。
+1. **`ignore` 遍历 + 深度 20**：默认遵守 `.gitignore`（需在 Git 工作区内），跳过超过 1MB 的文件；用 `include` 收窄范围。
 2. **跳过不可读文件**：无权限或非 UTF-8 静默跳过，保证工具不中断。
 3. **结果上限 50 条**：防止一次塞满上下文；截断时提示，引导缩小 `path`/`include` 或更精确 pattern。
 4. **spawn_blocking**：目录遍历与读文件在阻塞线程池，不卡住 agent 事件循环。
