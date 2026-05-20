@@ -24,7 +24,7 @@ use uncode_core::api_types::{
 use uncode_core::error::HarnessError;
 use uncode_core::error::UncodeError;
 use uncode_core::event::AgentEvent;
-use uncode_core::event::{SessionEndData, ToolCallEndEventData, ToolCallStatus};
+use uncode_core::event::{PhaseSummaryData, SessionEndData, ToolCallEndEventData, ToolCallStatus};
 use uncode_core::message::{ContentBlock, Message, Role, UsageInfo};
 use uncode_core::session::{SessionEntry, ThinkingLevelChangeEntry, generate_entry_id};
 use uncode_core::tool::{
@@ -643,6 +643,8 @@ impl AgentLoop {
                 let mut turn_input_tokens: u64 = 0;
                 let mut turn_output_tokens: u64 = 0;
                 let mut tool_start_times: HashMap<String, std::time::Instant> = HashMap::new();
+                let mut turn_phase_completed: Vec<String> = Vec::new();
+                let mut turn_phase_issues: Vec<String> = Vec::new();
 
                 // ── Stream processing loop ──
                 loop {
@@ -1046,6 +1048,20 @@ impl AgentLoop {
                                         }),
                                     });
 
+                                    let args_short = summarize_tool_args(
+                                        pending_tool_calls
+                                            .iter()
+                                            .find(|(tid, ..)| tid == id)
+                                            .map(|(_, _, a)| a.as_str())
+                                            .unwrap_or(""),
+                                    );
+                                    let label = format_tool_phase_label(name, &args_short);
+                                    if is_error {
+                                        turn_phase_issues.push(label);
+                                    } else {
+                                        turn_phase_completed.push(label);
+                                    }
+
                                     let result_block = ContentBlock::ToolResult(Box::new(
                                         uncode_core::message::ToolResult {
                                             tool_call_id: id.clone(),
@@ -1097,14 +1113,26 @@ impl AgentLoop {
 
                 // TurnEnd
                 if !self.cancel_token.is_cancelled() {
+                    let turn_usage = UsageInfo {
+                        input_tokens: turn_input_tokens,
+                        output_tokens: turn_output_tokens,
+                        cost: None,
+                    };
                     self.emit(AgentEvent::TurnEnd {
                         turn,
-                        usage: UsageInfo {
-                            input_tokens: turn_input_tokens,
-                            output_tokens: turn_output_tokens,
-                            cost: None,
-                        },
+                        usage: turn_usage.clone(),
                     });
+                    if !turn_phase_completed.is_empty() || !turn_phase_issues.is_empty() {
+                        self.emit(AgentEvent::PhaseSummary {
+                            data: Box::new(build_phase_summary(
+                                turn,
+                                turn_phase_completed,
+                                turn_phase_issues,
+                                has_more_tool_calls,
+                                turn_usage,
+                            )),
+                        });
+                    }
                 }
 
                 // prepare_next_turn callback
@@ -1180,6 +1208,48 @@ impl AgentLoop {
     }
 }
 
+/// Shorten tool arguments for phase summary lines (TUI / Platform).
+fn summarize_tool_args(raw: &str) -> String {
+    let t = raw.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    if t.chars().count() <= 48 {
+        t.to_string()
+    } else {
+        format!("{}…", t.chars().take(48).collect::<String>())
+    }
+}
+
+fn format_tool_phase_label(tool_name: &str, args_short: &str) -> String {
+    if args_short.is_empty() {
+        tool_name.to_string()
+    } else {
+        format!("{tool_name}({args_short})")
+    }
+}
+
+fn build_phase_summary(
+    turn: u64,
+    completed: Vec<String>,
+    issues: Vec<String>,
+    has_more_tool_calls: bool,
+    token_usage: UsageInfo,
+) -> PhaseSummaryData {
+    let next_steps = if has_more_tool_calls {
+        vec!["Model may continue with more tools in the next turn.".to_string()]
+    } else {
+        Vec::new()
+    };
+    PhaseSummaryData {
+        phase: turn,
+        completed,
+        issues,
+        next_steps,
+        token_usage,
+    }
+}
+
 /// Check if a partial JSON string contains a recognizable identifier field
 /// (path, file_path, or command) with a non-empty quoted value.
 fn has_identifiable_field(partial: &str) -> bool {
@@ -1200,4 +1270,45 @@ fn has_identifiable_field(partial: &str) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod phase_summary_tests {
+    use super::*;
+
+    #[test]
+    fn summarize_tool_args_truncates_long_json() {
+        let long = "a".repeat(60);
+        let s = summarize_tool_args(&long);
+        assert!(s.ends_with('…'));
+        assert!(s.chars().count() <= 49);
+    }
+
+    #[test]
+    fn build_phase_summary_includes_next_steps_when_more_tools() {
+        let data = build_phase_summary(
+            2,
+            vec!["read(src/main.rs)".into()],
+            vec![],
+            true,
+            UsageInfo::default(),
+        );
+        assert_eq!(data.phase, 2);
+        assert_eq!(data.completed.len(), 1);
+        assert!(!data.next_steps.is_empty());
+    }
+
+    #[test]
+    fn build_phase_summary_splits_failures_into_issues() {
+        let data = build_phase_summary(
+            1,
+            vec!["grep(foo)".into()],
+            vec!["bash(cargo test)".into()],
+            false,
+            UsageInfo::default(),
+        );
+        assert_eq!(data.completed, vec!["grep(foo)"]);
+        assert_eq!(data.issues, vec!["bash(cargo test)"]);
+        assert!(data.next_steps.is_empty());
+    }
 }
