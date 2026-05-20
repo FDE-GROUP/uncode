@@ -214,4 +214,18 @@ pub trait Extension: Send + Sync {
 
 ---
 
+## 附录：Pi 事件对照速查
+
+完整矩阵（含 Harness Hook、1:1 / 1:N 标注）见 [`UNCODE_PI_MECHANISM_MAP.md`](UNCODE_PI_MECHANISM_MAP.md) §5。  
+uncode 共 **18** 个 `AgentEvent` 变体；Pi UI 层 **10** 种四层事件 + 20+ Harness Hook。
+
+| Pi 四层事件 | uncode 主要变体 |
+|-------------|-----------------|
+| `agent_start` / `agent_end` | `SessionStart` / `SessionEnd`（近似） |
+| `turn_start` / `turn_end` | `TurnStart` / `TurnEnd` |
+| `message_*` | `MessageStart` / `MessageEnd` + `ContentDelta` |
+| `tool_execution_*` | `ToolCallStart` / `ToolCallProgress` / `ToolCallEnd` |
+
+---
+
 *本文档基于 uncode 源码（`crates/uncode-core/src/event.rs`、`crates/uncode-extensions/src/`）编写。*

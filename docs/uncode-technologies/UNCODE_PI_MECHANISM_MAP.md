@@ -74,19 +74,19 @@ TUI 在 `agent_busy` 时将用户输入路由到 Follow-up/Steering，见 [UNCOD
 
 ## 4. SessionEntry ↔ Pi 条目类型
 
-| Pi `EntryType` | uncode `SessionEntry` | 备注 |
-|----------------|----------------------|------|
-| `message` | `Message` | 用户/助手/工具 |
-| `thinking_level_change` | `ThinkingLevelChange` | |
-| `model_change` | `ModelChange` | |
-| `compaction` | `Compaction` | 压缩摘要边界 |
-| `branch_summary` | `BranchSummary` | 遗弃分支摘要 |
-| `custom` / `custom_message` | `Custom` / `CustomMessage` | |
-| `label` | `Label` | |
-| `session_info` | `SessionInfo` | |
-| `leaf` | leaf 指针（`set_leaf` / `get_leaf_id`） | 活跃路径 |
-| `branch`（显式） | `Branch` 条目 | uncode 可显式记录分支元数据 |
-| `system`（Pi 系统事件） | `System` 条目 | Start/End/PhaseSummary 等 |
+| Pi `EntryType` | uncode `SessionEntry` | 关系 | 备注 |
+|----------------|----------------------|------|------|
+| `message` | `Message` | **1:1** | 用户/助手/工具 |
+| `thinking_level_change` | `ThinkingLevelChange` | **1:1** | |
+| `model_change` | `ModelChange` | **1:1** | |
+| `compaction` | `Compaction` | **1:1** | 压缩摘要边界 |
+| `branch_summary` | `BranchSummary` | **1:1** | 遗弃分支摘要 |
+| `custom` / `custom_message` | `Custom` / `CustomMessage` | **1:1** | |
+| `label` | `Label` | **1:1** | |
+| `session_info` | `SessionInfo` | **1:1** | |
+| `leaf` | leaf 指针（`set_leaf` / `get_leaf_id`） | **1:1** | 活跃路径 |
+| `branch`（显式） | `Branch` 条目 | 扩展 | uncode 可显式记录分支元数据 |
+| `system`（Pi 系统事件） | `System` 条目 | 扩展 | Start/End/PhaseSummary 等 |
 
 **存储差异**：Pi 默认 JSONL 行文件；uncode 默认 **SurrealDB**，JSONL 仅导入/导出。逻辑回放路径一致，物理格式不同。
 

@@ -152,16 +152,9 @@ gantt
 | P2-3 | **循环阶段对照表** | Pi `prompt()` 事件序列 ↔ uncode `run_inner` 步骤（可引用 REQUEST_LIFECYCLE） |
 | P2-4 | 更新 [`GLOSSARIES_COMPARISON.md`](GLOSSARIES_COMPARISON.md) §5 | 补充 uncode 列中已冻结的 L1 用词 |
 
-**事件对照表示例（骨架，实施时补全）**：
+**事件对照表（已实施）**：见 [`UNCODE_PI_MECHANISM_MAP.md`](../uncode-technologies/UNCODE_PI_MECHANISM_MAP.md) §5.1–5.3；[`UNCODE_EVENT_SYSTEM.md`](../uncode-technologies/UNCODE_EVENT_SYSTEM.md) 文首已链入。
 
-| Pi（AgentEvent / 阶段） | uncode `AgentEvent` | 关系 |
-|-------------------------|---------------------|------|
-| `agent_start` / `agent_end` | `AgentStart` / `AgentEnd`（若有） | 待核对源码枚举名 |
-| `turn_start` / `turn_end` | `TurnStart` / `TurnEnd` | 1:1 |
-| `tool_execution_*` | `ToolCallStart` / `Delta` / `End` 等 | 1:N |
-| Harness `session_before_compact` | `CompactionStart` / `Complete` | 概念 1:1，名不同 |
-
-> 实施 P2-1 时以 `uncode-core` 中 `AgentEvent` 定义与 [`PI_EVENT_SYSTEM.md`](../pi-technologies/PI_EVENT_SYSTEM.md) 为权威，填表后 PR 仅改文档。
+> 权威源码：`uncode-core/src/event.rs`；Pi 参照 [`PI_EVENT_SYSTEM.md`](../pi-technologies/PI_EVENT_SYSTEM.md)。
 
 ---
 
@@ -207,15 +200,15 @@ pub async fn build_context(...) -> ...
 
 | Crate | Phase 1 文档 | Phase 2 矩阵 | Phase 3 rustdoc |
 |-------|:------------:|:------------:|:---------------:|
-| `uncode-shared` | 配置/错误中文描述 | — | 低优先级 |
-| `uncode-macros` | `#[tool]` 与 Pi AgentTool 对照一句 | — | 可选 |
-| `uncode-ai` | 链 LLM 文档 | 协议 vs pi-ai API | P3-3 |
-| `uncode-core` | Glossary 列 | SessionEntry、AgentEvent | P3-1 |
-| `uncode-agent` | LOOP/SESSION 文首 | 双环、三队列 | P3-2 |
-| `uncode-tui` | TUI 文：L3 自有 | 事件订阅对照 | 低 |
-| `uncode-platform` | Platform 文：L3 | HTTP 事件（待规划） | 低 |
-| `uncode-cli` | 用户可见中文（L0） | — | 低 |
-| `uncode-extensions` | Hook vs Pi Extension | — | 可选 |
+| `uncode-shared` | 配置/错误中文描述 | — | 低优先级（backlog） |
+| `uncode-macros` | Glossary §八 | — | 可选（backlog） |
+| `uncode-ai` | Glossary §七 | — | ✅ `Api` / `StreamEvent` / `Model` / `ModelRegistry` |
+| `uncode-core` | Glossary §一–六、九 | ✅ 机制图 §4–5 | ✅ 核心 `pub` 类型 |
+| `uncode-agent` | LOOP/SESSION 文首 | ✅ 机制图 §2–3、§6 | ✅ Harness / Loop / 队列 / Store / compaction |
+| `uncode-tui` | Glossary §十 | — | 低（backlog） |
+| `uncode-platform` | — | — | 低（待规划） |
+| `uncode-cli` | README 术语段 | — | 低 |
+| `uncode-extensions` | Glossary §九 Hook | — | 可选（backlog） |
 
 ---
 
@@ -234,14 +227,14 @@ pub async fn build_context(...) -> ...
 
 ## 7. 验收标准（整项重构完成）
 
-| # | 标准 |
-|---|------|
-| A1 | `UNCODE_TECHNOLOGIES_GLOSSARY` 含 Pi/OpenCode 列，且 L1 词条 Pi 列无空 |
-| A2 | 存在 `UNCODE_PI_MECHANISM_MAP.md`，含事件 + 会话 + 循环三张对照表 |
-| A3 | `uncode-agent` / `uncode-core` 核心公开 API 的 `cargo doc` 含 Pi 映射（P3-1/P3-2 完成） |
-| A4 | `TERMINOLOGY_ALIGNMENT_STRATEGY`、本文、`GLOSSARIES_COMPARISON` 互链完整 |
-| A5 | **无**未文档化的公开 API 批量改名 |
-| A6 | CI 仍全绿（`fmt`、`clippy`、`test`） |
+| # | 标准 | 状态（PR [#263](https://github.com/FDE-GROUP/uncode/pull/263)） |
+|---|------|------|
+| A1 | `UNCODE_TECHNOLOGIES_GLOSSARY` 含 Pi/OpenCode 列，且 L1 机制节（§三–§六）Pi 列无空 | ✅ |
+| A2 | 存在 `UNCODE_PI_MECHANISM_MAP.md`，含事件 + 会话 + 循环三张对照表 | ✅ §4–§6 |
+| A3 | `uncode-agent` / `uncode-core` 核心公开 API 的 `cargo doc` 含 Pi 映射 | ✅ |
+| A4 | `TERMINOLOGY_ALIGNMENT_STRATEGY`、本文、`GLOSSARIES_COMPARISON` 互链完整 | ✅ |
+| A5 | **无**未文档化的公开 API 批量改名 | ✅ Phase 4 未启动 |
+| A6 | CI 仍全绿（`fmt`、`clippy`、`test`） | 合并前在 main 上复验 |
 
 ---
 
@@ -272,6 +265,17 @@ pub async fn build_context(...) -> ...
 | [#262](https://github.com/FDE-GROUP/uncode/issues/262) | 核心 crate rustdoc Pi 映射 | P3-1~4 |
 
 建议实施顺序：`#256` → `#257` → `#258` → `#260` → `#261` → `#259` → `#262`（见 Epic #255 描述）。
+
+### 实施状态（2026-05）
+
+| Phase | Issue | 状态 | 交付 |
+|-------|-------|------|------|
+| 1 | #256–#260, #259 | ✅ 已完成 | [PR #263](https://github.com/FDE-GROUP/uncode/pull/263) |
+| 2 | #261 | ✅ 已完成 | `UNCODE_PI_MECHANISM_MAP` §5–§6；glossary §二、§七–§十一 |
+| 3 | #262 | ✅ 已完成 | 核心 crate `/// **Pi:**`；见 `CONTRIBUTING.md` 约定 |
+| 4 | — | ⏸ 默认不做 | 须单独 Issue |
+
+**Backlog（非阻塞合并）**：`uncode-tui` / `uncode-extensions` / `uncode-macros` 的 rustdoc；glossary 附录 A–Z 不强制 Pi 列。
 
 ---
 
