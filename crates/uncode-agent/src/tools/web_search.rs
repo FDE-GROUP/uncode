@@ -13,6 +13,8 @@ const MAX_OUTPUT_BYTES: usize = 50 * 1024;
 pub struct WebSearchTool {
     api_key: String,
     client: reqwest::Client,
+    #[cfg(test)]
+    search_url: Option<String>,
 }
 
 impl WebSearchTool {
@@ -21,7 +23,33 @@ impl WebSearchTool {
             .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
             .build()
             .unwrap_or_default();
-        Self { api_key, client }
+        Self {
+            api_key,
+            client,
+            #[cfg(test)]
+            search_url: None,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_search_url(api_key: String, search_url: String) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(TIMEOUT_SECS))
+            .build()
+            .unwrap_or_default();
+        Self {
+            api_key,
+            client,
+            search_url: Some(search_url),
+        }
+    }
+
+    fn search_endpoint(&self) -> String {
+        #[cfg(test)]
+        if let Some(ref url) = self.search_url {
+            return url.clone();
+        }
+        TAVILY_API_URL.to_string()
     }
 
     pub fn try_new(api_key: &str) -> Option<Self> {
@@ -92,7 +120,7 @@ impl ToolExecutor for WebSearchTool {
 
         let response = self
             .client
-            .post(TAVILY_API_URL)
+            .post(self.search_endpoint())
             .json(&body)
             .send()
             .await
@@ -182,5 +210,48 @@ mod tests {
         let out = truncate_output(&huge, MAX_OUTPUT_BYTES);
         assert!(out.contains("[truncated]"));
         assert!(out.len() < huge.len());
+    }
+
+    #[tokio::test]
+    async fn test_search_mock_tavily_response() {
+        let mock_server = wiremock::MockServer::start().await;
+        let body = serde_json::json!({
+            "answer": "summary from mock",
+            "results": [{
+                "title": "Mock Page",
+                "url": "https://example.com/mock",
+                "content": "snippet text",
+                "score": 0.9
+            }]
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+            .mount(&mock_server)
+            .await;
+
+        let tool = WebSearchTool::with_search_url("tvly-test".into(), mock_server.uri());
+        let out = tool
+            .execute(serde_json::json!({ "query": "rust agent" }))
+            .await
+            .unwrap();
+        assert!(out.contains("summary from mock"));
+        assert!(out.contains("Mock Page"));
+        assert!(out.contains("snippet text"));
+    }
+
+    #[tokio::test]
+    async fn test_search_mock_api_error() {
+        let mock_server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(wiremock::ResponseTemplate::new(401).set_body_string("unauthorized"))
+            .mount(&mock_server)
+            .await;
+
+        let tool = WebSearchTool::with_search_url("bad-key".into(), mock_server.uri());
+        let err = tool
+            .execute(serde_json::json!({ "query": "test" }))
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("401"));
     }
 }
