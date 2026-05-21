@@ -20,7 +20,7 @@
 
 | [#292](https://github.com/FDE-GROUP/uncode/issues/292) | `AppConfig.tools`：`max_file_bytes`、`max_grep_results` 配置化并注入 `read`/`grep` |
 
-| （切片，#244） | `ToolContext.execution_env`；`AgentLoop` 注入；`ls`/`write` 走 `FileSystem` |
+| （切片，#244） | `ToolContext.execution_env`；`AgentLoop` 注入；`read`/`ls`/`write` 走 `FileSystem` |
 
 额外（无单独 Issue）：`read` 目录 listing 上限 500 条，与 `ls` 一致。
 
