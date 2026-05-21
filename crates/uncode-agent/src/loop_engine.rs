@@ -839,9 +839,7 @@ impl AgentLoop {
                             let arguments = data.arguments;
                             if name == "bash" {
                                 if let Some(d) = crate::tool_permission::approval_description(
-                                    "bash",
-                                    &arguments,
-                                    None,
+                                    "bash", &arguments, None,
                                 ) {
                                     info!("tool call end: {name} ({id}) — {d}");
                                 } else {
