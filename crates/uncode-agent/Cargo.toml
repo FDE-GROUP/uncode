@@ -36,6 +36,9 @@ libc.workspace = true
 html2text.workspace = true
 tempfile = "3"
 
+[dev-dependencies]
+wiremock = "0.6"
+
 [[example]]
 name = "export_smoke"
 path = "examples/export_smoke.rs"

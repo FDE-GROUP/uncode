@@ -158,7 +158,7 @@
 | **局限** | 无 JS、无 cookie、无认证头。 |
 | **优化** |  blocklist 私有 IP、link-local；可选 allowlist 域名；重定向上限。 |
 | **优化** | 返回 `Content-Type`、最终 URL 供模型判断。 |
-| **测试** | 仅有 definition、非 http、缺 url；**无** mock HTTP 成功路径。 |
+| **测试** | definition + SSRF + wiremock 成功/错误路径（plain/html/503）。 |
 
 ---
 
@@ -170,7 +170,7 @@
 | **缺陷** | API key 随请求发送（Tavily 设计）；需确保日志/on_payload 不泄露。 |
 | **局限** | 强依赖 Tavily；无离线/备用搜索。 |
 | **优化** | 截断每条 snippet；`max_results` schema 加上限。 |
-| **测试** | 仅 key 与 definition；**无** HTTP mock 集成测试。 |
+| **测试** | key/definition + wiremock Tavily 成功/401 路径。 |
 
 ---
 
@@ -204,7 +204,7 @@
 
 | 主题 | 说明 |
 |------|------|
-| **测试覆盖** | 七件套集成测试较全；`grep`/`web_*` 仍可加强；`ExecutionEnv` 有 `mock_env` 注入测试（read/ls）。 |
+| **测试覆盖** | 七件套 + `mock_env` + `web_fetch`/`web_search` wiremock；`grep` 条件测 ripgrep。 |
 | **async 一致性** | `read`/`write`/`edit` 同步 FS；`grep`/`find`/`ls` 用 `spawn_blocking`。 |
 | **描述语言** | 中英混用（`read.hashline`、`edit` 大段英文 description）。 |
 | **Pi 对齐** | 七件套已实现 `prepare_arguments`（路径沙箱 + 相对路径回写）；`ExecutionEnv` 切片已落地；`bash` sequential 已对齐。 |
