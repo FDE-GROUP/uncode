@@ -18,6 +18,7 @@
 
 use uncode_core::agent_step::{ActionObservation, AgentStep, AgentStateSnapshot, ExecutedAction, Feedback};
 
+use super::evaluator::{BasicEvaluator, EvaluationContext, Evaluator, TurnEvaluation};
 use super::execution::ExecutionResult;
 
 /// 决策反馈桥 — 连接决策层产出到认知层
@@ -100,15 +101,16 @@ pub struct TurnFeedback {
     pub turn_number: u32,
     pub observations: Vec<String>,
     pub agent_steps: Vec<AgentStep>,
+    pub evaluation: Option<TurnEvaluation>,
 }
 
 impl TurnFeedback {
     pub fn new(turn_number: u32) -> Self {
-        Self { turn_number, observations: Vec::new(), agent_steps: Vec::new() }
+        Self { turn_number, observations: Vec::new(), agent_steps: Vec::new(), evaluation: None }
     }
 
-    /// 添加一个执行结果
-    pub fn record(&mut self, result: &ExecutionResult, active_tools: &[String], context_tokens: usize) {
+    /// 添加一个执行结果（含评估）
+    pub fn record(&mut self, result: &ExecutionResult, active_tools: &[String], context_tokens: usize, test_output: Option<&str>) {
         let observation = FeedbackBridge::to_observation(result);
         let feedback = FeedbackBridge::infer_feedback(result);
         let step = FeedbackBridge::to_agent_step(
@@ -119,6 +121,26 @@ impl TurnFeedback {
             result,
             feedback,
         );
+
+        // ── 评估 (H0-H3 阶梯) ──
+        let eval_ctx = EvaluationContext {
+            turn_number: self.turn_number,
+            tool_name: result.tool_name.clone(),
+            test_output: test_output.map(|s| s.to_string()),
+            lint_output: None,
+        };
+        let evaluator: &dyn Evaluator = if test_output.is_some() {
+            &super::evaluator::VerifiedEvaluator
+        } else {
+            &BasicEvaluator
+        };
+        let score = evaluator.evaluate(result, &eval_ctx);
+        // 累积评估分数
+        let mut scores = self.evaluation.as_ref()
+            .map(|e| e.scores.clone())
+            .unwrap_or_default();
+        scores.push(score);
+        self.evaluation = Some(TurnEvaluation::new(self.turn_number, scores));
 
         // 构造人类可读的观察
         let status = if result.success { "✅" } else { "❌" };
@@ -207,12 +229,14 @@ mod tests {
     #[test]
     fn test_turn_feedback_records_multiple() {
         let mut tf = TurnFeedback::new(1);
-        tf.record(&make_result(true, "read", "ok"), &[], 1000);
-        tf.record(&make_result(false, "write", "fail"), &[], 1000);
+        tf.record(&make_result(true, "read", "ok"), &[], 1000, None);
+        tf.record(&make_result(false, "write", "fail"), &[], 1000, None);
         assert_eq!(tf.observations.len(), 2);
         assert_eq!(tf.agent_steps.len(), 2);
         // 失败条目应标记为重要
         let entries = tf.to_working_memory_entries();
         assert!(entries[1].1, "failure should be marked important");
+        // 评估应存在
+        assert!(tf.evaluation.is_some());
     }
 }

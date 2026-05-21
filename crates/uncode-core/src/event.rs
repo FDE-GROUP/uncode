@@ -231,6 +231,20 @@ pub enum AgentEvent {
         duration_ms: Option<u64>,
     },
 
+    // ── Evaluation (决策层审计 — H0-H3 评估阶梯) ──
+    /// Emitted after turn evaluation completes.
+    /// Part of the Harness Engineering evaluation framework.
+    /// See `docs/ai-agent-archi/cognition-decision-driven-design.md` §4.1
+    EvaluationScore {
+        turn_id: String,
+        /// "H0" | "H1" | "H2" | "H3"
+        level: String,
+        /// 0.0 - 1.0
+        quality_score: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+    },
+
     // ── Settled state (after SessionEnd, agent fully idle) ──
     AgentSettled {
         session_id: String,
@@ -518,6 +532,7 @@ pub fn agent_event_tag(event: &AgentEvent) -> &'static str {
         AgentEvent::AgentInterrupted { .. } => "agent_interrupted",
         AgentEvent::UncertaintyEncountered { .. } => "uncertainty_encountered",
         AgentEvent::DecisionMade { .. } => "decision_made",
+        AgentEvent::EvaluationScore { .. } => "evaluation_score",
         AgentEvent::AgentSettled { .. } => "agent_settled",
     }
 }
