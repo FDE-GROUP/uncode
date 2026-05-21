@@ -5,6 +5,20 @@ use uncode_core::tool::{ToolDefinition, ToolExecutor};
 const DEFAULT_MAX_LENGTH: usize = 50 * 1024; // 50KB
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024; // 1MB
 const TIMEOUT_SECS: u64 = 30;
+const HTML_TEXT_WIDTH: usize = 80;
+
+/// Convert an HTML response body to plain text; fall back to lossy UTF-8 source on failure.
+fn html_body_to_text(bytes: &[u8]) -> String {
+    html_body_to_text_with_width(bytes, HTML_TEXT_WIDTH)
+}
+
+fn html_body_to_text_with_width(bytes: &[u8], width: usize) -> String {
+    let html = String::from_utf8_lossy(bytes);
+    match html2text::from_read(html.as_bytes(), width) {
+        Ok(text) => text,
+        Err(_) => html.into_owned(),
+    }
+}
 
 pub struct WebFetchTool {
     client: reqwest::Client,
@@ -92,9 +106,7 @@ impl ToolExecutor for WebFetchTool {
         }
 
         let text = if content_type.contains("text/html") {
-            let html = String::from_utf8_lossy(&bytes);
-            html2text::from_read(html.as_bytes(), 80)
-                .map_err(|e| uncode_core::error::UncodeError::Tool(format!("html2text: {e}")))?
+            html_body_to_text(&bytes)
         } else {
             String::from_utf8_lossy(&bytes).to_string()
         };
@@ -156,6 +168,22 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(tool.execute(serde_json::json!({})));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_html_body_to_text_extracts_plain_text() {
+        let html = b"<html><body><p>Hello</p></body></html>";
+        let out = html_body_to_text(html);
+        assert!(out.contains("Hello"));
+        assert!(!out.contains("<p>"));
+    }
+
+    #[test]
+    fn test_html_body_to_text_falls_back_to_raw_html() {
+        let html = b"<html><body><p>Hello</p></body></html>";
+        // width 0 triggers html2text::Error::TooNarrow
+        let out = html_body_to_text_with_width(html, 0);
+        assert!(out.contains("<p>Hello</p>"));
     }
 
     struct AllowLoopbackGuard;
