@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use uncode_core::error::UncodeResult;
-use uncode_core::tool::{ToolDefinition, ToolExecutor};
+use uncode_core::tool::{ToolContext, ToolDefinition, ToolExecutor, ToolResult};
 
 const DEFAULT_MAX_LENGTH: usize = 50 * 1024; // 50KB
 const MAX_RESPONSE_BYTES: usize = 1024 * 1024; // 1MB
@@ -18,6 +18,14 @@ fn html_body_to_text_with_width(bytes: &[u8], width: usize) -> String {
         Ok(text) => text,
         Err(_) => html.into_owned(),
     }
+}
+
+struct FetchMeta {
+    requested_url: String,
+    final_url: String,
+    content_type: String,
+    status: u16,
+    body_bytes: usize,
 }
 
 pub struct WebFetchTool {
@@ -62,11 +70,37 @@ impl ToolExecutor for WebFetchTool {
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
-        let url = arguments["url"]
-            .as_str()
-            .ok_or_else(|| uncode_core::error::UncodeError::Tool("url required".into()))?;
+        let (text, _) = self.fetch_and_convert(arguments).await?;
+        Ok(text)
+    }
 
-        super::url_safety::ensure_public_http_url(url)
+    async fn execute_with_context(
+        &self,
+        arguments: serde_json::Value,
+        _ctx: ToolContext,
+    ) -> Result<ToolResult, uncode_core::error::UncodeError> {
+        let (text, meta) = self.fetch_and_convert(arguments).await?;
+        Ok(ToolResult::ok(text).with_details(serde_json::json!({
+            "requested_url": meta.requested_url,
+            "final_url": meta.final_url,
+            "content_type": meta.content_type,
+            "status": meta.status,
+            "body_bytes": meta.body_bytes,
+        })))
+    }
+}
+
+impl WebFetchTool {
+    async fn fetch_and_convert(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<(String, FetchMeta), uncode_core::error::UncodeError> {
+        let requested_url = arguments["url"]
+            .as_str()
+            .ok_or_else(|| uncode_core::error::UncodeError::Tool("url required".into()))?
+            .to_string();
+
+        super::url_safety::ensure_public_http_url(&requested_url)
             .map_err(uncode_core::error::UncodeError::Tool)?;
 
         let max_length = arguments["max_length"]
@@ -74,7 +108,7 @@ impl ToolExecutor for WebFetchTool {
             .unwrap_or(DEFAULT_MAX_LENGTH as u64) as usize;
 
         let response =
-            self.client.get(url).send().await.map_err(|e| {
+            self.client.get(&requested_url).send().await.map_err(|e| {
                 uncode_core::error::UncodeError::Tool(format!("request failed: {e}"))
             })?;
 
@@ -92,16 +126,17 @@ impl ToolExecutor for WebFetchTool {
             .unwrap_or("")
             .to_string();
 
+        let final_url = response.url().to_string();
+
         let bytes = response
             .bytes()
             .await
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("read body: {e}")))?;
 
-        if bytes.len() > MAX_RESPONSE_BYTES {
+        let body_bytes = bytes.len();
+        if body_bytes > MAX_RESPONSE_BYTES {
             return Err(uncode_core::error::UncodeError::Tool(format!(
-                "response too large: {} bytes (max {})",
-                bytes.len(),
-                MAX_RESPONSE_BYTES
+                "response too large: {body_bytes} bytes (max {MAX_RESPONSE_BYTES})"
             )));
         }
 
@@ -113,7 +148,6 @@ impl ToolExecutor for WebFetchTool {
 
         let truncated = if text.len() > max_length {
             let mut end = max_length;
-            // Try to break at a newline
             if let Some(pos) = text[..max_length].rfind('\n') {
                 end = pos;
             }
@@ -127,7 +161,16 @@ impl ToolExecutor for WebFetchTool {
             text
         };
 
-        Ok(truncated)
+        Ok((
+            truncated,
+            FetchMeta {
+                requested_url,
+                final_url,
+                content_type,
+                status: status.as_u16(),
+                body_bytes,
+            },
+        ))
     }
 }
 
@@ -200,6 +243,51 @@ mod tests {
         fn drop(&mut self) {
             crate::tools::url_safety::set_allow_loopback_for_tests(false);
         }
+    }
+
+    fn test_tool_context() -> uncode_core::tool::ToolContext {
+        uncode_core::tool::ToolContext {
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            on_progress: None,
+            tool_call_id: "test".into(),
+            execution_env: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_details_include_final_url_and_content_type() {
+        let _guard = AllowLoopbackGuard::set();
+        let mock_server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string("body")
+                    .insert_header("content-type", "text/plain; charset=utf-8"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let tool = WebFetchTool::new();
+        let tr = tool
+            .execute_with_context(
+                serde_json::json!({ "url": mock_server.uri() }),
+                test_tool_context(),
+            )
+            .await
+            .unwrap();
+        let details = tr.details.expect("details");
+        assert!(
+            details["content_type"]
+                .as_str()
+                .is_some_and(|ct| ct.starts_with("text/plain"))
+        );
+        let expected = mock_server.uri().trim_end_matches('/').to_string();
+        for key in ["final_url", "requested_url"] {
+            let u = details[key].as_str().expect(key);
+            assert_eq!(u.trim_end_matches('/'), expected);
+        }
+        assert_eq!(details["status"], 200);
+        assert_eq!(details["body_bytes"], 4);
     }
 
     #[tokio::test]
