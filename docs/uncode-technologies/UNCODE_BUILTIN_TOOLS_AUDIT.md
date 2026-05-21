@@ -32,13 +32,13 @@
 
 | 严重程度 | 数量 | 典型项 |
 |----------|------|--------|
-| **P0 安全/正确性** | 4 | `bash` workdir 越界、`write`/`edit` 临时文件碰撞、`grep` include 与文档不符 |
-| **P1 可靠性** | 6 | `bash` 超时未杀进程、`grep` 无测试、目录 listing 无上限不一致 |
+| **P0 安全/正确性** | 0（已修） | 见「已落地修复」表 |
+| **P1 可靠性** | 2 | `bash` `description` 未消费、双路径 `is_error` 语义不一致 |
 | **P2 体验/对齐** | 8 | 阻塞 I/O、`read` offset 语义、SSRF、缺 `.gitignore` |
 | **P3 增强** | 10+ | `ExecutionEnv` 统一、Pi 对齐、可观测性 |
 
 **沙箱路径（`resolve_path`）**：对 `..` 与 **canonicalize 后落在 CWD 外** 的路径（含指向项目外的符号链接）会拒绝，行为正确。  
-**主要缺口**：`bash` 的 `workdir` **不**走 `resolve_path`，可任意 `cd` 到系统目录（测试 `test_bash_workdir` 显式依赖 `/tmp`）。
+**主要缺口（剩余）**：`bash` `description` 参数未接入审批/日志；`execute()` 与 `execute_with_context` 非零退出码语义不一致（测试多走 `execute`）。
 
 ---
 
@@ -134,17 +134,14 @@
 
 | 类型 | 发现 |
 |------|------|
-| **P0 安全** | **`workdir` 未经 `resolve_path`**，`current_dir` 可为 `/tmp`、用户 home 等（见 `test_bash_workdir`）。描述写「沙箱」易误解；实质是 **全机 shell 能力** + 可选 TUI 门控。 |
-| **P1 缺陷** | `execute()`（测试用）在 `timeout` 时 **不 kill 子进程**；`tokio::time::timeout` 丢弃 future 后 `sleep` 等仍运行。Agent 主路径用 `execute_with_context` 会 `kill_process_group`，但 **简单路径仍泄漏**。 |
-| **P1 缺陷** | `execute_with_context` 在读取 stdout 时 **无累积上限**，仅最后 `truncate_output`；恶意命令可撑满内存。 |
+| **已修复** | `workdir` 经 `resolve_path`（#283）；`/tmp` 等越界拒绝（`test_bash_workdir_outside_sandbox_rejected`、`test_bash_prepare_rejects_workdir_outside_sandbox`）。 |
+| **已修复** | `exec_bash_simple` / `exec_bash_streaming` 超时与取消均 `kill_process_group`（#283）；流式 stdout **累积字节上限**（`max_output_bytes`）。 |
 | **缺陷** | `description` 参数 **未使用**（仅 schema/UI 意图）；应在 TUI 审批或日志中消费。 |
 | **缺陷** | 非 Unix 无进程组杀；Windows 上取消/超时行为弱。 |
-| **缺陷** | `execute()` 路径非零退出码仍返回 `Ok(String)`（文本含 exit code）；`execute_with_context` 设 `is_error: true`。**双路径语义不一致**（测试走 `execute`）。 |
-| **局限** | 固定 `bash -c`；无 `env` 注入、无 stdin 喂入。 |
-| **优化** | `workdir` 必须 `resolve_path` 且落在 CWD 内；或显式文档「非文件沙箱」。 |
-| **优化** | 超时统一：spawn + kill + 与 `LocalShell` 合并（`local_env.rs` 已有 `sh -c` 实现，重复）。 |
-| **优化** | 流式读取时按字节截断并停止读取；stderr 也走 `on_progress`。 |
-| **测试** | echo、timeout、truncation、workdir 较好；**无** 取消杀进程断言、**无** workdir 沙箱策略测试。 |
+| **缺陷** | `execute()` 路径非零退出码仍返回 `Ok(String)`（文本含 exit code）；`execute_with_context` 设 `is_error: true`。**双路径语义不一致**（测试多走 `execute`）。 |
+| **局限** | 固定 `bash -c`；无 `env` 注入、无 stdin 喂入。描述「沙箱」指 **workdir 路径约束**，非全机命令白名单。 |
+| **优化** | 与 `LocalShell` 进一步合并重复逻辑；stderr 走 `on_progress`。 |
+| **测试** | echo、timeout、truncation、workdir 沙箱、**取消杀进程**（`test_bash_cancelled_via_context_kills_command`）。 |
 
 ---
 
@@ -213,21 +210,19 @@
 
 ## 4. 建议修复优先级（工程）
 
-### 4.1 建议尽快（P0–P1）
+### 4.1 建议尽快（P0–P1）— 多数已落地
 
-1. **`write`/`edit`**：改用唯一临时路径（`tempfile` 或 `.{name}.uncode.{pid}.tmp`），避免 `with_extension("tmp")` 碰撞。  
-2. **`grep`**：修正 `include` 匹配逻辑 **或** 修正 schema 文档为「仅文件名 glob」。  
-3. **`bash`**：`workdir` 经 `resolve_path`；`execute()` 超时杀进程组；与文档统一「非文件系统沙箱」。  
-4. **`web_fetch`**：基础 SSRF 过滤（私有 IP、metadata IP）。  
-5. **`grep`**：补集成测试 + 单文件大小上限。
+以下项已在 main 完成（见 §「已落地修复」）；**剩余 P1**：
 
-### 4.2 短期增强（P2）
+1. **`bash`**：`description` 接入 TUI 审批或结构化日志。  
+2. **`bash`**：统一 `execute()` 与 `execute_with_context` 的非零退出码 / `is_error` 语义。
 
-1. `read` 目录 listing 上限；`offset` schema 澄清。  
-2. `bash` 流式读取累积上限；`description` 接入权限 UI/日志。  
-3. `grep`/`find` 默认 respect `.gitignore`（可用 `ignore` crate）。  
-4. 文件工具 `spawn_blocking` 统一。  
-5. `web_search` 输出截断。
+### 4.2 短期增强（P2）— 多数已落地
+
+**剩余**：
+
+1. `bash` `description` 接入权限 UI/日志（同上）。  
+2. 描述语言中英统一（`read.hashline`、`edit` 等）。
 
 ### 4.3 中期（P3 / 架构）
 
