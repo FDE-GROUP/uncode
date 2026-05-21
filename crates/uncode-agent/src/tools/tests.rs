@@ -799,3 +799,50 @@ async fn test_bash_description_in_args() {
         "description should not affect execution"
     );
 }
+
+#[tokio::test]
+async fn test_read_prepare_normalizes_relative_path() {
+    let (_dir, _guard) = sandbox_dir();
+    fs::create_dir_all("nested").unwrap();
+    fs::write("nested/x.txt", "hi").unwrap();
+
+    let reg = ToolRegistry::new();
+    reg.register("read", std::sync::Arc::new(ReadTool::new()));
+
+    let prepared = reg
+        .prepare_and_validate("read", serde_json::json!({"path": "nested/x.txt"}))
+        .unwrap();
+    assert_eq!(prepared["path"], "nested/x.txt");
+}
+
+#[tokio::test]
+async fn test_grep_prepare_defaults_path_to_dot() {
+    let (_dir, _guard) = sandbox_dir();
+
+    let reg = ToolRegistry::new();
+    reg.register("grep", std::sync::Arc::new(GrepTool::default()));
+
+    let prepared = reg
+        .prepare_and_validate("grep", serde_json::json!({"pattern": "x"}))
+        .unwrap();
+    assert_eq!(prepared["path"], ".");
+}
+
+#[tokio::test]
+async fn test_bash_prepare_rejects_workdir_outside_sandbox() {
+    let (_dir, _guard) = sandbox_dir();
+
+    let reg = ToolRegistry::new();
+    reg.register("bash", std::sync::Arc::new(BashTool::new()));
+
+    let err = reg
+        .prepare_and_validate(
+            "bash",
+            serde_json::json!({
+                "command": "echo hi",
+                "workdir": "/tmp"
+            }),
+        )
+        .unwrap_err();
+    assert!(err.contains("outside the project"));
+}
