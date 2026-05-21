@@ -15,9 +15,19 @@ pub struct LocalFileSystem;
 #[async_trait]
 impl FileSystem for LocalFileSystem {
     async fn read_text_file(&self, path: &Path) -> Result<String, UncodeError> {
-        tokio::fs::read_to_string(path)
-            .await
-            .map_err(|e| UncodeError::File(e.into()))
+        match tokio::fs::read_to_string(path).await {
+            Ok(text) => Ok(text),
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                let bytes = tokio::fs::read(path)
+                    .await
+                    .map_err(|e| UncodeError::File(e.into()))?;
+                let text = clean_binary_output(&bytes);
+                Ok(format!(
+                    "[注意: 文件含非 UTF-8 字节，以下为替换字符 (U+FFFD) 预览]\n{text}"
+                ))
+            }
+            Err(e) => Err(UncodeError::File(e.into())),
+        }
     }
 
     async fn write_file(&self, path: &Path, content: &str) -> Result<(), UncodeError> {
@@ -214,6 +224,22 @@ mod tests {
         let output = truncate_output(s, 5);
         assert!(output.contains("[truncated]"));
         // Should not panic on UTF-8 boundary
+    }
+
+    #[tokio::test]
+    async fn test_local_fs_read_invalid_utf8_lossy() {
+        let dir = std::env::temp_dir().join(format!("uncode-test-utf8-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file_path = dir.join("binary.txt");
+        std::fs::write(&file_path, b"ok\xff\xfe").unwrap();
+
+        let fs = LocalFileSystem;
+        let content = fs.read_text_file(&file_path).await.unwrap();
+        assert!(content.contains("非 UTF-8"));
+        assert!(content.contains('\u{FFFD}'));
+        assert!(content.contains("ok"));
+
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[tokio::test]

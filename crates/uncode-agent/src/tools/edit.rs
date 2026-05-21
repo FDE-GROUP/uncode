@@ -30,14 +30,10 @@ impl ToolExecutor for EditTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "edit".into(),
-            description: "Edit a file using hashline anchors or string replacement.\n\
-                Hashline mode: Provide 'path' and 'edits' array. Each edit has:\n\
-                - op: 'replace' | 'prepend' | 'append'\n\
-                - pos: line anchor like '5#KJ' (from read with hashline=true)\n\
-                - end: optional end anchor for range replace\n\
-                - lines: content to insert\n\
-                Legacy mode: Provide 'path', 'old_string', 'new_string' for exact string replacement.\n\
-                Returns unified diff of changes."
+            description: "编辑文件：hashline 锚点模式或 legacy 字符串替换；返回 unified diff。\n\
+                hashline 模式：提供 path 与 edits 数组，每项含 op（replace/prepend/append）、\
+                pos（如 5#KJ，来自 read 且 hashline=true）、可选 end（区间替换）、lines（插入内容）。\n\
+                legacy 模式：提供 path、old_string、new_string 做精确替换。"
                 .into(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -46,15 +42,15 @@ impl ToolExecutor for EditTool {
                     "path": {"type": "string", "description": "文件路径（相对或绝对）"},
                     "edits": {
                         "type": "array",
-                        "description": "Array of hashline edit operations",
+                        "description": "hashline 编辑操作列表",
                         "items": {
                             "type": "object",
                             "additionalProperties": false,
                             "properties": {
                                 "op": {"type": "string", "enum": ["replace", "prepend", "append"]},
-                                "pos": {"type": "string", "description": "Start anchor (e.g. '5#KJ')"},
-                                "end": {"type": "string", "description": "End anchor for range (optional)"},
-                                "lines": {"type": "string", "description": "Content to insert"}
+                                "pos": {"type": "string", "description": "起始锚点（如 5#KJ）"},
+                                "end": {"type": "string", "description": "结束锚点（区间替换时可选）"},
+                                "lines": {"type": "string", "description": "插入或替换的文本"}
                             },
                             "required": ["op", "pos", "lines"]
                         }
