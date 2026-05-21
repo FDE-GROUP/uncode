@@ -14,6 +14,8 @@ mod grep_rg;
 pub mod hashline;
 pub mod local_env;
 pub mod ls;
+#[cfg(test)]
+mod mock_env;
 pub mod read;
 pub mod registry;
 pub mod url_safety;
