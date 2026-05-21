@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::message::{Role, UsageInfo};
 use crate::tool::ToolContent;
 
+use crate::api_types::ThinkingLevel;
+
 // ── Boxed data structs for large AgentEvent variants ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,12 +126,34 @@ pub enum AgentEvent {
         data: Box<PhaseSummaryData>,
     },
 
-    // ── Session compaction ──
+    // ── Session compaction lifecycle ──
+    CompactionStart {
+        #[serde(flatten)]
+        data: Box<CompactionStartData>,
+    },
     CompactionComplete {
         messages_replaced: usize,
         tokens_before: u64,
         tokens_after: u64,
         summary_text: String,
+        #[serde(default)]
+        reason: CompactionReason,
+    },
+
+    // ── Auto retry ──
+    RetryAttempt {
+        #[serde(flatten)]
+        data: Box<RetryAttemptData>,
+    },
+
+    // ── Model / Thinking change ──
+    ModelChanged {
+        #[serde(flatten)]
+        data: Box<ModelChangedData>,
+    },
+    ThinkingLevelChanged {
+        #[serde(flatten)]
+        data: Box<ThinkingLevelChangedData>,
     },
 
     // ── Message queue ──
@@ -203,6 +227,62 @@ pub enum ErrorCategory {
     Tool,
     Network,
     Config,
+}
+
+/// Compaction 触发原因。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum CompactionReason {
+    /// Token 接近上下文窗口阈值
+    #[default]
+    Threshold,
+    /// LLM 返回 context overflow 错误后自动触发
+    Overflow,
+    /// 用户或系统手动触发
+    Manual,
+}
+
+/// Model 变更来源。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum ModelChangeSource {
+    /// 用户主动切换
+    User,
+    /// prepare_next_turn 自动决策
+    Auto,
+    /// 系统内部逻辑（如 fallback）
+    System,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionStartData {
+    pub session_id: String,
+    pub reason: CompactionReason,
+    pub tokens_before: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryAttemptData {
+    pub attempt: u32,
+    pub max_attempts: u32,
+    pub delay_ms: u64,
+    pub error: String,
+    pub final_success: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelChangedData {
+    pub from: Option<String>,
+    pub to: String,
+    pub source: ModelChangeSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkingLevelChangedData {
+    pub from: Option<ThinkingLevel>,
+    pub to: ThinkingLevel,
 }
 
 /// Hook 返回值 — 事件监听器可返回控制指令修改 Agent 行为。
@@ -312,7 +392,11 @@ pub fn agent_event_tag(event: &AgentEvent) -> &'static str {
         AgentEvent::ToolCallEnd { .. } => "tool_call_end",
         AgentEvent::TaskUpdate { .. } => "task_update",
         AgentEvent::PhaseSummary { .. } => "phase_summary",
+        AgentEvent::CompactionStart { .. } => "compaction_start",
         AgentEvent::CompactionComplete { .. } => "compaction_complete",
+        AgentEvent::RetryAttempt { .. } => "retry_attempt",
+        AgentEvent::ModelChanged { .. } => "model_changed",
+        AgentEvent::ThinkingLevelChanged { .. } => "thinking_level_changed",
         AgentEvent::MessageQueued { .. } => "message_queued",
         AgentEvent::MessageDelivered { .. } => "message_delivered",
         AgentEvent::Error { .. } => "error",
@@ -340,6 +424,11 @@ pub fn pi_equivalent_event_name(uncode_tag: &str) -> Option<&'static str> {
         "tool_call_start" => Some("tool_execution_start"),
         "tool_call_progress" => Some("tool_execution_update"),
         "tool_call_end" => Some("tool_execution_end"),
+        "compaction_start" => Some("compaction_start"),
+        "compaction_complete" => Some("compaction_complete"),
+        "retry_attempt" => Some("auto_retry_attempt"),
+        "model_changed" => Some("model_select"),
+        "thinking_level_changed" => Some("thinking_level_select"),
         _ => None,
     }
 }
