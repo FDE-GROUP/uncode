@@ -1,5 +1,6 @@
+use std::path::PathBuf;
+
 use async_trait::async_trait;
-use std::fs;
 use uncode_core::error::UncodeResult;
 use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
 
@@ -7,6 +8,18 @@ use super::diff::unified_diff;
 
 #[derive(Default)]
 pub struct WriteTool;
+
+struct WriteJob {
+    path: PathBuf,
+    content: String,
+    display: String,
+}
+
+fn write_blocking(job: WriteJob) -> Result<String, String> {
+    let old_content = std::fs::read_to_string(&job.path).unwrap_or_default();
+    super::atomic_write(&job.path, &job.content)?;
+    Ok(unified_diff(&old_content, &job.content, &job.display))
+}
 
 #[async_trait]
 impl ToolExecutor for WriteTool {
@@ -35,15 +48,19 @@ impl ToolExecutor for WriteTool {
 
         let content = arguments["content"]
             .as_str()
-            .ok_or_else(|| uncode_core::error::UncodeError::Tool("content required".into()))?;
+            .ok_or_else(|| uncode_core::error::UncodeError::Tool("content required".into()))?
+            .to_string();
 
         let resolved = super::resolve_path(raw).map_err(uncode_core::error::UncodeError::Tool)?;
-        let display = resolved.display().to_string();
+        let job = WriteJob {
+            display: resolved.display().to_string(),
+            path: resolved,
+            content,
+        };
 
-        let old_content = fs::read_to_string(&resolved).unwrap_or_default();
-
-        super::atomic_write(&resolved, content).map_err(uncode_core::error::UncodeError::Tool)?;
-
-        Ok(unified_diff(&old_content, content, &display))
+        tokio::task::spawn_blocking(move || write_blocking(job))
+            .await
+            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("write task failed: {e}")))?
+            .map_err(uncode_core::error::UncodeError::Tool)
     }
 }
