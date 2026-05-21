@@ -203,6 +203,20 @@ pub enum AgentEvent {
         partial_response: bool,
     },
 
+    // ── Uncertainty (认知层 — 认知与决策驱动设计) ──
+    /// Emitted when an uncertainty is classified and resolved.
+    /// Maps to UncertaintyClass in cognition/uncertainty.rs.
+    /// Part of the Cognitive Layer in the Cognition & Decision-Driven Design paradigm.
+    /// See `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3
+    UncertaintyEncountered {
+        /// "generative" | "cognitive" | "executional"
+        uncertainty_kind: String,
+        turn_id: String,
+        description: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolution_strategy: Option<String>,
+    },
+
     // ── Decision audit (认知与决策驱动设计) ──
     /// Emitted when the adjudication pipeline rejects or approves an action.
     /// Part of the Decision Layer in the Cognition & Decision-Driven Design paradigm.
@@ -502,6 +516,7 @@ pub fn agent_event_tag(event: &AgentEvent) -> &'static str {
         AgentEvent::ContextThreshold { .. } => "context_threshold",
         AgentEvent::Error { .. } => "error",
         AgentEvent::AgentInterrupted { .. } => "agent_interrupted",
+        AgentEvent::UncertaintyEncountered { .. } => "uncertainty_encountered",
         AgentEvent::DecisionMade { .. } => "decision_made",
         AgentEvent::AgentSettled { .. } => "agent_settled",
     }

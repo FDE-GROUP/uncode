@@ -9,6 +9,7 @@
 #![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod branch_summarization;
+pub mod cognition;            // ★ 认知层 — 认知与决策驱动设计
 pub mod compaction;
 pub mod context;
 pub mod context_builder;
