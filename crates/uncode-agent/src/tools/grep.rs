@@ -100,7 +100,7 @@ impl ToolExecutor for GrepTool {
         .map_err(|e| uncode_core::error::UncodeError::Tool(format!("grep task failed: {e}")))?;
 
         let env = super::ctx_execution_env(&ctx);
-        let output = grep_paths(
+        let (output, match_count, truncated) = grep_paths(
             env.as_ref(),
             &re,
             paths,
@@ -109,7 +109,10 @@ impl ToolExecutor for GrepTool {
         )
         .await;
 
-        Ok(ToolResult::ok(output))
+        Ok(ToolResult::ok(output).with_details(serde_json::json!({
+            "match_count": match_count,
+            "truncated": truncated,
+        })))
     }
 }
 
@@ -151,13 +154,15 @@ async fn grep_paths(
     paths: Vec<PathBuf>,
     max_results: usize,
     max_file_bytes: u64,
-) -> String {
+) -> (String, usize, bool) {
     let mut results = Vec::with_capacity(max_results.min(64));
     let mut count = 0;
+    let mut truncated = false;
 
     for path in paths {
         if count >= max_results {
             results.push("... (truncated)".into());
+            truncated = true;
             break;
         }
 
@@ -179,15 +184,17 @@ async fn grep_paths(
                 results.push(format!("{}:{}: {}", path.display(), i + 1, line));
                 count += 1;
                 if count >= max_results {
+                    truncated = true;
                     break;
                 }
             }
         }
     }
 
-    if results.is_empty() {
+    let text = if results.is_empty() {
         "no matches".into()
     } else {
         results.join("\n")
-    }
+    };
+    (text, count, truncated)
 }

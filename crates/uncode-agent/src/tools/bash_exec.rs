@@ -120,23 +120,31 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
 
     let mut output = String::with_capacity(4096);
     let mut errors = String::new();
+    let mut truncated = false;
 
     let mut stdout_lines = BufReader::new(stdout).lines();
     loop {
         if ctx.cancel_token.is_cancelled() {
             kill_process_group(pgid);
-            return ToolResult::err("cancelled");
+            return ToolResult::err_with_details(
+                "cancelled",
+                serde_json::json!({ "reason": "cancelled" }),
+            );
         }
         tokio::select! {
             _ = ctx.cancel_token.cancelled() => {
                 kill_process_group(pgid);
-                return ToolResult::err("cancelled");
+                return ToolResult::err_with_details(
+                    "cancelled",
+                    serde_json::json!({ "reason": "cancelled" }),
+                );
             }
             line = stdout_lines.next_line() => {
                 match line {
                     Ok(Some(l)) => {
                         if output.len() >= args.max_output_bytes {
                             kill_process_group(pgid);
+                            truncated = true;
                             output.push_str("\n[truncated]");
                             break;
                         }
@@ -147,6 +155,7 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
                         output.push('\n');
                         if output.len() >= args.max_output_bytes {
                             kill_process_group(pgid);
+                            truncated = true;
                             output.push_str("\n[truncated]");
                             break;
                         }
@@ -163,7 +172,10 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
         tokio::select! {
             _ = ctx.cancel_token.cancelled() => {
                 kill_process_group(pgid);
-                return ToolResult::err("cancelled");
+                return ToolResult::err_with_details(
+                    "cancelled",
+                    serde_json::json!({ "reason": "cancelled" }),
+                );
             }
             line = stderr_lines.next_line() => {
                 match line {
@@ -187,7 +199,10 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
         Ok(Ok(s)) => s,
         _ => {
             kill_process_group(pgid);
-            return ToolResult::err("timeout");
+            return ToolResult::err_with_details(
+                "timeout",
+                serde_json::json!({ "reason": "timeout" }),
+            );
         }
     };
 
@@ -196,17 +211,23 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
         output.push_str(&errors);
     }
     let exit_ok = status.success();
-    let exit_code = status.code();
+    let exit_code = status.code().unwrap_or(-1);
     if !exit_ok {
         use std::fmt::Write;
-        let _ = writeln!(output, "exit code: {}", exit_code.unwrap_or(-1));
+        let _ = writeln!(output, "exit code: {exit_code}");
     }
 
     let output = truncate_output(&output, args.max_output_bytes);
+    if output.contains("[truncated]") {
+        truncated = true;
+    }
     ToolResult {
         content: vec![ToolContent::Text(output)],
         is_error: !exit_ok,
-        details: None,
+        details: Some(serde_json::json!({
+            "exit_code": exit_code,
+            "truncated": truncated,
+        })),
         terminate: false,
     }
 }

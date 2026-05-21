@@ -76,6 +76,7 @@ impl ToolExecutor for WriteTool {
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("content required".into()))?
             .to_string();
+        let bytes_written = content.len();
 
         let resolved = super::resolve_path(raw).map_err(uncode_core::error::UncodeError::Tool)?;
         let display = resolved.display().to_string();
@@ -95,6 +96,7 @@ impl ToolExecutor for WriteTool {
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("write task failed: {e}")))?
             .map_err(uncode_core::error::UncodeError::Tool)?;
 
-        Ok(ToolResult::ok(output))
+        Ok(ToolResult::ok(output)
+            .with_details(serde_json::json!({ "bytes_written": bytes_written })))
     }
 }

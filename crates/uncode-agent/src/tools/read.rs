@@ -24,7 +24,10 @@ impl Default for ReadTool {
     }
 }
 
-fn format_directory_listing(display: &str, entries: Vec<uncode_core::tool::DirEntry>) -> String {
+fn format_directory_listing(
+    display: &str,
+    entries: Vec<uncode_core::tool::DirEntry>,
+) -> (String, bool) {
     let mut names: Vec<String> = entries
         .into_iter()
         .map(|e| {
@@ -42,7 +45,10 @@ fn format_directory_listing(display: &str, entries: Vec<uncode_core::tool::DirEn
         names.truncate(MAX_DIR_ENTRIES);
         names.push("... (truncated)".into());
     }
-    format!("Directory listing for {display}:\n{}", names.join("\n"))
+    (
+        format!("Directory listing for {display}:\n{}", names.join("\n")),
+        truncated,
+    )
 }
 
 fn format_file_content(
@@ -159,14 +165,26 @@ impl ToolExecutor for ReadTool {
             let entries = env.fs().list_dir(&resolved).await.map_err(|e| {
                 uncode_core::error::UncodeError::Tool(format!("read dir {display}: {e}"))
             })?;
-            return Ok(ToolResult::ok(format_directory_listing(&display, entries)));
+            let (listing, truncated) = format_directory_listing(&display, entries);
+            let mut result = ToolResult::ok(listing);
+            if truncated {
+                result = result.with_details(serde_json::json!({
+                    "truncated": true,
+                    "entry_limit": MAX_DIR_ENTRIES,
+                }));
+            }
+            return Ok(result);
         }
 
         if info.size > max_size as u64 {
-            return Ok(ToolResult::err(format!(
-                "file too large ({} bytes, max {max_size})",
-                info.size
-            )));
+            return Ok(ToolResult::err_with_details(
+                format!("file too large ({} bytes, max {max_size})", info.size),
+                serde_json::json!({
+                    "reason": "file_too_large",
+                    "size_bytes": info.size,
+                    "max_bytes": max_size,
+                }),
+            ));
         }
 
         let content =
