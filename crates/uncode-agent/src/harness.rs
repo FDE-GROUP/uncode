@@ -1,4 +1,26 @@
-//! AgentHarness — 生产编排器（Pi 三层架构的最高层）
+//! AgentHarness — 决策层编排器
+//!
+//! ## 认知与决策驱动设计中的定位
+//!
+//! `AgentHarness` 是决策层的最高编排点，对应范式中的
+//! "Harness = 决策层编排器"（参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §附注）。
+//!
+//! ## 与 decision/ 模块的映射
+//!
+//! | AgentHarness 职责 | 映射到的 decision/ 模块 |
+//! |:---|:---|
+//! | Phase 守卫 | `decision::adjudication::PhaseGuardPolicy` |
+//! | MAX_TURNS 检查 | `decision::adjudication::TurnLimitPolicy` |
+//! | CancellationToken 检查 | `decision::adjudication::CancellationPolicy` |
+//! | active_run CAS | `decision::adjudication::ConcurrencyPolicy` |
+//! | 权限策略 | `decision::firewall::PermissionPolicyRule` |
+//! | 路径安全 | `decision::firewall::PathSafetyRule` |
+//! | Schema 验证 | `decision::firewall::SchemaCoercionRule` |
+//!
+//! ## 演进方向
+//!
+//! 当前 AgentHarness 内联了部分决策逻辑。在后续重构中，
+//! 这些逻辑将逐步委托给 `decision/` 模块的 Adjudicator 和 SemanticFirewall。
 //!
 //! 职责：
 //! - Phase 守卫（Idle/Turn/Compaction/BranchSummary/Retry）
