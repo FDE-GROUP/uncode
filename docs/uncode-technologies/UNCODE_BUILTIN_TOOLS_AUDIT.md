@@ -207,7 +207,7 @@
 | **async 一致性** | `read`/`write`/`edit` 同步 FS；`grep`/`find`/`ls` 用 `spawn_blocking`。 |
 | **描述语言** | 中英混用（`read.hashline`、`edit` 大段英文 description）。 |
 | **Pi 对齐** | 七件套已实现 `prepare_arguments`（路径沙箱 + 相对路径回写）；`ExecutionEnv` 切片已落地；`bash` sequential 已对齐。 |
-| **可观测性** | `bash`/`write`/`grep`/`read` 已写入 `ToolResult.details`（退出码、截断、bytes_written、match_count 等）；工具耗时仍缺。 |
+| **可观测性** | 工具 `details` 含退出码/截断/bytes 等；`AgentLoop` 统一注入 `duration_ms`。 |
 
 ---
 
@@ -231,7 +231,7 @@
 
 ### 4.3 中期（P3 / 架构）
 
-1. 全面接入 `ExecutionEnv`（对齐 Pi）。  
+1. ~~全面接入 `ExecutionEnv`（对齐 Pi）~~ — 七件套 + `bash_exec` 已落地（#244 切片）。  
 2. 可选 ripgrep 后端或 `ignore` _walk。  
 3. 工具级 `prepare_arguments`（路径规范化、默认 limit）。  
 4. 配置化：`max_size`、`max_grep_results` 进 `uncode-shared` config。
