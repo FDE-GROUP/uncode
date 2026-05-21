@@ -1,0 +1,663 @@
+# uncode 重构路线图：打造"认知与决策驱动设计"最佳实践
+
+> 目标：将 uncode 从"隐含地体现了范式"升级为"范式的最佳实践参考实现"  
+> 依据：`cognition-decision-driven-design.md`（范式定义） + `uncodenow-architecture-evaluation.md`（现状差距）  
+> 原则：每个阶段完成后，新开发者应能从代码结构中直观识别出认知层/决策层/防火墙/治理层的四层边界
+
+---
+
+## 零、差距总览：范式地图与 uncode 现状的对照
+
+| 范式组件 | 范式要求 | uncode 现状 | 差距等级 |
+|:---|:---|:---|:---:|
+| **认知-决策分离** | 两层在 crate/模块级别可视 | `uncode-ai` vs `uncode-agent` 已有编译级隔离，但未命名 | 🟡 |
+| **语义防火墙** | Parsing → Validation → Normalization 三层独立 | Parsing/Validation 散落在多处；Normalization 不独立 | 🔴 |
+| **决策层四阶段** | 提案接收 → 裁决 → 执行 → 审计，各自为独立模块 | 散落在 `loop_engine`、`AgentHarness`、工具管线中 | 🔴 |
+| **不确定性分类** | 生成/认知/执行三类，显式类型建模 | `Error.category` 按来源分（Network/Api），不按性质分 | 🟡 |
+| **决策即事件** | 每次裁决/执行/回滚 = 事件 | `AgentEvent` 18 变体覆盖全生命周期，但缺显式的 `DecisionMade` | 🟡 |
+| **护栏声明式** | 策略配置文件，非代码分散常量 | 散落在 `AppConfig`、常量、hook 逻辑中 | 🔴 |
+| **事件分级/采样** | 关键事件 vs 可选事件，导出可控 | 无分级机制 | 🟡 |
+| **铁三角治理** | 事件驱动 + 事件溯源 + 约束设计各司其职 | 事件驱动 ★★★★★，事件溯源 ★★★★☆，约束设计 ★★★★☆ | 🟢 |
+| **AgentStep 训练模型** | `{ state, action, observation, feedback? }` | 无对等事件类型 | 🟡 |
+| **工作流编排** | 声明式步骤 DAG | 隐式双层循环，无声明式 | ⚪ |
+| **CQRS** | 显式 Command/Query 分离 | 隐式分离 | ⚪ |
+| **多 Agent 协作** | 角色分工、互相制衡 | 无（Pi 哲学有意不做） | ⚪ |
+
+🟢 已对齐　🟡 存在但需显式化　🔴 需要重构引入　⚪ 低优先级阶段
+
+---
+
+## 第一阶段：决策层形式化（核心重构）
+
+**目标**：让新开发者打开 `uncode-agent/src/` 时，第一眼看到的是 `decision/` 目录，包含提案接收、裁决、执行、审计四个子模块。
+
+### 1.1 创建 `uncode-agent/src/decision/` 模块
+
+```
+uncode-agent/src/decision/
+├── mod.rs              # pub mod proposal; pub mod adjudication; ...
+├── proposal.rs         # 提案接收：ProposedAction, ActionProposal, parse_llm_output
+├── adjudication.rs     # 裁决：Policy, Guardrail, Adjudicator
+├── execution.rs        # 执行派发：ExecutionOrchestrator, parallel/sequential/terminate
+├── audit.rs            # 审计：DecisionTrail, AuditLog, ReplayEngine
+├── firewall.rs         # 语义防火墙：Parser → Validator → Normalizer 三层管线
+└── types.rs            # 共享类型：ApprovedAction, DeniedAction, DecisionOutcome
+```
+
+### 1.2 提案接收层（`proposal.rs`）——收口 LLM 输出解析
+
+**当前问题**：LLM 输出的 `ToolCall` 解析散落在 `loop_engine.rs` 的 `handle_llm_stream` 中。
+
+**重构**：
+
+```rust
+// proposal.rs — 提案接收的入口
+pub struct ActionProposal {
+    pub tool_name: String,
+    pub raw_arguments: serde_json::Value,  // 尚未验证
+    pub rationale: Option<String>,
+    pub confidence: Option<f32>,
+    pub alternatives: Vec<ActionProposal>,  // 如果 LLM 返回多候选
+}
+
+pub struct ProposedAction {
+    pub proposal: ActionProposal,
+    pub parsed: ParsedAction,       // 经防火墙 Parsing 层处理后
+    pub validated: ValidatedAction, // 经防火墙 Validation 层处理后
+    pub normalized: NormalizedAction, // 经防火墙 Normalization 层处理后
+}
+
+// 提案管线
+pub async fn receive_proposal(
+    llm_output: &ContentBlock,
+    tool_registry: &ToolRegistry,
+    firewall: &SemanticFirewall,
+) -> Result<ProposedAction, ProposalError> {
+    let raw = parse_raw_proposal(llm_output)?;           // 提取 tool_name + args
+    let parsed = firewall.parse(&raw)?;                  // Parsing
+    let validated = firewall.validate(&parsed)?;         // Validation
+    let normalized = firewall.normalize(&validated)?;    // Normalization
+    Ok(ProposedAction { proposal: raw, parsed, validated, normalized })
+}
+```
+
+### 1.3 语义防火墙（`firewall.rs`）——三层独立管线
+
+**当前问题**：Parsing/Validation/Normalization 没有独立的模块边界，散落在 `loop_engine` 和工具管线。
+
+**重构**：
+
+```rust
+// firewall.rs — 认知层与决策层之间的唯一通道
+pub struct SemanticFirewall {
+    parser: Box<dyn ParseStrategy>,
+    validators: Vec<Box<dyn ValidationRule>>,
+    normalizer: Box<dyn NormalizeStrategy>,
+}
+
+pub trait ParseStrategy: Send + Sync {
+    fn parse(&self, raw: &ActionProposal) -> Result<ParsedAction, ParseError>;
+}
+
+pub trait ValidationRule: Send + Sync {
+    fn validate(&self, action: &ParsedAction) -> Result<ValidationVerdict, ValidationError>;
+}
+
+pub trait NormalizeStrategy: Send + Sync {
+    fn normalize(&self, action: &ValidatedAction) -> Result<NormalizedAction, NormalizeError>;
+}
+
+// 具体的 ValidationRule 实现
+pub struct PathSafetyRule;        // 路径必须在 CWD 内
+pub struct ToolWhitelistRule;     // 工具必须在 active_tools 中
+pub struct ResourceLimitRule;     // 文件大小、命令超时等
+pub struct SchemaCoercionRule;    // JSON Schema 验证 + 类型自动转换
+
+impl SemanticFirewall {
+    pub async fn process(&self, raw: ActionProposal) -> Result<NormalizedAction, FirewallError> {
+        let parsed = self.parser.parse(&raw)?;
+        let verdict = self.validate_all(&parsed)?;
+        if !verdict.approved {
+            return Err(FirewallError::Blocked { reasons: verdict.violations });
+        }
+        self.normalizer.normalize(&parsed.into_validated(verdict))
+    }
+}
+```
+
+**可测试性收益**：每个 `ValidationRule` 可以独立单元测试；防火墙管线可以用 mock parser/normalizer 做集成测试。
+
+### 1.4 裁决器（`adjudication.rs`）——从 Phase 守卫到显式策略
+
+**当前问题**：裁决逻辑（Phase 守卫、MAX_TURNS、CancellationToken）散落在 `AgentHarness` 各方法中。
+
+**重构**：
+
+```rust
+// adjudication.rs — 裁决器
+pub struct Adjudicator {
+    policies: Vec<Box<dyn DecisionPolicy>>,
+}
+
+pub trait DecisionPolicy: Send + Sync {
+    fn evaluate(&self, context: &DecisionContext, action: &NormalizedAction) 
+        -> Result<DecisionVerdict, AdjudicationError>;
+}
+
+// 将当前的分散逻辑包装为 Policy 实现
+pub struct PhaseGuardPolicy;        // Phase::Idle 才能接收提案
+pub struct TurnLimitPolicy;         // MAX_TURNS 检查
+pub struct CancellationPolicy;      // CancellationToken 检查
+pub struct ConcurrencyPolicy;       // active_run CAS 检查
+pub struct ResourcePolicy;          // 内存/文件句柄限制
+
+pub struct DecisionVerdict {
+    pub allowed: bool,
+    pub reason: Option<String>,
+    pub required_constraints: Vec<Constraint>,  // 执行时必须遵守的约束
+}
+
+impl Adjudicator {
+    pub async fn adjudicate(
+        &self,
+        action: &NormalizedAction,
+        context: &DecisionContext,
+    ) -> Result<ApprovedAction, AdjudicationError> {
+        for policy in &self.policies {
+            let verdict = policy.evaluate(context, action)?;
+            if !verdict.allowed {
+                return Err(AdjudicationError::Denied {
+                    policy: policy.name(),
+                    reason: verdict.reason.unwrap_or_default(),
+                });
+            }
+        }
+        Ok(ApprovedAction {
+            action: action.clone(),
+            constraints: self.collect_constraints(action, context),
+            adjudicated_at: chrono::Utc::now(),
+            adjudicated_by: std::any::type_name::<Self>().to_string(),
+        })
+    }
+}
+```
+
+### 1.5 审计器（`audit.rs`）——引入 `DecisionMade` 事件
+
+**当前问题**：有事件系统但缺显式的"决策"事件类型。
+
+**重构**：
+
+```rust
+// audit.rs — 决策审计
+// 新增 AgentEvent 变体（或在 uncode-core 中扩展）
+pub struct DecisionMade {
+    pub turn_id: TurnId,
+    pub proposal: ActionProposal,
+    pub verdict: DecisionVerdict,
+    pub approved_action: Option<ApprovedAction>,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub adjudication_duration_ms: u64,
+}
+
+// AgentStep — 面向训练的事件模型
+pub struct AgentStep {
+    pub state: AgentStateSnapshot,      // 决策前的状态
+    pub action: ExecutedAction,         // 被批准并执行的动作
+    pub observation: ActionObservation, // 执行后环境的观察
+    pub feedback: Option<Feedback>,     // 人类或自动化评价
+}
+
+pub enum Feedback {
+    HumanApproval { approved: bool, comment: Option<String> },
+    TestPassed { test_name: String },
+    TestFailed { test_name: String, error: String },
+    AutoRevert { reason: String },
+}
+```
+
+### 1.6 重组 `AgentHarness`——从单体到编排器
+
+重构后的 `AgentHarness` 不再直接包含裁决逻辑和工具执行细节，而是编排四个子模块：
+
+```rust
+pub struct AgentHarness {
+    // 认知侧
+    llm_api: Arc<dyn Api>,           // 保持在 uncode-ai 侧
+    context_builder: ContextBuilder,  // 认知层的上下文构建（后续阶段重构）
+    
+    // 决策侧（第一阶段重构产物）
+    firewall: SemanticFirewall,
+    adjudicator: Adjudicator,
+    executor: ExecutionOrchestrator,
+    auditor: Auditor,
+    
+    // 共享
+    session_store: SessionStore,
+    event_tx: broadcast::Sender<AgentEvent>,
+    active_run: AtomicBool,
+}
+
+impl AgentHarness {
+    async fn run_turn(&self, messages: Vec<Message>) -> Result<TurnResult> {
+        // 1. LLM 生成（认知层）→ 产生 ContentBlock 流
+        let llm_output = self.call_llm(messages).await?;
+        
+        // 2. 提案接收（经过语义防火墙）→ 进入决策层
+        let proposals = self.firewall.process_batch(&llm_output.tool_calls).await?;
+        
+        // 3. 裁决
+        let approved: Vec<ApprovedAction> = futures::future::join_all(
+            proposals.iter().map(|p| self.adjudicator.adjudicate(p, &context))
+        ).await?.into_iter().collect::<Result<Vec<_>, _>>()?;
+        
+        // 4. 执行
+        let results = self.executor.dispatch(approved).await?;
+        
+        // 5. 审计
+        self.auditor.record_turn(DecisionMade { /* ... */ }, &results).await?;
+        
+        Ok(TurnResult { results })
+    }
+}
+```
+
+### 第一阶段产物检查清单
+
+- [ ] `uncode-agent/src/decision/` 目录存在，含 6 个模块文件
+- [ ] `SemanticFirewall` 三层 trait 定义 + 至少 4 个 `ValidationRule` 实现
+- [ ] `Adjudicator` + 至少 5 个 `DecisionPolicy` 实现
+- [ ] `DecisionMade` 作为新 `AgentEvent` 变体在 `uncode-core` 中定义
+- [ ] `AgentStep` 作为面向训练的事件模型，支持 `feedback` 字段
+- [ ] `AgentHarness` 不再包含裁决逻辑——`adjudicate()` 方法委托给 `Adjudicator`
+- [ ] 现有测试通过（重构不改变行为，只改变组织）
+
+---
+
+## 第二阶段：认知层形式化
+
+**目标**：`uncode-agent/src/cognition/` 包含上下文构建、提示词管理、不确定性管理三个子模块。
+
+### 2.1 创建 `uncode-agent/src/cognition/` 模块
+
+```
+uncode-agent/src/cognition/
+├── mod.rs
+├── context_builder.rs   # build_context() — 从事件流重建认知上下文
+├── prompt_manager.rs    # 系统提示词模板、工具描述生成、角色设定
+├── uncertainty.rs       # GenerationError / CognitionError / ExecutionError 多态建模
+└── memory.rs            # 会话记忆管理（压缩边界、摘要注入、检索增强）
+```
+
+### 2.2 不确定性显式建模（`uncertainty.rs`）
+
+**当前问题**：`AgentEvent::Error { category }` 按错误来源分（Network/Api），不按不确定性性质分。
+
+**重构**：
+
+```rust
+// uncertainty.rs — 不确定性的领域建模
+pub enum UncertaintyClass {
+    /// LLM 采样导致的多候选差异
+    Generative(GenerativeConfig),
+    /// 上下文不足导致的信息缺口
+    Cognitive(CognitiveGap),
+    /// 外部系统/工具调用导致的失败
+    Executional(ExecutionContext),
+}
+
+pub struct GenerativeConfig {
+    pub candidates: Vec<String>,
+    pub temperature: f32,
+    pub strategy: GenerativeStrategy,
+}
+
+pub enum GenerativeStrategy {
+    Rerank,
+    MajorityVote,
+    BestOfN(usize),
+}
+
+pub struct CognitiveGap {
+    pub missing_context: Vec<ContextRequirement>,
+    pub suggested_remediation: String,
+}
+
+pub enum ContextRequirement {
+    FileContent(String),
+    Documentation(String),
+    WorkspaceStructure,
+    PreviousDecision,
+}
+
+pub struct ExecutionContext {
+    pub error: String,
+    pub retry_count: u32,
+    pub max_retries: u32,
+    pub strategy: ExecutionStrategy,
+}
+
+pub enum ExecutionStrategy {
+    Retry,
+    FallbackTool,
+    Compensate,
+    Escalate,
+}
+
+// 在 AgentEvent 中新增（或重构 Error 变体）
+pub enum AgentEvent {
+    // ... 现有变体
+    UncertaintyEncountered {
+        class: UncertaintyClass,
+        turn_id: TurnId,
+        resolution: UncertaintyResolution,
+    },
+}
+
+pub enum UncertaintyResolution {
+    Resolved { strategy_used: String },
+    Escalated { reason: String },
+    Unresolved { attempts: u32 },
+}
+```
+
+### 2.3 提示词管理（`prompt_manager.rs`）
+
+```rust
+// prompt_manager.rs — 提示词即领域语言
+pub struct PromptManager {
+    system_template: SystemPromptTemplate,
+    tool_descriptions: ToolDescriptionGenerator,
+    role_config: RoleConfiguration,
+}
+
+impl PromptManager {
+    /// 认知与决策驱动设计的原则 2：提示词是认知层的领域语言
+    /// 它编码了"系统期望 LLM 理解什么"——但决策层不接触它
+    pub fn build_system_prompt(&self, context: &CognitiveContext) -> String {
+        // ...
+    }
+    
+    pub fn build_tool_descriptions(&self, active_tools: &[ToolDefinition]) -> String {
+        // ...
+    }
+}
+```
+
+### 第二阶段产物检查清单
+
+- [ ] `uncode-agent/src/cognition/` 目录存在，含 4 个模块文件
+- [ ] `UncertaintyClass` 枚举 + 三种策略类型在 `uncode-core` 中定义
+- [ ] `AgentEvent::UncertaintyEncountered` 或等效的事件变体
+- [ ] `PromptManager` 封装系统提示词和工具描述生成逻辑
+- [ ] 现有 `build_context()` 逻辑迁移到 `context_builder.rs`
+
+---
+
+## 第三阶段：治理层完善
+
+**目标**：补齐铁三角中约束设计的最后一块（声明式策略配置），引入事件分级和 AgentStep。
+
+### 3.1 声明式约束策略配置
+
+**当前问题**：护栏参数散落在 `AppConfig`、常量定义、hook 逻辑中。
+
+**重构**——引入 `guardrails.yaml`（或 `.uncode/guardrails.yaml`）：
+
+```yaml
+# .uncode/guardrails.yaml — 认知与决策驱动设计的可配置护栏
+version: 1
+
+decision:
+  turn_limit: 50
+  max_concurrent_tools: 8
+  tool_timeout_seconds: 120
+  
+firewall:
+  path_safety:
+    mode: "cwd_only"          # cwd_only | allow_list | unrestricted
+    allow_list: []
+  tool_whitelist:
+    mode: "builtin"           # builtin | custom | all
+    blocked: []               # 额外阻断的工具
+  resource_limits:
+    max_file_size_mb: 10
+    max_bash_output_lines: 1000
+    
+adjudication:
+  policies:
+    - name: "no_destructive_commands"
+      enabled: true
+      rules:
+        - pattern: "rm -rf"
+          action: "block"
+        - pattern: "DROP TABLE"
+          action: "block_and_warn"
+    - name: "require_approval_for_write"
+      enabled: false
+      rules:
+        - tools: ["write", "edit", "bash"]
+          action: "ask_user"
+          
+audit:
+  event_levels:
+    critical: ["TurnStart", "TurnEnd", "ToolCallEnd", "DecisionMade", "Error"]
+    standard: ["ContentDelta", "ToolCallStart", "CompactionComplete"]
+    verbose: ["ToolCallProgress"]
+  retention:
+    critical_events: "permanent"
+    standard_events: "90_days"
+    verbose_events: "7_days"
+```
+
+```rust
+// 在 uncode-agent 中加载
+pub struct GuardrailConfig {
+    pub decision: DecisionConfig,
+    pub firewall: FirewallConfig,
+    pub adjudication: AdjudicationConfig,
+    pub audit: AuditConfig,
+}
+
+impl GuardrailConfig {
+    pub fn load() -> Result<Self> {
+        let path = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("uncode")
+            .join("guardrails.yaml");
+        // 如果文件不存在，使用默认值
+        // ...
+    }
+}
+```
+
+### 3.2 事件分级与导出
+
+```rust
+// 在 AgentEvent 上增加 detail_level
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum EventDetailLevel {
+    Critical,   // 必须记录
+    Standard,   // 默认记录
+    Verbose,    // 仅调试时记录
+}
+
+impl AgentEvent {
+    pub fn detail_level(&self) -> EventDetailLevel {
+        match self {
+            Self::TurnStart | Self::TurnEnd | Self::ToolCallEnd | 
+            Self::DecisionMade { .. } | Self::Error { .. } => EventDetailLevel::Critical,
+            Self::ContentDelta { .. } | Self::ToolCallStart | 
+            Self::CompactionComplete => EventDetailLevel::Standard,
+            Self::ToolCallProgress { .. } => EventDetailLevel::Verbose,
+            _ => EventDetailLevel::Standard,
+        }
+    }
+}
+
+// JSONL 导出时的过滤
+pub async fn export_session(
+    store: &SessionStore, 
+    session_id: &str, 
+    min_level: EventDetailLevel,
+) -> Result<Vec<AgentEvent>> {
+    let events = store.load_events(session_id).await?;
+    Ok(events.into_iter()
+        .filter(|e| e.detail_level() <= min_level)  // Critical < Standard < Verbose
+        .collect())
+}
+```
+
+### 3.3 AgentStep 训练模型
+
+```rust
+// uncode-core 中新增
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStep {
+    pub step_id: Uuid,
+    pub turn_id: TurnId,
+    pub state_before: AgentStateSnapshot,
+    pub action: ExecutedAction,
+    pub observation: ActionObservation,
+    pub feedback: Option<Feedback>,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStateSnapshot {
+    pub phase: String,
+    pub turn_number: u32,
+    pub active_tools: Vec<String>,
+    pub context_size_tokens: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionObservation {
+    pub success: bool,
+    pub output_summary: String,
+    pub files_changed: Vec<String>,
+    pub duration_ms: u64,
+    pub terminate: bool,  // 是否触发了 terminate AND 语义
+}
+```
+
+### 第三阶段产物检查清单
+
+- [ ] `guardrails.yaml` 格式定义 + 默认值
+- [ ] `GuardrailConfig::load()` 从文件或默认值加载
+- [ ] `EventDetailLevel` 在 `AgentEvent` 上实现
+- [ ] JSONL 导出支持 `--detail-level` 参数
+- [ ] `AgentStep` 类型定义在 `uncode-core` 中
+- [ ] 审计器在每次 turn 结束时自动生成 `AgentStep`
+
+---
+
+## 第四阶段：验证、文档和品牌对齐
+
+### 4.1 文档体系
+
+```
+docs/uncode-technologies/
+├── UNCODE_COGNITION_LAYER.md        # 认知层设计文档
+├── UNCODE_DECISION_LAYER.md         # 决策层设计文档（含四阶段说明）
+├── UNCODE_SEMANTIC_FIREWALL.md      # 语义防火墙设计文档
+└── UNCODE_GOVERNANCE_LAYER.md       # 治理层（7 范式在 uncode 中的映射）
+
+docs/ai-agent-archi/
+├── cognition-decision-driven-design.md  # 范式定义（已有）
+└── uncodenow-refactoring-roadmap.md     # 本文档
+```
+
+**关键**：每个文档的引言段应明确引用"认知与决策驱动设计"范式，并标注本篇是该范式在 uncode 中的实现层说明。
+
+### 4.2 架构图
+
+在 `UNCODE_DECISION_LAYER.md` 中提供一张 ASCII 架构图，清晰展示：
+
+```
+                    ┌──────────────┐
+                    │  uncode-ai   │  ← 认知层基础设施
+                    │  (4 协议)    │
+                    └──────┬───────┘
+                           │ StreamEvent
+                           ▼
+┌──────────────────────────────────────────────────┐
+│              uncode-agent                        │
+│                                                  │
+│  ┌─────────────────┐    ┌─────────────────────┐ │
+│  │  cognition/      │    │  decision/           │ │
+│  │  context_builder │    │  firewall (语义防火墙) │ │
+│  │  prompt_manager  │ ←→ │  adjudication (裁决)  │ │
+│  │  uncertainty     │    │  execution (执行)     │ │
+│  └─────────────────┘    │  audit (审计)          │ │
+│                          └─────────────────────┘ │
+│                                                  │
+│  治理层：                                         │
+│  ┌──────────┬──────────┬──────────┬───────────┐ │
+│  │ 事件驱动  │ 事件溯源  │ 约束设计  │ 状态机    │ │
+│  └──────────┴──────────┴──────────┴───────────┘ │
+└──────────────────────────────────────────────────┘
+```
+
+### 4.3 命名对齐
+
+| 旧名称/概念 | 新名称（范式对齐后） | 说明 |
+|:---|:---|:---|
+| `AgentHarness` | 保留（Harness Engineering 术语） | 在文档中标注"Harness = 决策层编排器" |
+| `loop_engine.rs` | `decision/execution.rs` 中的 `ExecutionOrchestrator` | 原逻辑迁移，保留 `LoopEngine` 为入口 Facade |
+| `event.rs` 中的 Error | `cognition/uncertainty.rs` 中的 `UncertaintyClass` | 错误建模从"来源"改为"性质" |
+| 分散的验证逻辑 | `decision/firewall.rs` 中的 `ValidationRule` trait 实现 | 收口到防火墙 |
+| 分散的护栏逻辑 | `decision/adjudication.rs` 中的 `DecisionPolicy` trait 实现 | 收口到裁决器 |
+
+### 第四阶段产物检查清单
+
+- [ ] 新增 4 篇 `UNCODE_*` 设计文档，每篇引用了范式定义
+- [ ] 架构图出现在 `UNCODE_DECISION_LAYER.md` 和 `README.md` 中
+- [ ] 术语对齐表出现在 `AGENTS.md` 或项目 README 中
+- [ ] `uncode-agent/src/` 的模块注释说明认知层/决策层/治理层的划分
+
+---
+
+## 五、实施优先级与风险
+
+### 绝对不能跳过的（P0）
+
+1. **语义防火墙独立为 `decision/firewall.rs`** — 这是范式最核心的概念，也是当前最大的架构缺口
+2. **裁决器独立为 `decision/adjudication.rs`** — 这是"决策作为第一公民"的工程体现
+3. **`DecisionMade` 事件扩展** — 决策即事件的原则需要显式事件类型支撑
+
+### 高价值低风险的（P1）
+
+4. 不确定性三分类显式建模
+5. 声明式 `guardrails.yaml`
+6. 事件分级 + `AgentStep` 模型
+
+### 锦上添花的（P2）
+
+7. `cognition/` 模块的形式化（`prompt_manager`, `memory`)
+8. CQRS 显式建模
+9. 工作流编排声明式 DSL
+10. WASM 扩展宿主
+
+### 风险提示
+
+- **第一阶段的重构务必保证行为不变**：`decision/firewall.rs` 中的 Parser/Validator/Normalizer 应从现有逻辑中提取，不是重写。用现有测试套件做回归验证。
+- **不要过度设计 trait 抽象**：`DecisionPolicy` 和 `ValidationRule` 的 trait 接口可以先从 2-3 个具体实现出发定义，而不是一开始就设计一个"万能策略引擎"。
+- **事件扩展需协调版本兼容**：`AgentEvent` 新增变体可能影响 TUI 渲染器和 JSONL 导出格式。使用 `#[non_exhaustive]` 和在变体上标记 `#[serde(rename)]` 保持兼容。
+
+---
+
+## 六、验证标准：如何判断"最佳实践"已经达成
+
+重构完成后，以下场景应能自然成立：
+
+1. **新开发者能在 5 分钟内画出架构图**：打开 `uncode-agent/src/`，看到 `cognition/` 和 `decision/` 两个目录，立即理解"认知生成可能性，决策约束可能性"。
+2. **语义防火墙可独立测试**：`cargo test -p uncode-agent decision::firewall` 覆盖 Parsing/Validation/Normalization 的所有 `ValidationRule` 实现。
+3. **裁决策略可单独替换**：新增一个 `DecisionPolicy` 不影响其他策略，不需要修改 `AgentHarness`。
+4. **护栏配置可通过文件修改**：`guardrails.yaml` 中改 `turn_limit: 30` 立即可生效，不需要重新编译。
+5. **训练数据可导出**：`uncode-cli export --session-id xxx --format agentstep --detail-level critical` 输出可直接用于 RL 微调的 trajectory 数据。
+6. **范式文档与实现同步**：`UNCODE_DECISION_LAYER.md` 中的架构图对应到实际的 `decision/` 目录结构，新开发者点进模块注释中的 `/// 参见 docs/ai-agent-archi/cognition-decision-driven-design.md §3.2` 能找到对应的范式定义。
+
+---
+
+*本路线图随 uncode 重构进展和范式定义迭代应定期修订。每个阶段完成后，在阶段标题旁标注完成日期和 commit hash。*
