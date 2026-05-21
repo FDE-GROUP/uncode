@@ -155,6 +155,7 @@ mod tests {
 
     #[test]
     fn test_reject_loopback() {
+        crate::tools::url_safety::set_allow_loopback_for_tests(false);
         let tool = WebFetchTool::new();
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(tool.execute(serde_json::json!({"url": "http://127.0.0.1/"})));

@@ -6,6 +6,8 @@ use super::local_env::truncate_output;
 
 const TAVILY_API_URL: &str = "https://api.tavily.com/search";
 const DEFAULT_MAX_RESULTS: usize = 5;
+/// Upper bound for Tavily `max_results` (schema `maximum` + runtime clamp).
+const MAX_MAX_RESULTS: usize = 20;
 const TIMEOUT_SECS: u64 = 30;
 /// Cap formatted search output (aligned with bash / web_fetch).
 const MAX_OUTPUT_BYTES: usize = 50 * 1024;
@@ -93,7 +95,12 @@ impl ToolExecutor for WebSearchTool {
                 "additionalProperties": false,
                 "properties": {
                     "query": {"type": "string", "description": "搜索关键词"},
-                    "max_results": {"type": "integer", "description": "最大结果数 (默认 5)"}
+                    "max_results": {
+                        "type": "integer",
+                        "description": "最大结果数 (默认 5)",
+                        "minimum": 1,
+                        "maximum": MAX_MAX_RESULTS
+                    }
                 },
                 "required": ["query"]
             }),
@@ -110,6 +117,7 @@ impl ToolExecutor for WebSearchTool {
         let max_results = arguments["max_results"]
             .as_u64()
             .unwrap_or(DEFAULT_MAX_RESULTS as u64) as usize;
+        let max_results = max_results.clamp(1, MAX_MAX_RESULTS);
 
         let body = serde_json::json!({
             "api_key": self.api_key,
@@ -202,6 +210,10 @@ mod tests {
         let tool = WebSearchTool::new("test-key".into());
         let def = tool.definition();
         assert_eq!(def.name, "web_search");
+        assert_eq!(
+            def.parameters["properties"]["max_results"]["maximum"],
+            MAX_MAX_RESULTS
+        );
     }
 
     #[test]
@@ -237,6 +249,30 @@ mod tests {
         assert!(out.contains("summary from mock"));
         assert!(out.contains("Mock Page"));
         assert!(out.contains("snippet text"));
+    }
+
+    #[tokio::test]
+    async fn test_search_clamps_max_results_in_request() {
+        let mock_server = wiremock::MockServer::start().await;
+        let body = serde_json::json!({
+            "answer": null,
+            "results": []
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::body_json(serde_json::json!({
+                "api_key": "tvly-test",
+                "query": "big",
+                "max_results": MAX_MAX_RESULTS,
+                "include_answer": true
+            })))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+            .mount(&mock_server)
+            .await;
+
+        let tool = WebSearchTool::with_search_url("tvly-test".into(), mock_server.uri());
+        tool.execute(serde_json::json!({ "query": "big", "max_results": 999 }))
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
