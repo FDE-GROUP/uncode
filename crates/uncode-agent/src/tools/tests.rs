@@ -816,6 +816,62 @@ async fn test_read_prepare_normalizes_relative_path() {
 }
 
 #[tokio::test]
+async fn test_grep_native_backend_details_when_no_rg() {
+    if super::grep_rg::rg_available() {
+        return;
+    }
+    let (_dir, _guard) = sandbox_dir();
+    fs::write("needle.txt", "find_needle_here\n").unwrap();
+
+    let tool = GrepTool::default();
+    let tr = tool
+        .execute_with_context(
+            serde_json::json!({
+                "pattern": "find_needle",
+                "path": "."
+            }),
+            uncode_core::tool::ToolContext {
+                cancel_token: tokio_util::sync::CancellationToken::new(),
+                on_progress: None,
+                tool_call_id: String::new(),
+                execution_env: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(tr.details.as_ref().unwrap()["backend"], "native");
+    assert!(tr.text_content().contains("needle.txt"));
+}
+
+#[tokio::test]
+async fn test_grep_ripgrep_backend_when_rg_present() {
+    if !super::grep_rg::rg_available() {
+        return;
+    }
+    let (_dir, _guard) = sandbox_dir();
+    fs::write("rg_hit.txt", "ripgrep_marker_line\n").unwrap();
+
+    let tool = GrepTool::default();
+    let tr = tool
+        .execute_with_context(
+            serde_json::json!({
+                "pattern": "ripgrep_marker",
+                "path": "."
+            }),
+            uncode_core::tool::ToolContext {
+                cancel_token: tokio_util::sync::CancellationToken::new(),
+                on_progress: None,
+                tool_call_id: String::new(),
+                execution_env: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(tr.details.as_ref().unwrap()["backend"], "ripgrep");
+    assert!(tr.text_content().contains("rg_hit.txt"));
+}
+
+#[tokio::test]
 async fn test_grep_prepare_defaults_path_to_dot() {
     let (_dir, _guard) = sandbox_dir();
 
