@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use uncode_core::error::UncodeResult;
+use tokio_util::sync::CancellationToken;
+use uncode_core::error::{UncodeError, UncodeResult};
 use uncode_core::tool::{ExecutionMode, ToolContext, ToolDefinition, ToolExecutor, ToolResult};
 
-use super::bash_exec::{BashExecArgs, BashStreamContext, exec_bash_simple, exec_bash_streaming};
+use super::bash_exec::{BashExecArgs, BashStreamContext, exec_bash_streaming};
 
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 50 * 1024;
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
@@ -62,6 +63,25 @@ fn to_exec_args(parsed: ParsedArgs, max_output_bytes: usize) -> BashExecArgs {
     }
 }
 
+/// Map structured bash output to legacy `execute()` `Result<String>` (errors on failure).
+fn bash_tool_result_to_string(result: ToolResult) -> UncodeResult<String> {
+    let text = result.text_content();
+    if result.is_error {
+        Err(UncodeError::Tool(text))
+    } else {
+        Ok(text)
+    }
+}
+
+fn default_tool_context() -> ToolContext {
+    ToolContext {
+        cancel_token: CancellationToken::new(),
+        on_progress: None,
+        tool_call_id: String::new(),
+        execution_env: None,
+    }
+}
+
 #[async_trait]
 impl ToolExecutor for BashTool {
     fn definition(&self) -> ToolDefinition {
@@ -98,8 +118,10 @@ impl ToolExecutor for BashTool {
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
-        let parsed = parse_args(&arguments)?;
-        exec_bash_simple(to_exec_args(parsed, self.max_output_bytes)).await
+        let result = self
+            .execute_with_context(arguments, default_tool_context())
+            .await?;
+        bash_tool_result_to_string(result)
     }
 
     async fn execute_with_context(
