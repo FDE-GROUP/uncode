@@ -164,6 +164,34 @@ pub enum AgentEvent {
         text: String,
     },
 
+    // ── LLM request/response lifecycle ──
+    LlmRequestStart {
+        #[serde(flatten)]
+        data: Box<LlmRequestStartData>,
+    },
+    LlmRequestEnd {
+        #[serde(flatten)]
+        data: Box<LlmRequestEndData>,
+    },
+
+    // ── Queue state ──
+    QueueUpdate {
+        #[serde(flatten)]
+        data: Box<QueueUpdateData>,
+    },
+
+    // ── Session info change ──
+    SessionInfoChanged {
+        #[serde(flatten)]
+        data: Box<SessionInfoChangedData>,
+    },
+
+    // ── Context usage warning ──
+    ContextThreshold {
+        #[serde(flatten)]
+        data: Box<ContextThresholdData>,
+    },
+
     // ── Error / Interrupt ──
     Error {
         category: ErrorCategory,
@@ -285,6 +313,60 @@ pub struct ThinkingLevelChangedData {
     pub to: ThinkingLevel,
 }
 
+// ── E4: LLM request/response ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmRequestStartData {
+    pub model_id: String,
+    pub message_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmRequestEndData {
+    pub model_id: String,
+    pub duration_ms: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub status: LlmRequestStatus,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmRequestStatus {
+    Success,
+    Error,
+    Cancelled,
+}
+
+// ── E5: Queue state ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueueUpdateData {
+    pub steering_count: usize,
+    pub follow_up_count: usize,
+    pub next_turn_count: usize,
+}
+
+// ── E6: Session info change ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionInfoChangedData {
+    pub session_id: String,
+    pub field: String,
+    pub old_value: Option<String>,
+    pub new_value: Option<String>,
+}
+
+// ── E8: Context threshold ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextThresholdData {
+    pub session_id: String,
+    pub usage_ratio: f64,
+    pub threshold: f64,
+    pub context_window: u64,
+}
+
 /// Hook 返回值 — 事件监听器可返回控制指令修改 Agent 行为。
 ///
 /// **Pi:** 对应 Harness hook 的 typed return（block context / patch tool result / cancel compact 等）。
@@ -399,6 +481,11 @@ pub fn agent_event_tag(event: &AgentEvent) -> &'static str {
         AgentEvent::ThinkingLevelChanged { .. } => "thinking_level_changed",
         AgentEvent::MessageQueued { .. } => "message_queued",
         AgentEvent::MessageDelivered { .. } => "message_delivered",
+        AgentEvent::LlmRequestStart { .. } => "llm_request_start",
+        AgentEvent::LlmRequestEnd { .. } => "llm_request_end",
+        AgentEvent::QueueUpdate { .. } => "queue_update",
+        AgentEvent::SessionInfoChanged { .. } => "session_info_changed",
+        AgentEvent::ContextThreshold { .. } => "context_threshold",
         AgentEvent::Error { .. } => "error",
         AgentEvent::AgentInterrupted { .. } => "agent_interrupted",
         AgentEvent::AgentSettled { .. } => "agent_settled",
@@ -429,6 +516,10 @@ pub fn pi_equivalent_event_name(uncode_tag: &str) -> Option<&'static str> {
         "retry_attempt" => Some("auto_retry_attempt"),
         "model_changed" => Some("model_select"),
         "thinking_level_changed" => Some("thinking_level_select"),
+        "llm_request_start" => Some("llm_request_start"),
+        "llm_request_end" => Some("llm_request_end"),
+        "queue_update" => Some("queue_update"),
+        "context_threshold" => Some("context_threshold"),
         _ => None,
     }
 }
