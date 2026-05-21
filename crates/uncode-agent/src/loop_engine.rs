@@ -32,8 +32,10 @@ use uncode_core::error::HarnessError;
 use uncode_core::error::UncodeError;
 use uncode_core::event::AgentEvent;
 use uncode_core::event::{
-    CompactionReason, CompactionStartData, ModelChangeSource, ModelChangedData, RetryAttemptData,
-    SessionEndData, ThinkingLevelChangedData, ToolCallEndEventData, ToolCallStatus,
+    CompactionReason, CompactionStartData, ContextThresholdData, LlmRequestEndData,
+    LlmRequestStartData, LlmRequestStatus, ModelChangeSource, ModelChangedData, QueueUpdateData,
+    RetryAttemptData, SessionEndData, ThinkingLevelChangedData, ToolCallEndEventData,
+    ToolCallStatus,
 };
 use uncode_core::message::{ContentBlock, Message, Role, UsageInfo};
 use uncode_core::session::{SessionEntry, ThinkingLevelChangeEntry, generate_entry_id};
@@ -366,6 +368,14 @@ impl AgentLoop {
         }
         let mq = self.message_queue.lock().await;
         let _ = mq.steer(msg).await;
+        let (s, f, n) = mq.queue_counts();
+        self.emit(AgentEvent::QueueUpdate {
+            data: Box::new(QueueUpdateData {
+                steering_count: s,
+                follow_up_count: f,
+                next_turn_count: n,
+            }),
+        });
     }
 
     pub async fn follow_up(&self, msg: Message) {
@@ -378,11 +388,27 @@ impl AgentLoop {
         }
         let mq = self.message_queue.lock().await;
         let _ = mq.follow_up(msg).await;
+        let (s, f, n) = mq.queue_counts();
+        self.emit(AgentEvent::QueueUpdate {
+            data: Box::new(QueueUpdateData {
+                steering_count: s,
+                follow_up_count: f,
+                next_turn_count: n,
+            }),
+        });
     }
 
     pub async fn next_turn(&self, msg: Message) {
         let mq = self.message_queue.lock().await;
         let _ = mq.next_turn(msg).await;
+        let (s, f, n) = mq.queue_counts();
+        self.emit(AgentEvent::QueueUpdate {
+            data: Box::new(QueueUpdateData {
+                steering_count: s,
+                follow_up_count: f,
+                next_turn_count: n,
+            }),
+        });
     }
 
     /// Cancel and clear all queues, returning cleared messages
@@ -692,6 +718,28 @@ impl AgentLoop {
                     UncodeError::Config(format!("model not found: {}", self.model_id))
                 })?;
 
+                // E8: Context usage warning
+                if self.compaction_config.enabled {
+                    if let Ok(entries) = self.session_store.load_entries(&session_id).await {
+                        let estimated = crate::compaction::estimate_entry_tokens(&entries);
+                        let ctx_window = model.context_window as u64;
+                        if ctx_window > 0 {
+                            let usage_ratio = estimated as f64 / ctx_window as f64;
+                            let threshold = self.compaction_config.threshold_percent as f64 / 100.0;
+                            if usage_ratio >= threshold * 0.6 {
+                                self.emit(AgentEvent::ContextThreshold {
+                                    data: Box::new(ContextThresholdData {
+                                        session_id: session_id.clone(),
+                                        usage_ratio,
+                                        threshold,
+                                        context_window: ctx_window,
+                                    }),
+                                });
+                            }
+                        }
+                    }
+                }
+
                 // Session-aware compaction check
                 if crate::compaction::should_compact_session(
                     &self.session_store,
@@ -824,6 +872,14 @@ impl AgentLoop {
                 };
 
                 self.emit(AgentEvent::TurnStart { turn });
+
+                self.emit(AgentEvent::LlmRequestStart {
+                    data: Box::new(LlmRequestStartData {
+                        model_id: self.model_id.clone(),
+                        message_count: messages.len(),
+                    }),
+                });
+                let llm_start = std::time::Instant::now();
 
                 let mut stream = tokio::select! {
                     _ = self.cancel_token.cancelled() => {
@@ -1341,6 +1397,21 @@ impl AgentLoop {
                 }
 
                 // ── Post-turn processing ──
+
+                // E4: LLM request end
+                self.emit(AgentEvent::LlmRequestEnd {
+                    data: Box::new(LlmRequestEndData {
+                        model_id: self.model_id.clone(),
+                        duration_ms: llm_start.elapsed().as_millis() as u64,
+                        input_tokens: turn_input_tokens,
+                        output_tokens: turn_output_tokens,
+                        status: if self.cancel_token.is_cancelled() {
+                            LlmRequestStatus::Cancelled
+                        } else {
+                            LlmRequestStatus::Success
+                        },
+                    }),
+                });
 
                 // TurnEnd
                 if !self.cancel_token.is_cancelled() {

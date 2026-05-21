@@ -465,7 +465,7 @@ fn estimate_message_entry_tokens(me: &MessageEntry) -> u64 {
         .sum()
 }
 
-fn estimate_entry_tokens(entries: &[SessionEntry]) -> u64 {
+pub(crate) fn estimate_entry_tokens(entries: &[SessionEntry]) -> u64 {
     entries
         .iter()
         .filter_map(|e| match e {

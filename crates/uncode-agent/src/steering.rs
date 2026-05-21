@@ -96,6 +96,18 @@ impl MessageQueue {
         !self.steering_rx.is_empty() || !self.follow_up_rx.is_empty()
     }
 
+    /// Return approximate message counts in each queue.
+    ///
+    /// Uses `len()` on the mpsc receiver; values are approximate since
+    /// concurrent senders may change the count between call and observation.
+    pub fn queue_counts(&self) -> (usize, usize, usize) {
+        (
+            self.steering_rx.len(),
+            self.follow_up_rx.len(),
+            self.next_turn_rx.len(),
+        )
+    }
+
     pub fn clone_handle(&self) -> MessageQueueHandle {
         MessageQueueHandle {
             steering: self.steering_tx.clone(),
