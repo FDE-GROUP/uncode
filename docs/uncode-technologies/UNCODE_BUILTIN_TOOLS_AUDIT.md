@@ -232,7 +232,7 @@
 ### 4.3 中期（P3 / 架构）
 
 1. ~~全面接入 `ExecutionEnv`（对齐 Pi）~~ — 七件套 + `bash_exec` 已落地（#244 切片）。  
-2. 可选 ripgrep 后端或 `ignore` _walk。  
+2. ~~可选 ripgrep 后端~~ — 已安装 `rg` 时 `grep` 优先走 ripgrep（`details.backend`），否则 `ignore` walk + 内置 regex。  
 3. 工具级 `prepare_arguments`（路径规范化、默认 limit）。  
 4. 配置化：`max_size`、`max_grep_results` 进 `uncode-shared` config。
 
