@@ -41,6 +41,24 @@ pub use web_fetch::WebFetchTool;
 pub use web_search::WebSearchTool;
 pub use write::WriteTool;
 
+use std::sync::{Arc, OnceLock};
+
+use uncode_core::tool::ExecutionEnv;
+
+/// Process-wide default when [`ToolContext::execution_env`] is unset.
+pub fn default_execution_env() -> Arc<dyn ExecutionEnv> {
+    static ENV: OnceLock<Arc<dyn ExecutionEnv>> = OnceLock::new();
+    ENV.get_or_init(|| Arc::new(LocalExecutionEnv::new()))
+        .clone()
+}
+
+/// Effective execution environment for a tool call.
+pub(crate) fn ctx_execution_env(ctx: &uncode_core::tool::ToolContext) -> Arc<dyn ExecutionEnv> {
+    ctx.execution_env
+        .clone()
+        .unwrap_or_else(default_execution_env)
+}
+
 /// Find the nearest existing ancestor, canonicalize it,
 /// then re-attach the non-existing suffix.
 fn normalize_path(full: &std::path::Path) -> Result<std::path::PathBuf, String> {

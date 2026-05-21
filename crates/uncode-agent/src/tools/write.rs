@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use uncode_core::error::UncodeResult;
-use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
+use uncode_core::tool::{ExecutionMode, ToolContext, ToolDefinition, ToolExecutor, ToolResult};
 
 use super::diff::unified_diff;
 
@@ -13,12 +13,12 @@ struct WriteJob {
     path: PathBuf,
     content: String,
     display: String,
+    old_content: String,
 }
 
 fn write_blocking(job: WriteJob) -> Result<String, String> {
-    let old_content = std::fs::read_to_string(&job.path).unwrap_or_default();
     super::atomic_write(&job.path, &job.content)?;
-    Ok(unified_diff(&old_content, &job.content, &job.display))
+    Ok(unified_diff(&job.old_content, &job.content, &job.display))
 }
 
 #[async_trait]
@@ -42,6 +42,25 @@ impl ToolExecutor for WriteTool {
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
+        let tr = self
+            .execute_with_context(
+                arguments,
+                ToolContext {
+                    cancel_token: tokio_util::sync::CancellationToken::new(),
+                    on_progress: None,
+                    tool_call_id: String::new(),
+                    execution_env: None,
+                },
+            )
+            .await?;
+        Ok(tr.text_content())
+    }
+
+    async fn execute_with_context(
+        &self,
+        arguments: serde_json::Value,
+        ctx: ToolContext,
+    ) -> UncodeResult<ToolResult> {
         let raw = arguments["path"]
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("path required".into()))?;
@@ -52,15 +71,23 @@ impl ToolExecutor for WriteTool {
             .to_string();
 
         let resolved = super::resolve_path(raw).map_err(uncode_core::error::UncodeError::Tool)?;
+        let display = resolved.display().to_string();
+
+        let env = super::ctx_execution_env(&ctx);
+        let old_content = env.fs().read_text_file(&resolved).await.unwrap_or_default();
+
         let job = WriteJob {
-            display: resolved.display().to_string(),
+            display,
             path: resolved,
             content,
+            old_content,
         };
 
-        tokio::task::spawn_blocking(move || write_blocking(job))
+        let output = tokio::task::spawn_blocking(move || write_blocking(job))
             .await
             .map_err(|e| uncode_core::error::UncodeError::Tool(format!("write task failed: {e}")))?
-            .map_err(uncode_core::error::UncodeError::Tool)
+            .map_err(uncode_core::error::UncodeError::Tool)?;
+
+        Ok(ToolResult::ok(output))
     }
 }

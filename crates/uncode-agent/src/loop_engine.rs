@@ -18,6 +18,7 @@ use crate::phase_summary::{
 };
 use crate::session::store::SessionStore;
 use crate::steering::MessageQueue;
+use crate::tools::local_env::LocalExecutionEnv;
 use crate::tools::registry::ToolRegistry;
 use uncode_ai::StreamEvent;
 use uncode_ai::{ApiRegistry, ModelRegistry};
@@ -31,6 +32,7 @@ use uncode_core::event::AgentEvent;
 use uncode_core::event::{SessionEndData, ToolCallEndEventData, ToolCallStatus};
 use uncode_core::message::{ContentBlock, Message, Role, UsageInfo};
 use uncode_core::session::{SessionEntry, ThinkingLevelChangeEntry, generate_entry_id};
+use uncode_core::tool::ExecutionEnv;
 use uncode_core::tool::{
     AfterToolCallContext, BeforeToolCallContext, ExecutionMode, ToolContext, ToolHooks,
     ToolProgress, ToolResult,
@@ -44,6 +46,7 @@ async fn execute_prepared_tool_shared(
     cancel_token: CancellationToken,
     event_tx: broadcast::Sender<AgentEvent>,
     hooks: Option<Arc<dyn ToolHooks>>,
+    execution_env: Arc<dyn ExecutionEnv>,
     id: String,
     name: String,
     prepared_args: serde_json::Value,
@@ -53,6 +56,7 @@ async fn execute_prepared_tool_shared(
     let child = cancel_token.child_token();
     let ctx = ToolContext {
         cancel_token: child.clone(),
+        execution_env: Some(execution_env),
         on_progress: Some(Box::new({
             let etx = event_tx.clone();
             let tid = id.clone();
@@ -136,6 +140,7 @@ pub struct AgentLoop {
     event_tx: broadcast::Sender<AgentEvent>,
     cancel_token: CancellationToken,
     tool_hooks: Option<Arc<dyn ToolHooks>>,
+    execution_env: Arc<dyn ExecutionEnv>,
     message_queue: tokio::sync::Mutex<MessageQueue>,
     should_stop_after_turn: Option<Arc<dyn Fn(u64) -> bool + Send + Sync>>,
     prepare_next_turn: Option<Arc<dyn Fn() + Send + Sync>>,
@@ -169,6 +174,7 @@ impl AgentLoop {
             event_tx,
             cancel_token: CancellationToken::new(),
             tool_hooks: None,
+            execution_env: Arc::new(LocalExecutionEnv::new()),
             message_queue: tokio::sync::Mutex::new(MessageQueue::new()),
             should_stop_after_turn: None,
             prepare_next_turn: None,
@@ -178,6 +184,12 @@ impl AgentLoop {
             active_run: Arc::new(AtomicBool::new(false)),
             graph_cache: None,
         }
+    }
+
+    /// Override the runtime used by file/shell tools (tests, remote sandbox).
+    pub fn with_execution_env(mut self, env: Arc<dyn ExecutionEnv>) -> Self {
+        self.execution_env = env;
+        self
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -203,6 +215,7 @@ impl AgentLoop {
             event_tx,
             cancel_token: CancellationToken::new(),
             tool_hooks: None,
+            execution_env: Arc::new(LocalExecutionEnv::new()),
             message_queue: tokio::sync::Mutex::new(MessageQueue::new()),
             should_stop_after_turn: None,
             prepare_next_turn: None,
@@ -368,6 +381,7 @@ impl AgentLoop {
             self.cancel_token.clone(),
             self.event_tx.clone(),
             self.tool_hooks.clone(),
+            Arc::clone(&self.execution_env),
             id.to_string(),
             name.to_string(),
             prepared_args,
@@ -997,6 +1011,7 @@ impl AgentLoop {
                                         let cancel = self.cancel_token.clone();
                                         let tx = self.event_tx.clone();
                                         let hooks = self.tool_hooks.clone();
+                                        let exec_env = Arc::clone(&self.execution_env);
 
                                         let executed =
                                             futures::future::join_all(ready.into_iter().map(
@@ -1005,10 +1020,11 @@ impl AgentLoop {
                                                     let ct = cancel.clone();
                                                     let etx = tx.clone();
                                                     let hk = hooks.clone();
+                                                    let env = exec_env.clone();
                                                     async move {
                                                         let tr = execute_prepared_tool_shared(
-                                                            reg, ct, etx, hk, id, name, prepared,
-                                                            raw_args,
+                                                            reg, ct, etx, hk, env, id, name,
+                                                            prepared, raw_args,
                                                         )
                                                         .await;
                                                         (i, tr)
