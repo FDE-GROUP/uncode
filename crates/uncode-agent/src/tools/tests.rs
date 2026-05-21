@@ -757,13 +757,33 @@ async fn test_bash_stderr_capture() {
 #[tokio::test]
 async fn test_bash_exit_code_on_failure() {
     let tool = BashTool::new();
-    let result = tool
+    let err = tool
         .execute(serde_json::json!({
             "command": "exit 42"
         }))
         .await
+        .unwrap_err();
+    assert!(err.to_string().contains("exit code: 42"));
+}
+
+#[tokio::test]
+async fn test_bash_exit_code_on_failure_via_context() {
+    let tool = BashTool::new();
+    let tr = tool
+        .execute_with_context(
+            serde_json::json!({ "command": "exit 42" }),
+            uncode_core::tool::ToolContext {
+                cancel_token: tokio_util::sync::CancellationToken::new(),
+                on_progress: None,
+                tool_call_id: String::new(),
+                execution_env: None,
+            },
+        )
+        .await
         .unwrap();
-    assert!(result.contains("exit code: 42"));
+    assert!(tr.is_error);
+    assert_eq!(tr.details.as_ref().unwrap()["exit_code"], 42);
+    assert!(tr.text_content().contains("exit code: 42"));
 }
 
 #[tokio::test]
