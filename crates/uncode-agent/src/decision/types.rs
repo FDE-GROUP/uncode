@@ -92,47 +92,8 @@ pub struct DecisionRecord {
 }
 
 /// 面向离线训练的决策步骤
+/// Re-exported from `uncode_core::agent_step::AgentStep`.
 /// 对应 `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3 中的 AgentStep 模型
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct AgentStep {
-    pub step_id: String,
-    pub turn_id: String,
-    pub state_before: AgentStateSnapshot,
-    pub action: ExecutedAction,
-    pub observation: ActionObservation,
-    pub feedback: Option<Feedback>,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct AgentStateSnapshot {
-    pub phase: String,
-    pub turn_number: u32,
-    pub active_tools: Vec<String>,
-    pub context_size_tokens: usize,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ExecutedAction {
-    pub tool_name: String,
-    pub arguments_summary: String,
-    pub duration_ms: u64,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ActionObservation {
-    pub success: bool,
-    pub output_summary: String,
-    pub files_changed: Vec<String>,
-    pub duration_ms: u64,
-    pub terminate: bool,
-}
-
-/// 人类或自动化评价信号
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum Feedback {
-    HumanApproval { approved: bool, comment: Option<String> },
-    TestPassed { test_name: String },
-    TestFailed { test_name: String, error: String },
-    AutoRevert { reason: String },
-}
+pub use uncode_core::agent_step::{
+    ActionObservation, AgentStateSnapshot, AgentStep, ExecutedAction, Feedback,
+};

@@ -8,6 +8,7 @@
 
 #![deny(rustdoc::broken_intra_doc_links)]
 
+pub mod agent_step;          // ★ AgentStep — 认知与决策驱动设计 决策层训练模型
 pub mod api_types;
 pub mod config;
 pub mod context;
