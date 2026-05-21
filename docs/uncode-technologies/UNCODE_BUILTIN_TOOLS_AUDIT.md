@@ -152,13 +152,12 @@
 
 | 类型 | 发现 |
 |------|------|
-| **P1 安全** | **无 SSRF 防护**：可请求 `http://127.0.0.1`、`http://169.254.169.254` 等内网/metadata；Coding Agent 常见高危项。 |
-| **缺陷** | 无重定向次数限制；`reqwest` 默认跟随重定向可能绕过 URL 检查。 |
-| **缺陷** | ~~HTML 转文本 `html2text` 失败即整工具失败~~ → 已降级为 lossy UTF-8 原始 HTML（#306）。 |
+| **P1 安全** | ~~无 SSRF 防护~~ → `url_safety::ensure_public_http_url`（#284）。 |
+| **缺陷** | ~~无重定向上限~~ → `Policy::limited(5)`（#284）。 |
+| **缺陷** | ~~`html2text` 失败即整工具失败~~ → 降级为 lossy UTF-8 原始 HTML（#306）。 |
 | **局限** | 无 JS、无 cookie、无认证头。 |
-| **优化** |  blocklist 私有 IP、link-local；可选 allowlist 域名；重定向上限。 |
-| **优化** | 返回 `Content-Type`、最终 URL 供模型判断。 |
-| **测试** | definition + SSRF + wiremock 成功/错误路径（plain/html/503）。 |
+| **优化** | 返回 `Content-Type`、最终 URL 供模型判断（`details` / 输出前缀）。 |
+| **测试** | definition + SSRF + wiremock plain/html/503（#305）；`html2text` 单元测试（#306）。 |
 
 ---
 
@@ -166,11 +165,11 @@
 
 | 类型 | 发现 |
 |------|------|
-| **缺陷** | 无 **输出长度上限**；`max_results` 大时响应体可能很大。 |
+| **缺陷** | ~~无输出长度上限~~ → `truncate_output` 50KB（#287）；`max_results` 上限 20（#307）。 |
 | **缺陷** | API key 随请求发送（Tavily 设计）；需确保日志/on_payload 不泄露。 |
 | **局限** | 强依赖 Tavily；无离线/备用搜索。 |
-| **优化** | 截断每条 snippet；`max_results` schema 加上限。 |
-| **测试** | key/definition + wiremock Tavily 成功/401 路径。 |
+| **优化** | 截断每条 snippet（可选）。 |
+| **测试** | key/definition + wiremock 成功/401 + `max_results` clamp（#305/#307）。 |
 
 ---
 
