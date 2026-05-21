@@ -207,7 +207,7 @@
 | **async 一致性** | `read`/`write`/`edit` 同步 FS；`grep`/`find`/`ls` 用 `spawn_blocking`。 |
 | **描述语言** | 中英混用（`read.hashline`、`edit` 大段英文 description）。 |
 | **Pi 对齐** | 七件套已实现 `prepare_arguments`（路径沙箱 + 相对路径回写）；`ExecutionEnv` 切片已落地；`bash` sequential 已对齐。 |
-| **可观测性** | `bash.description`、工具耗时、截断是否发生 — 未进入 `ToolResult.details`。 |
+| **可观测性** | `bash`/`write`/`grep`/`read` 已写入 `ToolResult.details`（退出码、截断、bytes_written、match_count 等）；工具耗时仍缺。 |
 
 ---
 

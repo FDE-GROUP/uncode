@@ -45,6 +45,15 @@ impl ToolResult {
         }
     }
 
+    pub fn err_with_details(message: impl Into<String>, details: serde_json::Value) -> Self {
+        Self {
+            content: vec![ToolContent::Text(message.into())],
+            is_error: true,
+            details: Some(details),
+            terminate: false,
+        }
+    }
+
     pub fn with_details(mut self, details: serde_json::Value) -> Self {
         self.details = Some(details);
         self
