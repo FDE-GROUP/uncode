@@ -21,6 +21,7 @@
 | [#292](https://github.com/FDE-GROUP/uncode/issues/292) | `AppConfig.tools`：`max_file_bytes`、`max_grep_results` 配置化并注入 `read`/`grep` |
 
 | （切片，#244） | `ToolContext.execution_env`；文件工具走 `FileSystem`；`bash`/`LocalShell` 共享 `bash_exec` |
+| [#299](https://github.com/FDE-GROUP/uncode/issues/299) | 七件套 `prepare_arguments`：`path`/`workdir` 沙箱解析与相对路径回写 |
 
 额外（无单独 Issue）：`read` 目录 listing 上限 500 条，与 `ls` 一致。
 
@@ -205,7 +206,7 @@
 | **测试覆盖** | `grep` 零测试；`web_*` 几乎无行为测试；`bash` 不测 Agent 主路径 `execute_with_context`。 |
 | **async 一致性** | `read`/`write`/`edit` 同步 FS；`grep`/`find`/`ls` 用 `spawn_blocking`。 |
 | **描述语言** | 中英混用（`read.hashline`、`edit` 大段英文 description）。 |
-| **Pi 对齐** | 缺 `prepare_arguments`  per-tool（除 registry 通用）；缺 `ExecutionEnv`；`bash` sequential 已对齐。 |
+| **Pi 对齐** | 七件套已实现 `prepare_arguments`（路径沙箱 + 相对路径回写）；`ExecutionEnv` 切片已落地；`bash` sequential 已对齐。 |
 | **可观测性** | `bash.description`、工具耗时、截断是否发生 — 未进入 `ToolResult.details`。 |
 
 ---
