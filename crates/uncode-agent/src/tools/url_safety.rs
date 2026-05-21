@@ -1,20 +1,22 @@
 //! URL safety checks for outbound HTTP tools (SSRF mitigation).
 
 #[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::cell::Cell;
 
 #[cfg(test)]
-static ALLOW_LOOPBACK_IN_TESTS: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    static ALLOW_LOOPBACK_IN_TESTS: Cell<bool> = const { Cell::new(false) };
+}
 
-/// Allow loopback/localhost HTTP in tests (e.g. wiremock). Run tools tests with `--test-threads=1`.
+/// Allow loopback/localhost HTTP in the current test thread (e.g. wiremock).
 #[cfg(test)]
 pub(crate) fn set_allow_loopback_for_tests(allow: bool) {
-    ALLOW_LOOPBACK_IN_TESTS.store(allow, Ordering::SeqCst);
+    ALLOW_LOOPBACK_IN_TESTS.with(|flag| flag.set(allow));
 }
 
 #[cfg(test)]
 fn loopback_allowed_in_tests() -> bool {
-    ALLOW_LOOPBACK_IN_TESTS.load(Ordering::SeqCst)
+    ALLOW_LOOPBACK_IN_TESTS.with(|flag| flag.get())
 }
 
 /// Reject URLs whose host resolves to obvious private / loopback targets.
