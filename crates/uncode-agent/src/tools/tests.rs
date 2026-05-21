@@ -53,6 +53,20 @@ async fn test_read_tool() {
 }
 
 #[tokio::test]
+async fn test_read_offset_zero_skips_lines() {
+    let (_dir, _guard) = sandbox_dir();
+    fs::write("lines.txt", "a\nb\nc\n").unwrap();
+
+    let tool = ReadTool::new();
+    let result = tool
+        .execute(serde_json::json!({"path": "lines.txt", "offset": 0, "limit": 1}))
+        .await
+        .unwrap();
+    assert!(result.contains("1: a") || result.contains("     1: a"));
+    assert!(!result.contains(": b"));
+}
+
+#[tokio::test]
 async fn test_read_tool_missing_path() {
     let (_dir, _guard) = sandbox_dir();
     let tool = ReadTool::new();

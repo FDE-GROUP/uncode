@@ -438,6 +438,41 @@ impl TuiEngine {
     }
 
     fn render_status(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        if let Some(p) = self.permission.pending() {
+            let hint = p
+                .tool_description
+                .as_deref()
+                .filter(|d| !d.is_empty())
+                .map(|d| format!(" — {d}"))
+                .unwrap_or_default();
+            let keys = if p
+                .options
+                .iter()
+                .any(|o| *o == crate::permission::ConfirmOption::Edit)
+            {
+                "y=允许 n=拒绝 e=编辑"
+            } else {
+                "y=允许 n=拒绝"
+            };
+            let line = Line::from(vec![
+                Span::styled(
+                    format!("确认 {}?{hint} ", p.tool_name),
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(self.theme.tool_status.await_confirm)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                ),
+                Span::styled(
+                    keys,
+                    Style::default()
+                        .fg(self.theme.ui.footer_text)
+                        .bg(self.theme.tool_status.await_confirm),
+                ),
+            ]);
+            f.render_widget(Paragraph::new(line), area);
+            return;
+        }
+
         if !self.agent_busy {
             return;
         }
@@ -1646,12 +1681,14 @@ impl TuiEngine {
                 tool_id,
                 tool_name,
                 arguments_summary,
+                tool_description,
             } => {
                 let allow_edit = matches!(tool_name.as_str(), "edit" | "write");
                 self.permission.request_confirmation(
                     tool_id.clone(),
                     tool_name.clone(),
                     arguments_summary.clone(),
+                    tool_description.clone(),
                     allow_edit,
                 );
             }
@@ -2499,6 +2536,7 @@ mod tests {
             "t1".into(),
             "write".into(),
             "test.rs".into(),
+            None,
             false,
         );
         assert!(engine.permission.has_pending());
@@ -2588,6 +2626,7 @@ mod tests {
             "t1".into(),
             "write".into(),
             "test.rs".into(),
+            None,
             false,
         );
 

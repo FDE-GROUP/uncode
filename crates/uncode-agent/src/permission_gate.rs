@@ -11,6 +11,7 @@ use uncode_core::event::AgentEvent;
 use uncode_core::tool::BeforeToolCallContext;
 
 use crate::tool_permission;
+use crate::tools::registry::ToolRegistry;
 
 /// User decision on a pending tool call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +24,7 @@ pub enum Approval {
 pub struct PermissionGate {
     auto_allow_readonly: bool,
     auto_allow_bash_safe: bool,
+    tool_registry: Option<std::sync::Arc<ToolRegistry>>,
     waiters: Mutex<HashMap<String, oneshot::Sender<Approval>>>,
     early: Mutex<HashMap<String, Approval>>,
     event_tx: Option<broadcast::Sender<AgentEvent>>,
@@ -30,9 +32,25 @@ pub struct PermissionGate {
 
 impl PermissionGate {
     pub fn new(event_tx: broadcast::Sender<AgentEvent>) -> Self {
+        Self::new_inner(event_tx, None)
+    }
+
+    /// TUI path: resolve [`ToolDefinition::description`] for approval UI.
+    pub fn new_with_registry(
+        event_tx: broadcast::Sender<AgentEvent>,
+        tool_registry: std::sync::Arc<ToolRegistry>,
+    ) -> Self {
+        Self::new_inner(event_tx, Some(tool_registry))
+    }
+
+    fn new_inner(
+        event_tx: broadcast::Sender<AgentEvent>,
+        tool_registry: Option<std::sync::Arc<ToolRegistry>>,
+    ) -> Self {
         Self {
             auto_allow_readonly: true,
             auto_allow_bash_safe: true,
+            tool_registry,
             waiters: Mutex::new(HashMap::new()),
             early: Mutex::new(HashMap::new()),
             event_tx: Some(event_tx),
@@ -44,6 +62,7 @@ impl PermissionGate {
         Self {
             auto_allow_readonly: true,
             auto_allow_bash_safe: true,
+            tool_registry: None,
             waiters: Mutex::new(HashMap::new()),
             early: Mutex::new(HashMap::new()),
             event_tx: None,
@@ -89,10 +108,17 @@ impl PermissionGate {
             .insert(ctx.tool_call_id.clone(), tx);
 
         if let Some(ref event_tx) = self.event_tx {
+            let tool_description = self
+                .tool_registry
+                .as_ref()
+                .and_then(|r| r.get(&ctx.tool_name))
+                .map(|t| t.definition().description)
+                .filter(|d| !d.is_empty());
             let _ = event_tx.send(AgentEvent::ToolCallAwaitingApproval {
                 tool_id: ctx.tool_call_id.clone(),
                 tool_name: ctx.tool_name.clone(),
                 arguments_summary: args_str,
+                tool_description,
             });
         }
 
