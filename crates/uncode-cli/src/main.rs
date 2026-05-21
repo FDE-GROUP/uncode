@@ -401,7 +401,10 @@ async fn main() -> anyhow::Result<()> {
     // 默认：启动 TUI（单例 AgentLoop：同 run 内 steer，避免每次 submit 新建 loop）
     let event_rx = agent.subscribe();
     let event_tx = agent.event_sender();
-    let permission_gate = Arc::new(PermissionGate::new(event_tx.clone()));
+    let permission_gate = Arc::new(PermissionGate::new_with_registry(
+        event_tx.clone(),
+        tool_registry.clone(),
+    ));
     agent.set_tool_hooks(Arc::new(PermissionToolHooks::new(permission_gate.clone())));
     let shared_agent = Arc::new(tokio::sync::RwLock::new(agent));
 

@@ -16,6 +16,8 @@ pub struct PendingConfirmation {
     pub tool_id: String,
     pub tool_name: String,
     pub arguments_summary: String,
+    /// Registry tool description (e.g. bash sandbox note) for confirm UI.
+    pub tool_description: Option<String>,
     pub options: Vec<ConfirmOption>,
 }
 
@@ -54,6 +56,7 @@ impl PermissionManager {
         tool_id: String,
         tool_name: String,
         arguments_summary: String,
+        tool_description: Option<String>,
         allow_edit: bool,
     ) {
         let mut options = vec![ConfirmOption::Allow, ConfirmOption::Deny];
@@ -64,6 +67,7 @@ impl PermissionManager {
             tool_id,
             tool_name,
             arguments_summary,
+            tool_description,
             options,
         });
     }
@@ -140,7 +144,7 @@ mod tests {
     #[test]
     fn test_request_and_confirm() {
         let mut pm = PermissionManager::new();
-        pm.request_confirmation("t1".into(), "edit".into(), "src/main.rs".into(), true);
+        pm.request_confirmation("t1".into(), "edit".into(), "src/main.rs".into(), None, true);
         assert!(pm.has_pending());
 
         let p = pm.confirm(ConfirmOption::Allow);
@@ -151,7 +155,13 @@ mod tests {
     #[test]
     fn test_deny() {
         let mut pm = PermissionManager::new();
-        pm.request_confirmation("t1".into(), "edit".into(), "src/main.rs".into(), false);
+        pm.request_confirmation(
+            "t1".into(),
+            "edit".into(),
+            "src/main.rs".into(),
+            None,
+            false,
+        );
         let p = pm.deny();
         assert!(p.is_some());
         assert!(!pm.has_pending());
