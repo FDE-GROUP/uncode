@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use uncode_core::error::UncodeResult;
-use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
+use uncode_core::tool::{ExecutionMode, ToolContext, ToolDefinition, ToolExecutor, ToolResult};
 
 const MAX_FIND_RESULTS: usize = 200;
 
@@ -30,6 +30,25 @@ impl ToolExecutor for FindTool {
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
+        let tr = self
+            .execute_with_context(
+                arguments,
+                ToolContext {
+                    cancel_token: tokio_util::sync::CancellationToken::new(),
+                    on_progress: None,
+                    tool_call_id: String::new(),
+                    execution_env: None,
+                },
+            )
+            .await?;
+        Ok(tr.text_content())
+    }
+
+    async fn execute_with_context(
+        &self,
+        arguments: serde_json::Value,
+        _ctx: ToolContext,
+    ) -> UncodeResult<ToolResult> {
         let pattern = arguments["pattern"]
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("pattern required".into()))?
@@ -39,10 +58,14 @@ impl ToolExecutor for FindTool {
 
         let job = FindJob { root, pattern };
 
-        tokio::task::spawn_blocking(move || find_files(job))
+        let output = tokio::task::spawn_blocking(move || find_files(job))
             .await
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("find task failed: {e}")))?
-            .map_err(uncode_core::error::UncodeError::Tool)
+            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("find task failed: {e}")))?;
+
+        match output {
+            Ok(text) => Ok(ToolResult::ok(text)),
+            Err(e) => Err(uncode_core::error::UncodeError::Tool(e)),
+        }
     }
 }
 
