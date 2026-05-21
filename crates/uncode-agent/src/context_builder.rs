@@ -60,9 +60,12 @@ pub async fn build_context(store: &SessionStore, session_id: &str) -> SessionRes
     // Inject compaction summary first
     if let Some(summary) = &compaction_summary {
         messages.push(Message::new(
-            Role::System,
+            Role::User,
             vec![ContentBlock::Text {
-                text: format!("[上下文摘要]\n{}", summary),
+                text: format!(
+                    "The conversation history before this point was compacted into the following summary:\n\n<summary>\n{}\n</summary>",
+                    summary
+                ),
             }],
         ));
     }
@@ -239,10 +242,10 @@ mod tests {
         let ctx = build_context(&store, "test-session").await.unwrap();
         // Summary + msg2 (first_kept) + msg3
         assert_eq!(ctx.messages.len(), 3);
-        assert_eq!(ctx.messages[0].role, Role::System);
+        assert_eq!(ctx.messages[0].role, Role::User);
         assert!(matches!(
             &ctx.messages[0].content[0],
-            ContentBlock::Text { text } if text.contains("[上下文摘要]")
+            ContentBlock::Text { text } if text.contains("<summary>")
         ));
         assert_eq!(ctx.messages[1].role, Role::Assistant);
         assert_eq!(ctx.messages[2].role, Role::User);

@@ -6,6 +6,8 @@
 //! **L1（Pi）：** 机制与 Pi `packages/agent` 对齐（双环、三队列、会话树、Compaction）；
 //! 对照表见 `docs/uncode-technologies/UNCODE_PI_MECHANISM_MAP.md`。
 
+#![deny(rustdoc::broken_intra_doc_links)]
+
 pub mod branch_summarization;
 pub mod compaction;
 pub mod context;
@@ -34,11 +36,13 @@ pub use context::ContextLoader;
 pub use github::GitHubClient;
 pub use harness::{AgentHarness, AgentHarnessPhase, HarnessResources};
 pub use hooks::{ChainedToolHooks, PermissionToolHooks};
-pub use loop_engine::AgentLoop;
+pub use loop_engine::{AgentLoop, NextTurnDecision};
 pub use permission_gate::{Approval, PermissionGate};
+pub use steering::DrainMode;
 pub use stop::{StopCondition, StopReason, step_count_is, text_contains};
 pub use system_prompt::SystemPromptBuilder;
 pub use token::{estimate_cost, estimate_message_tokens, estimate_tokens};
+pub use tool_permission::PermissionPolicy;
 
 #[cfg(test)]
 mod tests;
