@@ -21,6 +21,8 @@ cargo build --workspace     # Rust 全量构建
 cargo test --workspace      # 运行所有测试（42+ tests）
 cargo fmt --check           # Rust 格式检查
 cargo clippy                # Rust lint
+cargo api-doc               # 生成 API 文档（workspace，--no-deps，见 docs/guides/RUSTDOC.md）
+cargo api-doc-open          # 同上并打开 core/agent/ai
 
 cd apps/platform
 bun install                 # 前端依赖
@@ -63,6 +65,7 @@ core → macros/llm/session/tools/extensions → agent → tui/rpc/platform → 
 
 ## 文档
 
+- [RUSTDOC.md](docs/guides/RUSTDOC.md) — 本地生成 / 浏览 Rust API（`cargo doc`、`cargo doc-open`）
 - [VISION.md](docs/VISION.md) — 项目愿景
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md) — 架构设计
 - [TUI_DESIGN.md](docs/TUI_DESIGN.md) — TUI 交互设计

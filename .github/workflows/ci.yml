@@ -40,5 +40,10 @@ jobs:
       - name: Build
         run: cargo build --workspace
 
+      - name: Document (rustdoc)
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --no-deps
+
       - name: Test
         run: cargo test --workspace -- --test-threads=1

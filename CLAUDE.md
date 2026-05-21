@@ -17,13 +17,15 @@ cargo test -p uncode-agent test_name  # Run single test
 cargo test --workspace -- --test-threads=1  # Run tests single-threaded (required for tools tests)
 cargo fmt --check --all          # Format check
 cargo clippy --all-targets --no-deps  # Lint
+cargo api-doc                       # API docs (workspace, --no-deps; see docs/guides/RUSTDOC.md)
+cargo api-doc-open                  # Open uncode-core / uncode-agent / uncode-ai docs in browser
 cargo run -p uncode-cli -- --model deepseek-v3 "prompt"  # Run CLI
 cd apps/platform && bun install && bun dev   # Platform frontend dev server
 cd apps/platform && bun run build           # Platform frontend build
 cd apps/platform && bun run lint            # Platform frontend lint
 ```
 
-CI runs: `cargo fmt --check`, `cargo clippy --all-targets --no-deps`, `cargo build --workspace`, `cargo test --workspace` with `RUSTFLAGS="-D warnings"`.
+CI runs: `cargo fmt --check`, `cargo clippy --all-targets --no-deps`, `cargo build --workspace`, `cargo doc --workspace --no-deps`, `cargo test --workspace -- --test-threads=1` with `RUSTFLAGS="-D warnings"` (rustdoc uses `RUSTDOCFLAGS="-D warnings"` via `.cargo/config.toml`). CI also uses `--test-threads=1` because tools tests require it.
 
 ## Architecture
 
@@ -52,15 +54,31 @@ All providers implement `Api` trait (`uncode-ai/src/api.rs`). 4 API protocol imp
 
 ### Tool System
 
-7 tools in `uncode-agent/src/tools/` (read, write, edit, grep, bash, find, ls). Each implements `ToolExecutor` trait. All tools use `normalize_path()` + `resolve_path()` for sandbox enforcement — files must stay within CWD.
+9 tools in `uncode-agent/src/tools/`: read, write, edit, grep, find, ls, bash, web_fetch, web_search. Each implements `ToolExecutor` trait. File tools use `normalize_path()` + `resolve_path()` for sandbox enforcement — paths must resolve within CWD. Tools are registered via `ToolRegistry` with `ToolHooks` (before/after) for permission gating and result patching.
+
+### Agent Loop
+
+`AgentHarness` (`uncode-agent/src/harness.rs`) orchestrates phases, session persistence, and compaction triggers. `AgentLoop` (`uncode-agent/src/loop_engine.rs`) is the core ReAct execution engine with a double-layer loop: outer loop handles follow-up injection; inner loop processes LLM streaming responses and tool calls. Three message queues: Steering (interrupt), Follow-up (within-turn), Next-turn (user input).
+
+### Streaming Protocol
+
+LLM responses stream as `StreamEvent` variants: `TextDelta` → `ToolCallStart` → `ToolCallDelta` → `ToolCallEnd` → `Done`. The loop processes each event to update UI in real-time via `AgentEvent` broadcast.
+
+### Permission Gate
+
+`PermissionGate` (`uncode-agent/src/permission_gate.rs`) blocks tool execution pending TUI user confirmation. Policy in `uncode-agent/src/tool_permission.rs`: read-only tools auto-allowed when `auto_allow_readonly=true`; write/edit/bash require approval. `SAFE_COMMANDS` array whitelists low-risk bash commands.
+
+### Event System
+
+`AgentEvent` (`uncode-core/src/event.rs`) has ~12 variants for session/turn/message/tool lifecycle. `EventRouter` dispatches via dual channels: sync_handlers (observation) and hook_handlers (control flow — can block or redirect execution). Upper layers (TUI, Platform) subscribe to events, never call agent directly.
 
 ## Key Design Decisions
 
-- **Language**: Rust edition 2024, MSRV 1.85
+- **Language**: Rust edition 2024, MSRV 1.91
 - **Unsafe code**: denied (`unsafe_code = "deny"` in workspace lints)
 - **Error handling**: anyhow for application code, thiserror for library crate error types
 - **Async runtime**: tokio (full features)
-- **Config**: TOML at `~/.uncode/config.toml`
+- **Config**: Two paths — `~/.config/uncode/config.json` (CLI: model + provider API keys) and `~/.uncode/` (extensions, skills, `config.toml`)
 - **Session format**: tree-shaped `SessionEntry` in **SurrealDB** (embedded); JSONL for import/export and migration (logical model aligned with Pi — see `docs/technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`)
 - **Platform frontend**: React 19 + TanStack Router/Query + Vite, TypeScript strict mode
 - **Cargo profiles**: dev uses `opt-level = 1` + `line-tables-only` for fast incremental builds; release uses LTO + strip
@@ -77,18 +95,24 @@ All providers implement `Api` trait (`uncode-ai/src/api.rs`). 4 API protocol imp
 - **Branch naming**: `feat/N-desc`, `fix/N-desc`, `refactor/N-desc`, `docs/N-desc`, `test/N-desc`, `perf/N-desc`
 - **Documentation language**: Chinese (中文)
 - **Keep main green**: main branch must always build and pass all tests
+- **Commit format**: `type: description (closes #N)` — types: feat, fix, docs, refactor, test, perf, chore
 
 ### 提交前必须本地执行 CI 预检测
 
-推送代码或提交审核前，**必须**在本地运行以下四项检查，全部通过后才能 push：
+推送代码或提交审核前，**必须**在本地运行以下五项检查，全部通过后才能 push：
 
 ```bash
 RUSTFLAGS="-D warnings" cargo fmt --check --all
 RUSTFLAGS="-D warnings" cargo clippy --all-targets --no-deps
 RUSTFLAGS="-D warnings" cargo build --workspace
-RUSTFLAGS="-D warnings" cargo test --workspace
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+RUSTFLAGS="-D warnings" cargo test --workspace -- --test-threads=1
 ```
 
 ## Test Caveats
 
-`uncode-agent/src/tools/` tests use `set_current_dir()` for sandbox isolation, which is process-global. These tests **must** run single-threaded: `cargo test --workspace -- --test-threads=1`. Running `cargo test --workspace` with default parallelism may cause intermittent failures in tools tests.
+`uncode-agent/src/tools/` tests use `set_current_dir()` for sandbox isolation, which is process-global. These tests **must** run single-threaded: `cargo test --workspace -- --test-threads=1`. Running `cargo test --workspace` with default parallelism may cause intermittent failures in tools tests. CI also uses `--test-threads=1`.
+
+## Terminology Strategy (Policy C)
+
+Four layers: L0 (industry terms), L1 (mechanism names aligned with Pi), L2 (Rust API own naming), L3 (UI strings). Do NOT rename Rust public symbols to match Pi's TypeScript names. When adding/modifying L1 mechanisms, update `UNCODE_TECHNOLOGIES_GLOSSARY.md` and `UNCODE_PI_MECHANISM_MAP.md`.
