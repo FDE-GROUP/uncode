@@ -1,9 +1,8 @@
 use async_trait::async_trait;
 use serde::Deserialize;
-use std::fs;
 use std::path::PathBuf;
 use uncode_core::error::UncodeResult;
-use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
+use uncode_core::tool::{ExecutionMode, ToolContext, ToolDefinition, ToolExecutor, ToolResult};
 
 use super::diff::unified_diff;
 use super::hashline::{parse_anchor, validate_anchors};
@@ -71,27 +70,59 @@ impl ToolExecutor for EditTool {
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
+        let tr = self
+            .execute_with_context(
+                arguments,
+                ToolContext {
+                    cancel_token: tokio_util::sync::CancellationToken::new(),
+                    on_progress: None,
+                    tool_call_id: String::new(),
+                    execution_env: None,
+                },
+            )
+            .await?;
+        Ok(tr.text_content())
+    }
+
+    async fn execute_with_context(
+        &self,
+        arguments: serde_json::Value,
+        ctx: ToolContext,
+    ) -> UncodeResult<ToolResult> {
         let raw = arguments["path"]
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("path required".into()))?;
 
         let resolved = super::resolve_path(raw).map_err(uncode_core::error::UncodeError::Tool)?;
         let display = resolved.display().to_string();
+
+        let env = super::ctx_execution_env(&ctx);
+        let old_content =
+            env.fs().read_text_file(&resolved).await.map_err(|e| {
+                uncode_core::error::UncodeError::Tool(format!("edit {display}: {e}"))
+            })?;
+
         let job = EditJob {
             path: resolved,
             display,
+            old_content,
             arguments,
         };
 
-        tokio::task::spawn_blocking(move || edit_blocking(job))
+        let output = tokio::task::spawn_blocking(move || edit_blocking(job))
             .await
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("edit task failed: {e}")))?
+            .map_err(|e| {
+                uncode_core::error::UncodeError::Tool(format!("edit task failed: {e}"))
+            })??;
+
+        Ok(ToolResult::ok(output))
     }
 }
 
 struct EditJob {
     path: PathBuf,
     display: String,
+    old_content: String,
     arguments: serde_json::Value,
 }
 
@@ -99,11 +130,9 @@ fn edit_blocking(job: EditJob) -> Result<String, uncode_core::error::UncodeError
     let EditJob {
         path,
         display,
+        old_content,
         arguments,
     } = job;
-
-    let old_content = fs::read_to_string(&path)
-        .map_err(|e| uncode_core::error::UncodeError::Tool(format!("edit {display}: {e}")))?;
 
     let new_content = if let Some(edits_val) = arguments.get("edits") {
         apply_hashline_edits(&old_content, edits_val)?
