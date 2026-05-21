@@ -1,9 +1,6 @@
-use std::fs;
-use std::path::PathBuf;
-
 use async_trait::async_trait;
 use uncode_core::error::UncodeResult;
-use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
+use uncode_core::tool::{ExecutionMode, ToolContext, ToolDefinition, ToolExecutor, ToolResult};
 
 const MAX_DIR_ENTRIES: usize = 500;
 
@@ -27,72 +24,34 @@ impl Default for ReadTool {
     }
 }
 
-struct ReadParams {
-    resolved: PathBuf,
-    max_size: usize,
+fn format_directory_listing(display: &str, entries: Vec<uncode_core::tool::DirEntry>) -> String {
+    let mut names: Vec<String> = entries
+        .into_iter()
+        .map(|e| {
+            if e.is_dir {
+                format!("{}/", e.name)
+            } else {
+                e.name
+            }
+        })
+        .take(MAX_DIR_ENTRIES + 1)
+        .collect();
+    names.sort();
+    let truncated = names.len() > MAX_DIR_ENTRIES;
+    if truncated {
+        names.truncate(MAX_DIR_ENTRIES);
+        names.push("... (truncated)".into());
+    }
+    format!("Directory listing for {display}:\n{}", names.join("\n"))
+}
+
+fn format_file_content(
+    content: &str,
     offset: usize,
     limit: Option<usize>,
     hashline: bool,
-}
-
-fn read_blocking(params: ReadParams) -> UncodeResult<String> {
-    let ReadParams {
-        resolved,
-        max_size,
-        offset,
-        limit,
-        hashline,
-    } = params;
-
-    let meta = fs::metadata(&resolved).map_err(|e| {
-        uncode_core::error::UncodeError::Tool(format!("read {}: {e}", resolved.display()))
-    })?;
-
-    if meta.is_dir() {
-        let mut entries: Vec<String> = fs::read_dir(&resolved)
-            .map_err(|e| {
-                uncode_core::error::UncodeError::Tool(format!(
-                    "read dir {}: {e}",
-                    resolved.display()
-                ))
-            })?
-            .filter_map(Result::ok)
-            .map(|e| {
-                let name = e.file_name().to_string_lossy().to_string();
-                if e.path().is_dir() {
-                    format!("{name}/")
-                } else {
-                    name
-                }
-            })
-            .take(MAX_DIR_ENTRIES + 1)
-            .collect();
-        entries.sort();
-        let truncated = entries.len() > MAX_DIR_ENTRIES;
-        if truncated {
-            entries.truncate(MAX_DIR_ENTRIES);
-            entries.push("... (truncated)".into());
-        }
-        return Ok(format!(
-            "Directory listing for {}:\n{}",
-            resolved.display(),
-            entries.join("\n")
-        ));
-    }
-
-    if meta.len() > max_size as u64 {
-        return Err(uncode_core::error::UncodeError::Tool(format!(
-            "file too large ({} bytes, max {})",
-            meta.len(),
-            max_size
-        )));
-    }
-
-    let content = fs::read_to_string(&resolved).map_err(|e| {
-        uncode_core::error::UncodeError::Tool(format!("read {}: {e}", resolved.display()))
-    })?;
-
-    let result = if hashline {
+) -> String {
+    if hashline {
         content
             .lines()
             .skip(offset)
@@ -122,9 +81,7 @@ fn read_blocking(params: ReadParams) -> UncodeResult<String> {
                     acc
                 },
             )
-    };
-
-    Ok(result)
+    }
 }
 
 #[async_trait]
@@ -154,27 +111,68 @@ impl ToolExecutor for ReadTool {
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
+        let tr = self
+            .execute_with_context(
+                arguments,
+                ToolContext {
+                    cancel_token: tokio_util::sync::CancellationToken::new(),
+                    on_progress: None,
+                    tool_call_id: String::new(),
+                    execution_env: None,
+                },
+            )
+            .await?;
+        Ok(tr.text_content())
+    }
+
+    async fn execute_with_context(
+        &self,
+        arguments: serde_json::Value,
+        ctx: ToolContext,
+    ) -> UncodeResult<ToolResult> {
         let raw = arguments["path"]
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("path required".into()))?;
 
         let resolved = super::resolve_path(raw).map_err(uncode_core::error::UncodeError::Tool)?;
+        let display = resolved.display().to_string();
 
         let offset = arguments["offset"].as_u64().unwrap_or(0) as usize;
         let limit = arguments["limit"].as_u64().map(|l| l as usize);
         let hashline = arguments["hashline"].as_bool().unwrap_or(false);
         let max_size = self.max_size;
 
-        tokio::task::spawn_blocking(move || {
-            read_blocking(ReadParams {
-                resolved,
-                max_size,
-                offset,
-                limit,
-                hashline,
-            })
+        let env = super::ctx_execution_env(&ctx);
+        let info =
+            env.fs().file_info(&resolved).await.map_err(|e| {
+                uncode_core::error::UncodeError::Tool(format!("read {display}: {e}"))
+            })?;
+
+        if info.is_dir {
+            let entries = env.fs().list_dir(&resolved).await.map_err(|e| {
+                uncode_core::error::UncodeError::Tool(format!("read dir {display}: {e}"))
+            })?;
+            return Ok(ToolResult::ok(format_directory_listing(&display, entries)));
+        }
+
+        if info.size > max_size as u64 {
+            return Ok(ToolResult::err(format!(
+                "file too large ({} bytes, max {max_size})",
+                info.size
+            )));
+        }
+
+        let content =
+            env.fs().read_text_file(&resolved).await.map_err(|e| {
+                uncode_core::error::UncodeError::Tool(format!("read {display}: {e}"))
+            })?;
+
+        let formatted = tokio::task::spawn_blocking(move || {
+            format_file_content(&content, offset, limit, hashline)
         })
         .await
-        .map_err(|e| uncode_core::error::UncodeError::Tool(format!("read task failed: {e}")))?
+        .map_err(|e| uncode_core::error::UncodeError::Tool(format!("read task failed: {e}")))?;
+
+        Ok(ToolResult::ok(formatted))
     }
 }
