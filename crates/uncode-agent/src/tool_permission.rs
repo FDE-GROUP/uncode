@@ -48,6 +48,25 @@ pub fn needs_confirmation(
     }
 }
 
+/// 审批 UI / 日志用的人类可读说明：bash 优先模型填写的 `description`，否则用 registry 文案。
+pub fn approval_description(
+    tool_name: &str,
+    args: &serde_json::Value,
+    registry_description: Option<String>,
+) -> Option<String> {
+    if tool_name == "bash" {
+        if let Some(d) = args
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return Some(d.to_string());
+        }
+    }
+    registry_description.filter(|d| !d.is_empty())
+}
+
 /// 从 bash 工具参数中提取命令
 pub fn extract_command(args: &str) -> String {
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(args)
@@ -86,5 +105,22 @@ mod tests {
             true,
             true
         ));
+    }
+
+    #[test]
+    fn test_approval_description_prefers_bash_call_description() {
+        let args = serde_json::json!({
+            "command": "rm -rf x",
+            "description": "Remove build artifacts"
+        });
+        let desc = approval_description("bash", &args, Some("registry fallback".into()));
+        assert_eq!(desc.as_deref(), Some("Remove build artifacts"));
+    }
+
+    #[test]
+    fn test_approval_description_falls_back_to_registry() {
+        let args = serde_json::json!({ "command": "ls" });
+        let desc = approval_description("bash", &args, Some("sandbox note".into()));
+        assert_eq!(desc.as_deref(), Some("sandbox note"));
     }
 }

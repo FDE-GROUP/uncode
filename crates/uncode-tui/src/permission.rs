@@ -16,7 +16,7 @@ pub struct PendingConfirmation {
     pub tool_id: String,
     pub tool_name: String,
     pub arguments_summary: String,
-    /// Registry tool description (e.g. bash sandbox note) for confirm UI.
+    /// Approval hint: bash uses model `description` when set, else registry tool description.
     pub tool_description: Option<String>,
     pub options: Vec<ConfirmOption>,
 }

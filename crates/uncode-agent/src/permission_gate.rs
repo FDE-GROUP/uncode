@@ -108,12 +108,16 @@ impl PermissionGate {
             .insert(ctx.tool_call_id.clone(), tx);
 
         if let Some(ref event_tx) = self.event_tx {
-            let tool_description = self
+            let registry_description = self
                 .tool_registry
                 .as_ref()
                 .and_then(|r| r.get(&ctx.tool_name))
-                .map(|t| t.definition().description)
-                .filter(|d| !d.is_empty());
+                .map(|t| t.definition().description);
+            let tool_description = tool_permission::approval_description(
+                &ctx.tool_name,
+                &ctx.args,
+                registry_description,
+            );
             let _ = event_tx.send(AgentEvent::ToolCallAwaitingApproval {
                 tool_id: ctx.tool_call_id.clone(),
                 tool_name: ctx.tool_name.clone(),

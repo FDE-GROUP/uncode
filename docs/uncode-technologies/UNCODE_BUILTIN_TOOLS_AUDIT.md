@@ -33,12 +33,12 @@
 | 严重程度 | 数量 | 典型项 |
 |----------|------|--------|
 | **P0 安全/正确性** | 0（已修） | 见「已落地修复」表 |
-| **P1 可靠性** | 1 | `bash` `description` 未消费 |
+| **P1 可靠性** | 0（已修） | 见「已落地修复」与 §2.7 |
 | **P2 体验/对齐** | 8 | 阻塞 I/O、`read` offset 语义、SSRF、缺 `.gitignore` |
 | **P3 增强** | 10+ | `ExecutionEnv` 统一、Pi 对齐、可观测性 |
 
 **沙箱路径（`resolve_path`）**：对 `..` 与 **canonicalize 后落在 CWD 外** 的路径（含指向项目外的符号链接）会拒绝，行为正确。  
-**主要缺口（剩余）**：`bash` `description` 参数未接入审批/日志。
+**主要缺口（剩余）**：§2.1–2.6 初稿条目与 main 状态可继续勾选同步；Platform 审批 UI 若接入需复用 `approval_description`。
 
 ---
 
@@ -136,7 +136,7 @@
 |------|------|
 | **已修复** | `workdir` 经 `resolve_path`（#283）；`/tmp` 等越界拒绝（`test_bash_workdir_outside_sandbox_rejected`、`test_bash_prepare_rejects_workdir_outside_sandbox`）。 |
 | **已修复** | `exec_bash_streaming` 全程 `deadline`（含无输出 `sleep` 时读 stdout 阻塞）；超时与取消均 `kill_process_group`（#283）；流式 stdout **累积字节上限**。 |
-| **缺陷** | `description` 参数 **未使用**（仅 schema/UI 意图）；应在 TUI 审批或日志中消费。 |
+| **已修复** | 模型 `description` 用于 TUI 确认栏（`approval_description`）与 `tool call end` 日志；聊天区 `render_bash` 原已展示。 |
 | **缺陷** | 非 Unix 无进程组杀；Windows 上取消/超时行为弱。 |
 | **已修复** | `execute()` 委托 `execute_with_context`（同一 `exec_bash_streaming`）；非零退出码 `execute()` 返回 `Err`、context 路径 `is_error: true`。 |
 | **局限** | 固定 `bash -c`；无 `env` 注入、无 stdin 喂入。描述「沙箱」指 **workdir 路径约束**，非全机命令白名单。 |
@@ -212,17 +212,14 @@
 
 ### 4.1 建议尽快（P0–P1）— 多数已落地
 
-以下项已在 main 完成（见 §「已落地修复」）；**剩余 P1**：
-
-1. **`bash`**：`description` 接入 TUI 审批或结构化日志。
+以下项已在 main 完成（见 §「已落地修复」）；**无未关闭 P1**（内置七件套 + web + bash）。
 
 ### 4.2 短期增强（P2）— 多数已落地
 
 **剩余**：
 
-1. `bash` `description` 接入权限 UI/日志（同上）。  
-2. 描述语言中英统一（`read.hashline`、`edit` 等）。  
-3. 审计正文 §2.1–2.6 部分条目仍反映 2026-05 初稿，可按 main 状态逐项勾选「已修复」。
+1. 描述语言中英统一（`read.hashline`、`edit` 等）。  
+2. 审计正文 §2.1–2.6 部分条目仍反映 2026-05 初稿，可按 main 状态逐项勾选「已修复」。
 
 ### 4.3 中期（P3 / 架构）
 
