@@ -84,6 +84,8 @@ pub struct ToolContext {
     pub cancel_token: tokio_util::sync::CancellationToken,
     pub on_progress: Option<Box<dyn Fn(ToolProgress) + Send + Sync>>,
     pub tool_call_id: String,
+    /// Runtime file/shell backend. `None` → tools fall back to `LocalExecutionEnv`.
+    pub execution_env: Option<std::sync::Arc<dyn ExecutionEnv>>,
 }
 
 /// Context provided to beforeToolCall hook

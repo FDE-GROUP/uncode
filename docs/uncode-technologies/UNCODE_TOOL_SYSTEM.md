@@ -170,10 +170,13 @@ pub struct ToolContext {
     pub cancel_token: CancellationToken,   // 从 AgentLoop 透传
     pub on_progress: Option<Box<dyn Fn(ToolProgress) + Send + Sync>>,
     pub tool_call_id: String,
+    pub execution_env: Option<Arc<dyn ExecutionEnv>>,  // AgentLoop 注入 LocalExecutionEnv
 }
 ```
 
 `CancellationToken` 从 `AgentLoop` 一路透传到最底层工具——与 Pi 的 AbortController 模式一致。
+
+`execution_env` 为 `None` 时，工具通过 `default_execution_env()` 回退到进程内 `LocalExecutionEnv`。当前经 `FileSystem` 接入：`ls`、`write`（读旧内容）；`read`/`edit`/`grep`/`find` 仍直连 `std::fs`（后续切片迁移）。
 
 ---
 
