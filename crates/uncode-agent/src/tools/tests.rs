@@ -646,6 +646,38 @@ async fn test_bash_workdir_outside_sandbox_rejected() {
 }
 
 #[tokio::test]
+async fn test_bash_cancelled_via_context_kills_command() {
+    let (_dir, _guard) = sandbox_dir();
+    let tool = BashTool::new();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let cancel_clone = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        cancel_clone.cancel();
+    });
+    let tr = tool
+        .execute_with_context(
+            serde_json::json!({
+                "command": "sleep 60",
+                "timeout": 120
+            }),
+            uncode_core::tool::ToolContext {
+                cancel_token: cancel,
+                on_progress: None,
+                tool_call_id: "test".into(),
+                execution_env: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(tr.is_error);
+    assert_eq!(
+        tr.details.as_ref().unwrap()["reason"],
+        serde_json::json!("cancelled")
+    );
+}
+
+#[tokio::test]
 async fn test_grep_include_matches_relative_path() {
     let (_dir, _guard) = sandbox_dir();
     std::fs::create_dir_all("src").unwrap();
