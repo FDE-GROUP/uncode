@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod error;
+pub mod guardrails;
 
 #[cfg(test)]
 mod tests;

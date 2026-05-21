@@ -612,6 +612,50 @@ pub fn validate_pi_turn_lifecycle_order(events: &[AgentEvent]) -> Result<(), Str
     Ok(())
 }
 
+// ═══════════════════════════════════════════════════════════════
+// Event detail level — 认知与决策驱动设计 治理层 §3.2
+// ═══════════════════════════════════════════════════════════════
+
+/// 事件重要性分级（用于导出和保留策略）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum EventDetailLevel {
+    /// 必须记录 — 关键决策和系统事件
+    Critical = 0,
+    /// 默认记录 — 常规流程
+    Standard = 1,
+    /// 仅调试时记录 — 高频细粒度事件
+    Verbose = 2,
+}
+
+impl AgentEvent {
+    /// 返回事件的重要性分级
+    ///
+    /// 对应 `docs/ai-agent-archi/uncodenow-refactoring-roadmap.md` §3.2
+    pub fn detail_level(&self) -> EventDetailLevel {
+        match self {
+            // Critical: 关键决策和生命周期事件
+            Self::SessionStart { .. }
+            | Self::SessionEnd { .. }
+            | Self::TurnStart { .. }
+            | Self::TurnEnd { .. }
+            | Self::ToolCallEnd { .. }
+            | Self::DecisionMade { .. }
+            | Self::Error { .. }
+            | Self::CompactionComplete { .. }
+            | Self::AgentInterrupted { .. } => EventDetailLevel::Critical,
+
+            // Verbose: 高频细粒度事件
+            Self::ToolCallProgress { .. }
+            | Self::ToolCallAwaitingApproval { .. } => EventDetailLevel::Verbose,
+
+            // Standard: 其余所有
+            _ => EventDetailLevel::Standard,
+        }
+    }
+}
+
 #[cfg(test)]
 mod pi_event_fixture {
     use super::*;
