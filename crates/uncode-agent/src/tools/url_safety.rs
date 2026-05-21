@@ -1,5 +1,22 @@
 //! URL safety checks for outbound HTTP tools (SSRF mitigation).
 
+#[cfg(test)]
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[cfg(test)]
+static ALLOW_LOOPBACK_IN_TESTS: AtomicBool = AtomicBool::new(false);
+
+/// Allow loopback/localhost HTTP in tests (e.g. wiremock). Run tools tests with `--test-threads=1`.
+#[cfg(test)]
+pub(crate) fn set_allow_loopback_for_tests(allow: bool) {
+    ALLOW_LOOPBACK_IN_TESTS.store(allow, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+fn loopback_allowed_in_tests() -> bool {
+    ALLOW_LOOPBACK_IN_TESTS.load(Ordering::SeqCst)
+}
+
 /// Reject URLs whose host resolves to obvious private / loopback targets.
 pub fn ensure_public_http_url(url: &str) -> Result<(), String> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
@@ -8,6 +25,15 @@ pub fn ensure_public_http_url(url: &str) -> Result<(), String> {
 
     let host = parse_host(url).ok_or_else(|| format!("invalid URL host: {url}"))?;
     let host_lower = host.to_ascii_lowercase();
+
+    #[cfg(test)]
+    if loopback_allowed_in_tests()
+        && (host_lower == "localhost"
+            || host_lower.ends_with(".localhost")
+            || parse_ipv4(&host_lower).is_some_and(|ip| ip[0] == 127))
+    {
+        return Ok(());
+    }
 
     if host_lower == "localhost" || host_lower.ends_with(".localhost") {
         return Err(format!("blocked host (localhost): {host}"));
@@ -59,7 +85,7 @@ fn parse_ipv4(host: &str) -> Option<[u8; 4]> {
 }
 
 fn is_blocked_ipv4(host: &str) -> bool {
-    parse_ipv4(host).is_some_and(|ip| is_blocked_ipv4_octets(ip))
+    parse_ipv4(host).is_some_and(is_blocked_ipv4_octets)
 }
 
 fn is_blocked_ipv4_octets(ip: [u8; 4]) -> bool {

@@ -157,4 +157,78 @@ mod tests {
         let result = rt.block_on(tool.execute(serde_json::json!({})));
         assert!(result.is_err());
     }
+
+    struct AllowLoopbackGuard;
+
+    impl AllowLoopbackGuard {
+        fn set() -> Self {
+            crate::tools::url_safety::set_allow_loopback_for_tests(true);
+            Self
+        }
+    }
+
+    impl Drop for AllowLoopbackGuard {
+        fn drop(&mut self) {
+            crate::tools::url_safety::set_allow_loopback_for_tests(false);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_fetch_plain_text_via_mock_server() {
+        let _guard = AllowLoopbackGuard::set();
+        let mock_server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string("plain body from mock")
+                    .insert_header("content-type", "text/plain"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let tool = WebFetchTool::new();
+        let out = tool
+            .execute(serde_json::json!({ "url": mock_server.uri() }))
+            .await
+            .unwrap();
+        assert!(out.contains("plain body from mock"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_html_via_mock_server() {
+        let _guard = AllowLoopbackGuard::set();
+        let mock_server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_string("<html><body><p>Hello mock</p></body></html>")
+                    .insert_header("content-type", "text/html; charset=utf-8"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let tool = WebFetchTool::new();
+        let out = tool
+            .execute(serde_json::json!({ "url": mock_server.uri() }))
+            .await
+            .unwrap();
+        assert!(out.contains("Hello mock"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_http_error_from_mock_server() {
+        let _guard = AllowLoopbackGuard::set();
+        let mock_server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(503))
+            .mount(&mock_server)
+            .await;
+
+        let tool = WebFetchTool::new();
+        let err = tool
+            .execute(serde_json::json!({ "url": mock_server.uri() }))
+            .await
+            .unwrap_err();
+        assert!(format!("{err}").contains("503"));
+    }
 }
