@@ -133,6 +133,30 @@ impl SessionStore {
         self.inner.build_tree(session_id).await
     }
 
+    pub async fn undo_turn(&self, session_id: &str, n: u64) -> SessionResult<String> {
+        self.inner.undo_turn(session_id, n).await
+    }
+
+    pub async fn search_sessions(&self, query: &str) -> SessionResult<Vec<SessionMetadata>> {
+        self.inner.search_sessions(query).await
+    }
+
+    pub async fn list_sessions_by_model(&self, model: &str) -> SessionResult<Vec<SessionMetadata>> {
+        self.inner.list_sessions_by_model(model).await
+    }
+
+    pub async fn list_sessions_by_date(
+        &self,
+        from: &chrono::DateTime<chrono::Utc>,
+        to: &chrono::DateTime<chrono::Utc>,
+    ) -> SessionResult<Vec<SessionMetadata>> {
+        self.inner.list_sessions_by_date(from, to).await
+    }
+
+    pub async fn update_title(&self, session_id: &str, title: &str) -> SessionResult<()> {
+        self.inner.update_title(session_id, title).await
+    }
+
     pub async fn invalidate(&self, session_id: &str) {
         self.inner.invalidate(session_id).await
     }
