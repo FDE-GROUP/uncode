@@ -30,6 +30,15 @@
 
 入口：`register_coding_tools`（`builtin.rs`），默认 `apply_pi_default_active_tools`（七件套，无 `web_*`）。
 
+### 配置（`~/.uncode/config.json` → `AppConfig.tools`）
+
+| 字段 | 默认 | 影响 |
+|------|------|------|
+| `tools.max_file_bytes` | `1048576`（1MB） | `read` 拒绝更大文件；`grep` 跳过更大文件 |
+| `tools.max_grep_results` | `50` | `grep` 全局匹配条数上限 |
+
+CLI 在 `register_coding_tools_and_configure` 时注入 `ReadTool` / `GrepTool` 构造参数。
+
 ---
 
 ## 2. 共享设计原理
@@ -100,7 +109,7 @@
 
 ### 设计原理
 
-1. **先 `metadata` 再读**：超过 `max_size`（默认 1MB）直接报错，避免 OOM（#191）。
+1. **先 `metadata` 再读**：超过 `tools.max_file_bytes`（默认 1MB）直接报错，避免 OOM。
 2. **目录即列表**：减少「目录误当文件读」的失败轮次；与 `ls` 分工：`read` 可顺带看单目录，`ls` 专用于列目录 API 更清晰。
 3. **hashline 与 edit 闭环**：锚点基于行内容 `trim_end` 后 xxHash32 低字节 → 2 字符字母表编码；`edit` 应用前 `validate_anchors` 防止文件已变仍盲改。
 4. **普通行号模式**：无 hashline 时输出 `行号: 内容`，便于人类与模型阅读，但不参与 edit 校验。

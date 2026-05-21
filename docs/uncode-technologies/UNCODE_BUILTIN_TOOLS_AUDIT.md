@@ -18,6 +18,8 @@
 
 | [#290](https://github.com/FDE-GROUP/uncode/issues/290) | `find` 使用 `ignore`；`write`/`edit` `spawn_blocking`；`test_find_respects_gitignore` |
 
+| [#292](https://github.com/FDE-GROUP/uncode/issues/292) | `AppConfig.tools`：`max_file_bytes`、`max_grep_results` 配置化并注入 `read`/`grep` |
+
 额外（无单独 Issue）：`read` 目录 listing 上限 500 条，与 `ls` 一致。
 
 ---
@@ -239,7 +241,7 @@
 |------|-----|-------------|
 | 参数校验 | TypeBox 全量 | 轻量 JSON Schema 子集 |
 | 文件/Shell | `ExecutionEnv` + `Result` 错误码 | 直接 `std::fs` / `tokio::process` |
-| 临时文件 | `createTempFile` 等 | `with_extension("tmp")` |
+| 临时文件 | `createTempFile` 等 | `tempfile::NamedTempFile`（#281） |
 | 搜索 | 生态中常接 ripgrep | 自研 WalkDir + regex |
 
 ---
