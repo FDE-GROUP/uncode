@@ -115,46 +115,12 @@ pub fn truncate_output(output: &str, max_bytes: usize) -> String {
 impl Shell for LocalShell {
     async fn exec(&self, cmd: &str, opts: ShellOptions) -> Result<ShellResult, UncodeError> {
         let timeout = opts.timeout_ms.unwrap_or(120_000);
-
-        let mut command = tokio::process::Command::new("sh");
-        command.arg("-c").arg(cmd);
-
-        if let Some(ref workdir) = opts.workdir {
-            command.current_dir(workdir);
-        }
-        if let Some(ref env) = opts.env {
-            for (k, v) in env {
-                command.env(k, v);
-            }
-        }
-
-        command.stdout(std::process::Stdio::piped());
-        command.stderr(std::process::Stdio::piped());
-
-        let result =
-            tokio::time::timeout(std::time::Duration::from_millis(timeout), command.output())
-                .await
-                .map_err(|_| {
-                    UncodeError::Execution(uncode_core::error::ExecutionError::Timeout {
-                        command: cmd.to_string(),
-                        timeout_ms: timeout,
-                        code: 2002,
-                    })
-                })?
-                .map_err(|e| {
-                    UncodeError::Execution(uncode_core::error::ExecutionError::Other {
-                        message: format!("spawn: {e}"),
-                        code: 2099,
-                    })
-                })?;
-
-        let stdout = clean_binary_output(&result.stdout);
-        let stderr = clean_binary_output(&result.stderr);
-
+        let (stdout, stderr, exit_code) =
+            super::bash_exec::shell_exec_bash(cmd, opts.workdir.clone(), timeout).await?;
         Ok(ShellResult {
             stdout,
             stderr,
-            exit_code: result.status.code().unwrap_or(-1),
+            exit_code,
             cancelled: false,
         })
     }
