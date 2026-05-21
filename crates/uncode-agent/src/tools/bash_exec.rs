@@ -14,6 +14,18 @@ use uncode_core::tool::{ToolContent, ToolProgress, ToolResult};
 
 use super::local_env::{clean_binary_output, truncate_output};
 
+fn bash_timeout_result() -> ToolResult {
+    ToolResult::err_with_details("timeout", serde_json::json!({ "reason": "timeout" }))
+}
+
+fn bash_cancelled_result() -> ToolResult {
+    ToolResult::err_with_details("cancelled", serde_json::json!({ "reason": "cancelled" }))
+}
+
+fn remaining_until(deadline: tokio::time::Instant) -> std::time::Duration {
+    deadline.saturating_duration_since(tokio::time::Instant::now())
+}
+
 /// Kill an entire process group (`process_group(0)` on spawn).
 #[cfg(unix)]
 #[allow(unsafe_code)]
@@ -121,27 +133,30 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
     let mut output = String::with_capacity(4096);
     let mut errors = String::new();
     let mut truncated = false;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(args.timeout_secs);
 
     let mut stdout_lines = BufReader::new(stdout).lines();
     loop {
         if ctx.cancel_token.is_cancelled() {
             kill_process_group(pgid);
-            return ToolResult::err_with_details(
-                "cancelled",
-                serde_json::json!({ "reason": "cancelled" }),
-            );
+            return bash_cancelled_result();
+        }
+        if remaining_until(deadline).is_zero() {
+            kill_process_group(pgid);
+            return bash_timeout_result();
         }
         tokio::select! {
             _ = ctx.cancel_token.cancelled() => {
                 kill_process_group(pgid);
-                return ToolResult::err_with_details(
-                    "cancelled",
-                    serde_json::json!({ "reason": "cancelled" }),
-                );
+                return bash_cancelled_result();
             }
-            line = stdout_lines.next_line() => {
+            line = tokio::time::timeout(remaining_until(deadline), stdout_lines.next_line()) => {
                 match line {
-                    Ok(Some(l)) => {
+                    Err(_) => {
+                        kill_process_group(pgid);
+                        return bash_timeout_result();
+                    }
+                    Ok(Ok(Some(l))) => {
                         if output.len() >= args.max_output_bytes {
                             kill_process_group(pgid);
                             truncated = true;
@@ -160,8 +175,8 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
                             break;
                         }
                     }
-                    Ok(None) => break,
-                    Err(_) => break,
+                    Ok(Ok(None)) => break,
+                    Ok(Err(_)) => break,
                 }
             }
         }
@@ -169,40 +184,46 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
 
     let mut stderr_lines = BufReader::new(stderr).lines();
     loop {
+        if ctx.cancel_token.is_cancelled() {
+            kill_process_group(pgid);
+            return bash_cancelled_result();
+        }
+        if remaining_until(deadline).is_zero() {
+            kill_process_group(pgid);
+            return bash_timeout_result();
+        }
         tokio::select! {
             _ = ctx.cancel_token.cancelled() => {
                 kill_process_group(pgid);
-                return ToolResult::err_with_details(
-                    "cancelled",
-                    serde_json::json!({ "reason": "cancelled" }),
-                );
+                return bash_cancelled_result();
             }
-            line = stderr_lines.next_line() => {
+            line = tokio::time::timeout(remaining_until(deadline), stderr_lines.next_line()) => {
                 match line {
-                    Ok(Some(l)) => {
+                    Err(_) => {
+                        kill_process_group(pgid);
+                        return bash_timeout_result();
+                    }
+                    Ok(Ok(Some(l))) => {
                         errors.push_str(&l);
                         errors.push('\n');
                     }
-                    Ok(None) => break,
-                    Err(_) => break,
+                    Ok(Ok(None)) => break,
+                    Ok(Err(_)) => break,
                 }
             }
         }
     }
 
-    let status = match tokio::time::timeout(
-        std::time::Duration::from_secs(args.timeout_secs),
-        child.wait(),
-    )
-    .await
-    {
+    let wait_budget = remaining_until(deadline);
+    if wait_budget.is_zero() {
+        kill_process_group(pgid);
+        return bash_timeout_result();
+    }
+    let status = match tokio::time::timeout(wait_budget, child.wait()).await {
         Ok(Ok(s)) => s,
         _ => {
             kill_process_group(pgid);
-            return ToolResult::err_with_details(
-                "timeout",
-                serde_json::json!({ "reason": "timeout" }),
-            );
+            return bash_timeout_result();
         }
     };
 
