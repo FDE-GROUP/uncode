@@ -1,3 +1,8 @@
+//! uncode-platform — Web 服务器后端
+//!
+//! 基于 axum 的 REST/WebSocket 服务器，提供会话管理、模型查询等 HTTP API，
+//! 并托管 Platform 前端静态资源。
+
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::response::IntoResponse;
 use axum::{Json, Router, extract::State, http::StatusCode, routing::get, routing::post};

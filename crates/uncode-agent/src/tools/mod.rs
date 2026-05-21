@@ -49,7 +49,7 @@ use std::sync::{Arc, OnceLock};
 
 use uncode_core::tool::ExecutionEnv;
 
-/// Process-wide default when [`ToolContext::execution_env`] is unset.
+/// Process-wide default when [`ToolContext`](uncode_core::tool::ToolContext)::execution_env is unset.
 pub fn default_execution_env() -> Arc<dyn ExecutionEnv> {
     static ENV: OnceLock<Arc<dyn ExecutionEnv>> = OnceLock::new();
     ENV.get_or_init(|| Arc::new(LocalExecutionEnv::new()))
