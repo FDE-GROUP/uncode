@@ -1,7 +1,8 @@
 # 内置工具审计：缺陷与优化机会
 
 > 基于 `crates/uncode-agent/src/tools/` 源码与测试的逐项审查（2026-05）。  
-> 工具说明见 [`UNCODE_BUILTIN_TOOLS.md`](UNCODE_BUILTIN_TOOLS.md)。
+> 工具说明见 [`UNCODE_BUILTIN_TOOLS.md`](UNCODE_BUILTIN_TOOLS.md)。  
+> **状态列**：与 `main` 同步至 2026-05-21（含 #309–#312 合并后预期）。
 
 ## 已落地修复（关联 Issue）
 
@@ -9,20 +10,20 @@
 |-------|----------|
 | [#281](https://github.com/FDE-GROUP/uncode/issues/281) | `atomic_write()` + `tempfile::NamedTempFile`；`write`/`edit` 不再使用 `with_extension("tmp")` |
 | [#282](https://github.com/FDE-GROUP/uncode/issues/282) | `grep` `include` 匹配相对路径 + 文件名；补集成测试 |
-| [#283](https://github.com/FDE-GROUP/uncode/issues/283) | `bash` `workdir` 走 `resolve_path`；`execute` 超时杀进程组；流式 stdout 累积上限 |
+| [#283](https://github.com/FDE-GROUP/uncode/issues/283) | `bash` `workdir` 走 `resolve_path`；超时/取消杀进程组；流式 stdout 累积上限 |
 | [#284](https://github.com/FDE-GROUP/uncode/issues/284) | `url_safety::ensure_public_http_url`；`web_fetch` 限制重定向 |
-
 | [#285](https://github.com/FDE-GROUP/uncode/issues/285) | `grep` 使用 `ignore` 遍历（`.gitignore`）+ 单文件 1MB 上限；集成测试 |
 | [#286](https://github.com/FDE-GROUP/uncode/issues/286) | `read`：`spawn_blocking` + `offset` schema 澄清 + 边界测试 |
-| [#287](https://github.com/FDE-GROUP/uncode/issues/287) | 权限确认状态栏展示 `ToolDefinition.description`；`web_search` 输出截断 |
-
+| [#287](https://github.com/FDE-GROUP/uncode/issues/287) | 权限确认状态栏展示工具说明；`web_search` 输出截断 |
 | [#290](https://github.com/FDE-GROUP/uncode/issues/290) | `find` 使用 `ignore`；`write`/`edit` `spawn_blocking`；`test_find_respects_gitignore` |
-
 | [#292](https://github.com/FDE-GROUP/uncode/issues/292) | `AppConfig.tools`：`max_file_bytes`、`max_grep_results` 配置化并注入 `read`/`grep` |
-
 | （切片，#244） | `ToolContext.execution_env`；文件工具走 `FileSystem`；`bash`/`LocalShell` 共享 `bash_exec` |
 | [#299](https://github.com/FDE-GROUP/uncode/issues/299) | 七件套 `prepare_arguments`：`path`/`workdir` 沙箱解析与相对路径回写 |
 | [#244](https://github.com/FDE-GROUP/uncode/issues/244) | `ExecutionEnv` 切片 + `mock_env` 注入测试（read/ls） |
+| [#303](https://github.com/FDE-GROUP/uncode/issues/303) | `grep` 优先 ripgrep 后端（`details.backend`） |
+| [#305–#309](https://github.com/FDE-GROUP/uncode/pull/305) | `web_fetch`/`web_search` wiremock、SSRF、html 降级、details、snippet 截断 |
+| [#310–#311](https://github.com/FDE-GROUP/uncode/pull/310) | bash 取消测试；`execute` 与流式路径统一 + 全程 deadline |
+| [#312](https://github.com/FDE-GROUP/uncode/pull/312) | bash 模型 `description` → TUI 确认栏 + 日志（`approval_description`） |
 
 额外（无单独 Issue）：`read` 目录 listing 上限 500 条，与 `ls` 一致。
 
@@ -33,12 +34,13 @@
 | 严重程度 | 数量 | 典型项 |
 |----------|------|--------|
 | **P0 安全/正确性** | 0（已修） | 见「已落地修复」表 |
-| **P1 可靠性** | 1 | `bash` `description` 未消费 |
-| **P2 体验/对齐** | 8 | 阻塞 I/O、`read` offset 语义、SSRF、缺 `.gitignore` |
-| **P3 增强** | 10+ | `ExecutionEnv` 统一、Pi 对齐、可观测性 |
+| **P1 可靠性** | 0（已修） | 七件套 + web + bash |
+| **P2 体验/对齐** | 3 | 非 UTF-8/binary 预览、跨 mount rename、描述语言混用 |
+| **P3 增强** | 若干 | Platform 审批 UI、`ExecutionEnv` 全覆盖、语义编辑 |
 
-**沙箱路径（`resolve_path`）**：对 `..` 与 **canonicalize 后落在 CWD 外** 的路径（含指向项目外的符号链接）会拒绝，行为正确。  
-**主要缺口（剩余）**：`bash` `description` 参数未接入审批/日志。
+**沙箱路径（`resolve_path`）**：对 `..` 与 canonicalize 后落在 CWD 外的路径会拒绝，行为正确。
+
+**主要缺口（剩余）**：Platform 审批 UI 复用 `approval_description`；§2 各工具「局限/优化」为增强项而非未修缺陷。
 
 ---
 
@@ -48,15 +50,13 @@
 
 | 类型 | 发现 |
 |------|------|
-| **缺陷** | `offset` 在 schema 中写「起始行号」，实现为 `lines().skip(offset)`，即 **0 起始的 skip 计数**；输出行为 **1 起始行号**（`{:>6}:` / hashline）。模型易 off-by-one。 |
-| **缺陷** | 目录 listing **无条目上限**；`ls` 限制 500 条，行为不一致。大目录（如误读 `node_modules`）可撑爆上下文。 |
-| **缺陷** | `execute` 使用 **`std::fs` 同步 I/O**，在 tokio 运行时上可能阻塞 worker（其它工具部分用 `spawn_blocking`）。 |
-| **缺陷** | 无 `offset`/`limit` 时仍一次性 `read_to_string` 整文件（≤1MB）；无「仅元数据/仅头几 KB」模式。 |
+| **已修复** | `offset` schema 写明「跳过的行数（0-based）」与显示行号关系（#286）。 |
+| **已修复** | 目录 listing **500 条上限** + `entry_limit` details，与 `ls` 一致。 |
+| **已修复** | 文件读取走 `spawn_blocking`（#286）。 |
 | **局限** | 非 UTF-8 文件直接报错；无 binary/hex 预览。 |
 | **局限** | `hashline` 描述为英文，与其余中文 description 不统一。 |
-| **优化** | 目录 listing 与 `ls` 共用上限与排序策略；大文件默认建议 `limit`；`spawn_blocking` 包装读文件。 |
-| **优化** | schema 明确：`offset` = 跳过的行数（0-based），显示行号 = offset + 1。 |
-| **测试缺口** | 无超大目录、无 `offset`/`limit` 边界、无非法 path 沙箱用例（`mod/tests.rs` 有部分沙箱，未覆盖 read 越界）。 |
+| **优化** | 大文件默认建议 `limit`；非法 path 沙箱用例可再补。 |
+| **测试** | 有 offset/limit、hashline、mock_env；可补超大目录边界。 |
 
 ---
 
@@ -64,13 +64,11 @@
 
 | 类型 | 发现 |
 |------|------|
-| **P0 缺陷** | 原子写使用 `resolved.with_extension("tmp")`：**替换扩展名**而非追加后缀。例如 `lib.rs` 与 `lib.c` 均得到 `lib.tmp`，**并发或连续写入可互相覆盖临时文件**。应使用 `create_tempfile_in(dir)` 或 `{path}.uncode.tmp.{random}`。 |
-| **缺陷** | 同步 `fs::write` / `rename` 在 async `execute` 中阻塞。 |
-| **缺陷** | 跨设备 `rename` 可能失败（临时文件与目标不同 mount）；未 fallback `copy`。 |
+| **已修复** | `atomic_write()` + 唯一临时文件（#281）；`test_write_distinct_temp_paths_for_same_stem`。 |
+| **已修复** | `spawn_blocking` + `details.bytes_written`（#290/#301）。 |
 | **局限** | 仅全文覆写；无 `append`、无 `mode`/`executable` 位。 |
-| **优化** | 写入前可选检测「文件已被磁盘修改」（mtime）降低覆盖并发编辑。 |
-| **优化** | 返回 diff 已很好；可附带 `bytes_written` 结构化 `details`（对齐 Pi `ToolResult.details`）。 |
-| **测试** | 有基本写、父目录创建；**无** tmp 碰撞、跨 mount rename。 |
+| **优化** | 跨设备 `rename` 未 fallback `copy`；写入前 mtime 检测（并发编辑）。 |
+| **测试** | 基本写、父目录、tmp 碰撞；无跨 mount 专项。 |
 
 ---
 
@@ -78,15 +76,12 @@
 
 | 类型 | 发现 |
 |------|------|
-| **P0 缺陷** | 与 `write` 相同 **`with_extension("tmp")` 碰撞**风险。 |
-| **缺陷** | Hashline：`edits` 应用顺序依赖「自下而上」；**未**在 schema 中说明模型应按 bottom-up 或任意顺序提交（实现会排序，OK）。 |
-| **缺陷** | Legacy 模式要求 `old_string` **全局唯一**；对重复子串常见模板不友好，错误信息尚可。 |
-| **缺陷** | `op` 大小写敏感；模型传 `Replace` 会失败。 |
-| **局限** | 仅支持单行锚点区间；无「按函数名」等语义编辑。 |
-| **局限** | CRLF 文件：`lines()` 去掉 `\r`，写回可能变 LF-only。 |
-| **优化** | 与 `read(hashline=true)` 联动在 description 中写死工作流（减少 legacy 误用）。 |
-| **优化** | 重叠检测已有；可增加「锚点过期」时自动建议 `read` 的 error hint。 |
-| **测试** | hashline / legacy 覆盖较好；**无** 多文件并发 edit、**无** tmp 碰撞。 |
+| **已修复** | 与 `write` 共用 `atomic_write`（#281）。 |
+| **已修复** | `spawn_blocking`（#290）。 |
+| **局限** | Legacy 模式要求 `old_string` 全局唯一；`op` 大小写敏感。 |
+| **局限** | CRLF 文件写回可能变 LF-only。 |
+| **优化** | hashline 工作流说明、锚点过期 hint。 |
+| **测试** | hashline / legacy 覆盖较好。 |
 
 ---
 
@@ -94,15 +89,13 @@
 
 | 类型 | 发现 |
 |------|------|
-| **P0 缺陷** | `include` 参数文档示例为 `**/*.rs`、`src/*.rs`，实现仅用 **`entry.file_name()`** 做 `glob::Pattern::matches`，**不匹配相对路径**。`src/foo.rs` 不会被 `*.rs` 匹配（除非文件名碰巧）。与 schema 描述严重不符。 |
-| **缺陷** | **无单元/集成测试**（`tests.rs` 中无 GrepTool）。 |
-| **缺陷** | 每个文件 `read_to_string` 全量读入，**无单文件大小上限**；大文件可导致内存与时间激增。 |
-| **缺陷** | 不跳过 `.git`、`node_modules`、`target` 等；噪音与性能差。 |
-| **局限** | `max_depth(20)` 硬编码；无 `ignore` 可配置。 |
-| **局限** | 结果 50 条全局计数，非「每文件」；长行不截断。 |
-| **优化** | `include` 应对 `strip_prefix(root)` 后的相对路径匹配，或改用 `globset`/ripgrep。 |
-| **优化** | 对齐 ripgrep：`.gitignore`、并行目录遍历、二进制检测。 |
-| **优化** | 使用 `spawn_blocking` 已具备；可加 `type`/`head_limit` 参数。 |
+| **已修复** | `include` 匹配相对路径 + 文件名（#282）；`test_grep_include_matches_relative_path`。 |
+| **已修复** | `ignore` + 单文件 1MB 上限（#285）；`test_grep_respects_gitignore`。 |
+| **已修复** | 集成测试 + 条件 ripgrep（#303）；`test_grep_native_backend_details_when_no_rg`。 |
+| **已修复** | `max_grep_results` 等可配置（#292）。 |
+| **局限** | `max_depth(20)` 硬编码；长行不截断。 |
+| **优化** | 每文件条数、`head_limit` 参数。 |
+| **测试** | 覆盖 include、gitignore、rg/native backend。 |
 
 ---
 
@@ -110,11 +103,10 @@
 
 | 类型 | 发现 |
 |------|------|
-| **缺陷** | `glob("{root}/{pattern}")`：pattern 若已含前导 `/` 或 Windows 反斜杠可能异常；未规范化。 |
-| **缺陷** | 无测试覆盖 `**` 深层与 200 条截断边界（有基本 happy path）。 |
-| **局限** | 不返回目录；仅文件路径（`flatten` 含目录吗？ `glob` 通常两者都有需确认）— `glob` 返回的可能是目录。 |
-| **优化** | 默认排除 `node_modules`、`.git`（与 grep 一致策略）。 |
-| **优化** | 返回 mtime/size 可选，减少后续 `read` 次数。 |
+| **已修复** | `ignore` 遍历（#290）；`test_find_respects_gitignore`。 |
+| **局限** | pattern 含前导 `/` 或 Windows 路径未专门规范化。 |
+| **优化** | 返回 mtime/size；明确目录是否列入结果。 |
+| **测试** | happy path + gitignore；可补 200 条截断边界。 |
 
 ---
 
@@ -122,11 +114,10 @@
 
 | 类型 | 发现 |
 |------|------|
-| **缺陷** | 与 `read(目录)` 功能重叠，但 **500 条上限仅 ls 有**；产品语义应统一。 |
-| **缺陷** | 不显示隐藏文件（默认 `read_dir` 行为）— 与 Unix `ls -a` 不同，需在 description 说明。 |
-| **局限** | 非递归；无 tree。 |
-| **优化** | 可选 `all: true` 显示点文件；与 `read` 目录模式合并文档。 |
-| **测试** | 有空目录、不存在目录；较好。 |
+| **已修复** | `read(目录)` 与 `ls` 均为 500 条上限（逻辑对齐）。 |
+| **局限** | 不显示隐藏文件（非 `ls -a`）；非递归。 |
+| **优化** | 可选 `all: true`；与 `read` 目录模式文档合并说明。 |
+| **测试** | 空目录、不存在路径；较好。 |
 
 ---
 
@@ -134,14 +125,13 @@
 
 | 类型 | 发现 |
 |------|------|
-| **已修复** | `workdir` 经 `resolve_path`（#283）；`/tmp` 等越界拒绝（`test_bash_workdir_outside_sandbox_rejected`、`test_bash_prepare_rejects_workdir_outside_sandbox`）。 |
-| **已修复** | `exec_bash_streaming` 全程 `deadline`（含无输出 `sleep` 时读 stdout 阻塞）；超时与取消均 `kill_process_group`（#283）；流式 stdout **累积字节上限**。 |
-| **缺陷** | `description` 参数 **未使用**（仅 schema/UI 意图）；应在 TUI 审批或日志中消费。 |
-| **缺陷** | 非 Unix 无进程组杀；Windows 上取消/超时行为弱。 |
-| **已修复** | `execute()` 委托 `execute_with_context`（同一 `exec_bash_streaming`）；非零退出码 `execute()` 返回 `Err`、context 路径 `is_error: true`。 |
-| **局限** | 固定 `bash -c`；无 `env` 注入、无 stdin 喂入。描述「沙箱」指 **workdir 路径约束**，非全机命令白名单。 |
-| **优化** | 与 `LocalShell` 进一步合并重复逻辑；stderr 走 `on_progress`。 |
-| **测试** | echo、timeout、truncation、workdir 沙箱、**取消杀进程**（`test_bash_cancelled_via_context_kills_command`）。 |
+| **已修复** | `workdir` 经 `resolve_path`（#283）；越界拒绝测试。 |
+| **已修复** | `exec_bash_streaming` 全程 `deadline`；超时/取消 `kill_process_group`；流式 stdout 字节上限。 |
+| **已修复** | 模型 `description` → TUI 确认栏 + 日志（`approval_description`，#312）。 |
+| **已修复** | `execute()` 委托 `execute_with_context`；非零退出码语义一致（#311）。 |
+| **局限** | 非 Unix 进程组弱；固定 `bash -c`；无 stdin 喂入。 |
+| **优化** | stderr 走 `on_progress`；与 `LocalShell` 进一步合并。 |
+| **测试** | echo、timeout、truncation、沙箱、取消、exit code。 |
 
 ---
 
@@ -149,12 +139,9 @@
 
 | 类型 | 发现 |
 |------|------|
-| **P1 安全** | ~~无 SSRF 防护~~ → `url_safety::ensure_public_http_url`（#284）。 |
-| **缺陷** | ~~无重定向上限~~ → `Policy::limited(5)`（#284）。 |
-| **缺陷** | ~~`html2text` 失败即整工具失败~~ → 降级为 lossy UTF-8 原始 HTML（#306）。 |
-| **局限** | 无 JS、无 cookie、无认证头。 |
-| **优化** | ~~返回 `Content-Type`、最终 URL~~ → `ToolResult.details`（#308）。 |
-| **测试** | definition + SSRF + wiremock plain/html/503 + details（#305/#308）；`html2text` 单元测试（#306）。 |
+| **已修复** | SSRF（#284）、重定向上限、`html2text` 降级（#306）、`details`（#308）。 |
+| **局限** | 无 JS、cookie、认证头。 |
+| **测试** | wiremock + SSRF + details + html 单元测试。 |
 
 ---
 
@@ -162,11 +149,9 @@
 
 | 类型 | 发现 |
 |------|------|
-| **缺陷** | ~~无输出长度上限~~ → `truncate_output` 50KB（#287）；`max_results` 上限 20（#307）。 |
-| **缺陷** | API key 随请求发送（Tavily 设计）；需确保日志/on_payload 不泄露。 |
-| **局限** | 强依赖 Tavily；无离线/备用搜索。 |
-| **优化** | ~~截断每条 snippet~~ → 单条 2KB、`answer` 4KB（#309）。 |
-| **测试** | key/definition + wiremock 成功/401 + `max_results` clamp（#305/#307）。 |
+| **已修复** | 总输出 50KB（#287）、`max_results` 1–20（#307）、snippet/answer 截断（#309）。 |
+| **局限** | 强依赖 Tavily；日志勿泄露 API key。 |
+| **测试** | wiremock 成功/401 + clamp。 |
 
 ---
 
@@ -176,23 +161,22 @@
 
 | 类型 | 发现 |
 |------|------|
-| **局限** | 2 字符哈希（256 桶），**碰撞概率低但存在**；碰撞时误拒或误接受（后者更危险，当前会 validate 失败）。 |
-| **优化** | 碰撞时 fallback 到更长 hash 或附带行内容摘要。 |
+| **局限** | 2 字符哈希碰撞概率低但存在。 |
+| **优化** | 碰撞时更长 hash 或行内容摘要。 |
 
 #### `diff`
 
 | 类型 | 发现 |
 |------|------|
 | **良好** | 委托 `uncode_core`，`MAX_DIFF_LINES` 控制输出。 |
-| **优化** | 极大文件 diff 仍可能昂贵；可仅统计 hunks 数。 |
 
 #### `local_env` / `resolve_path`
 
 | 类型 | 发现 |
 |------|------|
-| **良好** | `resolve_path` 对 `..` 与 canonicalize 外链出 CWD 有效。 |
-| **缺口** | 文件工具未统一走 `ExecutionEnv`；`bash` 未复用 `LocalShell`。 |
-| **优化** | Pi 对齐：全部 FS/Shell 经 `ExecutionEnv`，便于测试注入与远程沙箱。 |
+| **良好** | `resolve_path` 对 `..` 与外链出 CWD 有效。 |
+| **已修复（切片）** | read/ls 等可走 `ExecutionEnv`（#244）；`bash_exec` 共享。 |
+| **优化** | 全部 FS/Shell 经 `ExecutionEnv`（远程沙箱）。 |
 
 ---
 
@@ -200,56 +184,51 @@
 
 | 主题 | 说明 |
 |------|------|
-| **测试覆盖** | 七件套 + `mock_env` + `web_fetch`/`web_search` wiremock；`grep` 条件测 ripgrep。 |
-| **async 一致性** | `read`/`write`/`edit` 同步 FS；`grep`/`find`/`ls` 用 `spawn_blocking`。 |
-| **描述语言** | 中英混用（`read.hashline`、`edit` 大段英文 description）。 |
-| **Pi 对齐** | 七件套已实现 `prepare_arguments`（路径沙箱 + 相对路径回写）；`ExecutionEnv` 切片已落地；`bash` sequential 已对齐。 |
-| **可观测性** | 工具 `details` 含退出码/截断/bytes 等；`AgentLoop` 统一注入 `duration_ms`。 |
+| **测试覆盖** | 七件套 + mock_env + web wiremock + grep rg/native + bash 取消/超时。 |
+| **async 一致性** | `read`/`write`/`edit`/`grep`/`find`/`ls` 主要路径已 `spawn_blocking`。 |
+| **描述语言** | 中英混用（`read.hashline`、`edit` 大段英文）。 |
+| **Pi 对齐** | `prepare_arguments`、`ExecutionEnv` 切片、bash sequential、`ToolResult.details` + `duration_ms`。 |
+| **可观测性** | 退出码/截断/bytes/url 等写入 `details`。 |
 
 ---
 
 ## 4. 建议修复优先级（工程）
 
-### 4.1 建议尽快（P0–P1）— 多数已落地
+### 4.1 P0–P1
 
-以下项已在 main 完成（见 §「已落地修复」）；**剩余 P1**：
+**均已落地**（见 §「已落地修复」）。
 
-1. **`bash`**：`description` 接入 TUI 审批或结构化日志。
+### 4.2 P2（可选）
 
-### 4.2 短期增强（P2）— 多数已落地
+1. 描述语言中英统一。  
+2. `read` 非 UTF-8 / binary 预览。  
+3. `write`/`edit` 跨 mount `rename` fallback。
 
-**剩余**：
+### 4.3 P3（架构）
 
-1. `bash` `description` 接入权限 UI/日志（同上）。  
-2. 描述语言中英统一（`read.hashline`、`edit` 等）。  
-3. 审计正文 §2.1–2.6 部分条目仍反映 2026-05 初稿，可按 main 状态逐项勾选「已修复」。
-
-### 4.3 中期（P3 / 架构）
-
-1. ~~全面接入 `ExecutionEnv`（对齐 Pi）~~ — 七件套 + `bash_exec` 已落地（#244 切片）。  
-2. ~~可选 ripgrep 后端~~ — 已安装 `rg` 时 `grep` 优先走 ripgrep（`details.backend`），否则 `ignore` walk + 内置 regex。  
-3. 工具级 `prepare_arguments`（路径规范化、默认 limit）。  
-4. 配置化：`max_size`、`max_grep_results` 进 `uncode-shared` config。
+1. Platform 审批 UI 复用 `approval_description`。  
+2. `ExecutionEnv` 全覆盖（远程/测试注入）。  
+3. 语义编辑（按符号名锚点）等 Pi 增强项。
 
 ---
 
-## 5. 与 Pi 的差异（非缺陷，但影响体验）
+## 5. 与 Pi 的差异（非缺陷）
 
 | 能力 | Pi | uncode 现状 |
 |------|-----|-------------|
 | 参数校验 | TypeBox 全量 | 轻量 JSON Schema 子集 |
-| 文件/Shell | `ExecutionEnv` + `Result` 错误码 | 直接 `std::fs` / `tokio::process` |
+| 文件/Shell | `ExecutionEnv` + 错误码 | 切片已落地；部分仍直连 FS |
 | 临时文件 | `createTempFile` 等 | `tempfile::NamedTempFile`（#281） |
-| 搜索 | 生态中常接 ripgrep | 自研 WalkDir + regex |
+| 搜索 | 常接 ripgrep | 已优先 `rg`，否则 ignore + regex |
 
 ---
 
 ## 6. 相关文档
 
-- [`UNCODE_BUILTIN_TOOLS.md`](UNCODE_BUILTIN_TOOLS.md) — 用途与设计  
-- [`UNCODE_TOOL_SYSTEM.md`](UNCODE_TOOL_SYSTEM.md) — 生命周期与 CLI  
-- [`../pi-technologies/PI_TOOL_SYSTEM.md`](../pi-technologies/PI_TOOL_SYSTEM.md) — Pi 对照  
+- [`UNCODE_BUILTIN_TOOLS.md`](UNCODE_BUILTIN_TOOLS.md)  
+- [`UNCODE_TOOL_SYSTEM.md`](UNCODE_TOOL_SYSTEM.md)  
+- [`../pi-technologies/PI_TOOL_SYSTEM.md`](../pi-technologies/PI_TOOL_SYSTEM.md)  
 
 ---
 
-*审计版本：2026-05；审查范围：`uncode-agent/src/tools/*.rs` 与 `tools/tests.rs`。*
+*审计版本：2026-05-21；审查范围：`uncode-agent/src/tools/*.rs` 与 `tools/tests.rs`。*
