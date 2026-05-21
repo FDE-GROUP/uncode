@@ -111,7 +111,9 @@ impl ToolExecutor for EditTool {
 
         let output = tokio::task::spawn_blocking(move || edit_blocking(job))
             .await
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("edit task failed: {e}")))??;
+            .map_err(|e| {
+                uncode_core::error::UncodeError::Tool(format!("edit task failed: {e}"))
+            })??;
 
         Ok(ToolResult::ok(output))
     }
