@@ -16,6 +16,8 @@
 | [#286](https://github.com/FDE-GROUP/uncode/issues/286) | `read`：`spawn_blocking` + `offset` schema 澄清 + 边界测试 |
 | [#287](https://github.com/FDE-GROUP/uncode/issues/287) | 权限确认状态栏展示 `ToolDefinition.description`；`web_search` 输出截断 |
 
+| [#290](https://github.com/FDE-GROUP/uncode/issues/290) | `find` 使用 `ignore`；`write`/`edit` `spawn_blocking`；`test_find_respects_gitignore` |
+
 额外（无单独 Issue）：`read` 目录 listing 上限 500 条，与 `ls` 一致。
 
 ---

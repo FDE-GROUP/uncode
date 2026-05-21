@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::fs;
+use std::path::PathBuf;
 use uncode_core::error::UncodeResult;
 use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
 
@@ -76,25 +77,48 @@ impl ToolExecutor for EditTool {
 
         let resolved = super::resolve_path(raw).map_err(uncode_core::error::UncodeError::Tool)?;
         let display = resolved.display().to_string();
-
-        let old_content = fs::read_to_string(&resolved)
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("edit {display}: {e}")))?;
-
-        let new_content = if let Some(edits_val) = arguments.get("edits") {
-            apply_hashline_edits(&old_content, edits_val)?
-        } else {
-            apply_legacy_edit(&old_content, &arguments)?
+        let job = EditJob {
+            path: resolved,
+            display,
+            arguments,
         };
 
-        if old_content == new_content {
-            return Ok(format!("no changes: {display}"));
-        }
-
-        super::atomic_write(&resolved, &new_content)
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("edit {display}: {e}")))?;
-
-        Ok(unified_diff(&old_content, &new_content, &display))
+        tokio::task::spawn_blocking(move || edit_blocking(job))
+            .await
+            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("edit task failed: {e}")))?
     }
+}
+
+struct EditJob {
+    path: PathBuf,
+    display: String,
+    arguments: serde_json::Value,
+}
+
+fn edit_blocking(job: EditJob) -> Result<String, uncode_core::error::UncodeError> {
+    let EditJob {
+        path,
+        display,
+        arguments,
+    } = job;
+
+    let old_content = fs::read_to_string(&path)
+        .map_err(|e| uncode_core::error::UncodeError::Tool(format!("edit {display}: {e}")))?;
+
+    let new_content = if let Some(edits_val) = arguments.get("edits") {
+        apply_hashline_edits(&old_content, edits_val)?
+    } else {
+        apply_legacy_edit(&old_content, &arguments)?
+    };
+
+    if old_content == new_content {
+        return Ok(format!("no changes: {display}"));
+    }
+
+    super::atomic_write(&path, &new_content)
+        .map_err(|e| uncode_core::error::UncodeError::Tool(format!("edit {display}: {e}")))?;
+
+    Ok(unified_diff(&old_content, &new_content, &display))
 }
 
 fn apply_hashline_edits(

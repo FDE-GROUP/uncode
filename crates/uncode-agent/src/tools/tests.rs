@@ -258,6 +258,30 @@ async fn test_find_tool_no_matches() {
 }
 
 #[tokio::test]
+async fn test_find_respects_gitignore() {
+    let (_dir, _guard) = sandbox_dir();
+    std::process::Command::new("git")
+        .args(["init", "-q"])
+        .status()
+        .expect("git init for find gitignore test");
+    std::fs::create_dir_all("ignored").unwrap();
+    fs::write("ignored/hidden.rs", "").unwrap();
+    fs::write("visible.rs", "").unwrap();
+    fs::write(".gitignore", "ignored/\n").unwrap();
+
+    let tool = FindTool;
+    let result = tool
+        .execute(serde_json::json!({
+            "pattern": "*.rs",
+            "path": "."
+        }))
+        .await
+        .unwrap();
+    assert!(result.contains("visible.rs"));
+    assert!(!result.contains("ignored/hidden.rs"));
+}
+
+#[tokio::test]
 async fn test_registry_register_and_get() {
     let registry = ToolRegistry::new();
     registry.register("read".to_string(), std::sync::Arc::new(ReadTool::new()));

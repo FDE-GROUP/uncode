@@ -67,7 +67,7 @@
 
 ### 2.5 阻塞 I/O 与异步
 
-`grep` / `find` / `ls` 在 `spawn_blocking` 中做目录遍历，避免阻塞 tokio 运行时。`bash` 在 `execute_with_context` 中流式读 stdout 并支持取消。
+`read` / `write` / `edit` / `grep` / `find` / `ls` 的磁盘 I/O 在 `spawn_blocking` 中执行，避免阻塞 tokio 运行时。`bash` 在 `execute_with_context` 中流式读 stdout 并支持取消。
 
 ### 2.6 并行批次
 
@@ -258,7 +258,7 @@
 
 ### 设计原理
 
-1. **实现简单**：`glob::glob("{root}/{pattern}")`，与 shell `find` 心智接近但跨平台一致。
+1. **`ignore` 遍历 + glob 匹配**：默认遵守 `.gitignore`（Git 工作区内）；对相对路径与文件名匹配 `pattern`。
 2. **上限 200 条**：与 `grep` 同理控制 token。
 3. **沙箱根路径**：`resolve_path` 保证搜索根在 CWD 内。
 
