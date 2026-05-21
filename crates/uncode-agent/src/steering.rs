@@ -3,8 +3,23 @@ use uncode_core::message::Message;
 
 const CHANNEL_CAPACITY: usize = 64;
 
-fn drain_receiver(rx: &mut mpsc::Receiver<Message>) -> Vec<Message> {
-    std::iter::from_fn(|| rx.try_recv().ok()).collect()
+/// Steering 队列清空策略。
+///
+/// **Pi:** 对照 `"all"` / `"one-at-a-time"` drain 模式。
+#[derive(Debug, Clone, Copy, Default)]
+pub enum DrainMode {
+    /// 一次性清空所有排队消息。
+    #[default]
+    All,
+    /// 每次只取最旧的一条，剩余留给后续 Turn。
+    OneAtATime,
+}
+
+fn drain_receiver(rx: &mut mpsc::Receiver<Message>, mode: DrainMode) -> Vec<Message> {
+    match mode {
+        DrainMode::All => std::iter::from_fn(|| rx.try_recv().ok()).collect(),
+        DrainMode::OneAtATime => rx.try_recv().ok().into_iter().collect(),
+    }
 }
 
 /// 三通道运行时消息队列（steering / follow_up / next_turn）。
@@ -17,6 +32,7 @@ pub struct MessageQueue {
     follow_up_rx: mpsc::Receiver<Message>,
     next_turn_tx: mpsc::Sender<Message>,
     next_turn_rx: mpsc::Receiver<Message>,
+    steering_drain_mode: DrainMode,
 }
 
 impl MessageQueue {
@@ -31,7 +47,13 @@ impl MessageQueue {
             follow_up_rx,
             next_turn_tx,
             next_turn_rx,
+            steering_drain_mode: DrainMode::default(),
         }
+    }
+
+    pub fn with_steering_drain_mode(mut self, mode: DrainMode) -> Self {
+        self.steering_drain_mode = mode;
+        self
     }
 
     pub async fn steer(&self, msg: Message) {
@@ -47,15 +69,15 @@ impl MessageQueue {
     }
 
     pub fn drain_steering(&mut self) -> Vec<Message> {
-        drain_receiver(&mut self.steering_rx)
+        drain_receiver(&mut self.steering_rx, self.steering_drain_mode)
     }
 
     pub fn drain_follow_up(&mut self) -> Vec<Message> {
-        drain_receiver(&mut self.follow_up_rx)
+        drain_receiver(&mut self.follow_up_rx, DrainMode::All)
     }
 
     pub fn drain_next_turn(&mut self) -> Vec<Message> {
-        drain_receiver(&mut self.next_turn_rx)
+        drain_receiver(&mut self.next_turn_rx, DrainMode::All)
     }
 
     pub fn clear_steering(&mut self) -> Vec<Message> {
@@ -94,4 +116,68 @@ pub struct MessageQueueHandle {
     pub steering: mpsc::Sender<Message>,
     pub follow_up: mpsc::Sender<Message>,
     pub next_turn: mpsc::Sender<Message>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_drain_all_returns_everything() {
+        let mut mq = MessageQueue::new();
+        mq.steer(Message::user("a")).await;
+        mq.steer(Message::user("b")).await;
+        mq.steer(Message::user("c")).await;
+
+        let msgs = mq.drain_steering();
+        assert_eq!(msgs.len(), 3);
+        // Queue should be empty after drain
+        assert!(mq.drain_steering().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_drain_one_at_a_time_returns_single() {
+        let mut mq = MessageQueue::new().with_steering_drain_mode(DrainMode::OneAtATime);
+        mq.steer(Message::user("a")).await;
+        mq.steer(Message::user("b")).await;
+        mq.steer(Message::user("c")).await;
+
+        let first = mq.drain_steering();
+        assert_eq!(first.len(), 1);
+
+        let second = mq.drain_steering();
+        assert_eq!(second.len(), 1);
+
+        let third = mq.drain_steering();
+        assert_eq!(third.len(), 1);
+
+        assert!(mq.drain_steering().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_drain_one_at_a_time_empty() {
+        let mut mq = MessageQueue::new().with_steering_drain_mode(DrainMode::OneAtATime);
+        assert!(mq.drain_steering().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_follow_up_always_drains_all() {
+        let mut mq = MessageQueue::new().with_steering_drain_mode(DrainMode::OneAtATime);
+        mq.follow_up(Message::user("x")).await;
+        mq.follow_up(Message::user("y")).await;
+
+        // follow_up ignores steering_drain_mode, always drains all
+        let msgs = mq.drain_follow_up();
+        assert_eq!(msgs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_has_items() {
+        let mut mq = MessageQueue::new();
+        assert!(!mq.has_items());
+        mq.steer(Message::user("hi")).await;
+        assert!(mq.has_items());
+        mq.drain_steering();
+        assert!(!mq.has_items());
+    }
 }

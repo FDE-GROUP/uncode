@@ -278,6 +278,26 @@ pub enum UncodeError {
     Other(String),
 }
 
+impl UncodeError {
+    /// 是否为可重试的瞬态错误（429 rate limit、网络超时）。
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, Self::LlmRateLimit(_) | Self::Network(_))
+    }
+
+    /// 是否为 context overflow 错误（需要 compaction 而非重试）。
+    pub fn is_context_overflow(&self) -> bool {
+        match self {
+            Self::Llm(msg) => {
+                let lower = msg.to_lowercase();
+                lower.contains("context_length")
+                    || lower.contains("context window")
+                    || lower.contains("too many tokens")
+            }
+            _ => false,
+        }
+    }
+}
+
 /// 向后兼容：Io 错误自动路由到 File variant
 impl From<std::io::Error> for UncodeError {
     fn from(e: std::io::Error) -> Self {
@@ -287,3 +307,45 @@ impl From<std::io::Error> for UncodeError {
 
 /// uncode 通用 Result 类型别名
 pub type UncodeResult<T> = Result<T, UncodeError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_retryable_rate_limit() {
+        let e = UncodeError::LlmRateLimit("rate limited".into());
+        assert!(e.is_retryable());
+    }
+
+    #[test]
+    fn test_is_retryable_network() {
+        let e = UncodeError::Network("connection reset".into());
+        assert!(e.is_retryable());
+    }
+
+    #[test]
+    fn test_not_retryable_auth() {
+        let e = UncodeError::LlmAuth("invalid key".into());
+        assert!(!e.is_retryable());
+    }
+
+    #[test]
+    fn test_not_retryable_llm_generic() {
+        let e = UncodeError::Llm("internal error".into());
+        assert!(!e.is_retryable());
+    }
+
+    #[test]
+    fn test_is_context_overflow() {
+        assert!(UncodeError::Llm("context_length_exceeded".into()).is_context_overflow());
+        assert!(UncodeError::Llm("context window exceeded".into()).is_context_overflow());
+        assert!(UncodeError::Llm("Too many tokens".into()).is_context_overflow());
+    }
+
+    #[test]
+    fn test_not_context_overflow() {
+        assert!(!UncodeError::Llm("internal server error".into()).is_context_overflow());
+        assert!(!UncodeError::LlmRateLimit("rate limited".into()).is_context_overflow());
+    }
+}

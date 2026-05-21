@@ -4,13 +4,14 @@
 //! `next_turn` 预排队、`terminate` 批次 AND 语义。见 `docs/uncode-technologies/UNCODE_PI_MECHANISM_MAP.md`。
 
 use futures::StreamExt;
+use futures::stream::BoxStream;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::phase_summary::{
     PhaseSummaryLlmInput, assistant_snippet_for_phase, build_phase_summary_heuristic,
@@ -26,6 +27,7 @@ use uncode_core::api_types::{
     Context, PayloadCallback, ResponseCallback, StreamOptions, ThinkingLevel,
     TransformContextCallback,
 };
+use uncode_core::config::CompactionConfig;
 use uncode_core::error::HarnessError;
 use uncode_core::error::UncodeError;
 use uncode_core::event::AgentEvent;
@@ -39,6 +41,17 @@ use uncode_core::tool::{
 };
 
 const MAX_TURNS: u64 = 50;
+const MAX_LLM_RETRIES: u32 = 3;
+const BASE_RETRY_DELAY_MS: u64 = 1000;
+
+/// Turn 边界回调可返回的模型变更决策。
+///
+/// **Pi:** 对照 `prepareNextTurn` 返回的 model/thinking 变更。
+#[derive(Debug, Default, Clone)]
+pub struct NextTurnDecision {
+    pub model_id: Option<String>,
+    pub thinking_level: Option<ThinkingLevel>,
+}
 
 /// Execute + after-hook for parallel batch phase (shared state cloned per future).
 async fn execute_prepared_tool_shared(
@@ -146,12 +159,14 @@ pub struct AgentLoop {
     execution_env: Arc<dyn ExecutionEnv>,
     message_queue: tokio::sync::Mutex<MessageQueue>,
     should_stop_after_turn: Option<Arc<dyn Fn(u64) -> bool + Send + Sync>>,
-    prepare_next_turn: Option<Arc<dyn Fn() + Send + Sync>>,
+    prepare_next_turn: Option<Arc<dyn Fn() -> Option<NextTurnDecision> + Send + Sync>>,
     transform_context: Option<TransformContextCallback>,
     on_payload: Option<PayloadCallback>,
     on_response: Option<ResponseCallback>,
     active_run: Arc<AtomicBool>,
     graph_cache: Option<Arc<crate::workspace_graph::WorkspaceGraphCache>>,
+    compaction_config: CompactionConfig,
+    skill_registry: Option<uncode_core::skill::SkillRegistry>,
 }
 
 impl AgentLoop {
@@ -186,7 +201,40 @@ impl AgentLoop {
             on_response: None,
             active_run: Arc::new(AtomicBool::new(false)),
             graph_cache: None,
+            compaction_config: CompactionConfig::default(),
+            skill_registry: None,
         }
+    }
+
+    /// Set compaction configuration.
+    pub fn with_compaction_config(mut self, config: CompactionConfig) -> Self {
+        self.compaction_config = config;
+        self
+    }
+
+    /// Set skill registry for expanding `/skill-name` commands in steering messages.
+    pub fn with_skill_registry(mut self, registry: uncode_core::skill::SkillRegistry) -> Self {
+        self.skill_registry = Some(registry);
+        self
+    }
+
+    /// Expand `/skill-name` in message text using the skill registry.
+    fn expand_skill_in_message(&self, mut msg: Message) -> Message {
+        let Some(ref registry) = self.skill_registry else {
+            return msg;
+        };
+        for block in &mut msg.content {
+            if let uncode_core::message::ContentBlock::Text { text } = block {
+                if let Some(rest) = text.strip_prefix('/') {
+                    let name = rest.split_whitespace().next().unwrap_or(rest);
+                    if let Some(expanded) = registry.render(name, &std::collections::HashMap::new())
+                    {
+                        *text = expanded;
+                    }
+                }
+            }
+        }
+        msg
     }
 
     /// Override the runtime used by file/shell tools (tests, remote sandbox).
@@ -227,6 +275,8 @@ impl AgentLoop {
             on_response: None,
             active_run: Arc::new(AtomicBool::new(false)),
             graph_cache: None,
+            compaction_config: CompactionConfig::default(),
+            skill_registry: None,
         }
     }
 
@@ -278,7 +328,10 @@ impl AgentLoop {
         self.should_stop_after_turn = Some(cb);
     }
 
-    pub fn set_prepare_next_turn(&mut self, cb: Arc<dyn Fn() + Send + Sync>) {
+    pub fn set_prepare_next_turn(
+        &mut self,
+        cb: Arc<dyn Fn() -> Option<NextTurnDecision> + Send + Sync>,
+    ) {
         self.prepare_next_turn = Some(cb);
     }
 
@@ -301,6 +354,7 @@ impl AgentLoop {
     }
 
     pub async fn steer(&self, msg: Message) {
+        let msg = self.expand_skill_in_message(msg);
         if let Some(text) = msg.content.first().and_then(|b| match b {
             uncode_core::message::ContentBlock::Text { text } => Some(text.clone()),
             _ => None,
@@ -312,6 +366,7 @@ impl AgentLoop {
     }
 
     pub async fn follow_up(&self, msg: Message) {
+        let msg = self.expand_skill_in_message(msg);
         if let Some(text) = msg.content.first().and_then(|b| match b {
             uncode_core::message::ContentBlock::Text { text } => Some(text.clone()),
             _ => None,
@@ -406,6 +461,47 @@ impl AgentLoop {
             Err(tr) => return tr,
         };
         self.execute_prepared_tool(id, name, prepared, args).await
+    }
+
+    /// LLM stream with exponential-backoff retry for transient errors (429, network).
+    ///
+    /// **Pi:** 对照 `_isRetryableError()` + `_prepareRetry()`。
+    async fn stream_with_retry(
+        &self,
+        model: &uncode_core::model::Model,
+        context: &Context,
+        options: &StreamOptions,
+    ) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
+        let max_retries = options.max_retries.unwrap_or(MAX_LLM_RETRIES);
+        let base_delay = std::time::Duration::from_millis(
+            options.max_retry_delay_ms.unwrap_or(BASE_RETRY_DELAY_MS),
+        );
+
+        let mut attempt: u32 = 0;
+        loop {
+            attempt += 1;
+            match uncode_ai::stream_simple(model, context, options, &self.api_registry).await {
+                Ok(stream) => return Ok(stream),
+                Err(e) if e.is_context_overflow() => return Err(e),
+                Err(e) if e.is_retryable() && attempt <= max_retries => {
+                    let delay = base_delay * 2u32.saturating_pow(attempt - 1);
+                    warn!(
+                        "LLM error (attempt {attempt}/{max_retries}), retrying in {}ms: {e}",
+                        delay.as_millis()
+                    );
+                    self.emit(AgentEvent::Error {
+                        category: uncode_core::event::ErrorCategory::Llm,
+                        message: format!("Retryable error, attempt {attempt}/{max_retries}: {e}"),
+                        recoverable: true,
+                    });
+                    tokio::select! {
+                        () = tokio::time::sleep(delay) => {}
+                        () = self.cancel_token.cancelled() => return Err(e),
+                    }
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     /// Whether an agent `run` is in progress (inner ReAct loop may span multiple Turns).
@@ -589,6 +685,7 @@ impl AgentLoop {
                     &self.session_store,
                     &session_id,
                     model.context_window as u64,
+                    &self.compaction_config,
                 )
                 .await
                 {
@@ -598,6 +695,7 @@ impl AgentLoop {
                         &self.api_registry,
                         model,
                         &self.api_keys,
+                        &self.compaction_config,
                     )
                     .await
                     {
@@ -713,7 +811,61 @@ impl AgentLoop {
                         self.emit(AgentEvent::AgentInterrupted { turn, partial_response: false });
                         break 'outer;
                     }
-                    result = uncode_ai::stream_simple(model, &context, &options, &self.api_registry) => result?,
+                    result = self.stream_with_retry(model, &context, &options) => {
+                        match result {
+                            Ok(s) => s,
+                            Err(e) if e.is_context_overflow() => {
+                                warn!("context overflow at turn {turn}, triggering compaction");
+                                self.emit(AgentEvent::Error {
+                                    category: uncode_core::event::ErrorCategory::Llm,
+                                    message: "Context overflow, triggering compaction".into(),
+                                    recoverable: true,
+                                });
+                                match crate::compaction::compact_session(
+                                    &self.session_store,
+                                    &session_id,
+                                    &self.api_registry,
+                                    model,
+                                    self.api_keys.as_ref(),
+                                    &self.compaction_config,
+                                )
+                                .await
+                                {
+                                    Ok(Some(_)) => {
+                                        match crate::context_builder::build_context(
+                                            &self.session_store,
+                                            &session_id,
+                                        )
+                                        .await
+                                        {
+                                            Ok(rebuilt) => {
+                                                messages = rebuilt.messages;
+                                                let compacted_ctx = Context {
+                                                    system_prompt: Some(self.system_prompt.clone()),
+                                                    messages: messages.clone(),
+                                                    tools: tools.clone(),
+                                                };
+                                                tokio::select! {
+                                                    _ = self.cancel_token.cancelled() => {
+                                                        break 'outer;
+                                                    }
+                                                    r = self.stream_with_retry(model, &compacted_ctx, &options) => r?,
+                                                }
+                                            }
+                                            Err(e) => return Err(UncodeError::Harness(
+                                                uncode_core::error::HarnessError::Other {
+                                                    message: e.to_string(),
+                                                    code: 5099,
+                                                },
+                                            )),
+                                        }
+                                    }
+                                    _ => return Err(e),
+                                }
+                            }
+                            Err(e) => return Err(e),
+                        }
+                    }
                 };
 
                 let mut current_text = String::with_capacity(2048);
@@ -1199,10 +1351,13 @@ impl AgentLoop {
                     }
                 }
 
-                // prepare_next_turn callback
-                if let Some(ref cb) = self.prepare_next_turn {
-                    cb();
-                }
+                // prepare_next_turn callback — may return model/thinking changes
+                // Applied on next loop iteration (self is &self here)
+                let _next_turn_decision = if let Some(ref cb) = self.prepare_next_turn {
+                    cb()
+                } else {
+                    None
+                };
 
                 // should_stop_after_turn callback
                 if let Some(ref cb) = self.should_stop_after_turn

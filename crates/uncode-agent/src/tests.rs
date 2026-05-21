@@ -1006,6 +1006,7 @@ mod tests {
         );
         agent.set_prepare_next_turn(Arc::new(move || {
             count_clone.fetch_add(1, Ordering::SeqCst);
+            None
         }));
 
         agent.run(Message::user("go")).await.unwrap();
@@ -1380,5 +1381,352 @@ mod tests {
 
         // reset should not panic
         agent.reset().await;
+    }
+
+    // ── Skill expansion tests ──────────────────────────────────────────
+
+    /// Skill expansion: `/code-review` is expanded when skill registry is present.
+    #[tokio::test]
+    async fn test_steering_skill_expansion_with_registry() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            vec![
+                StreamEvent::TextDelta("First".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                StreamEvent::TextDelta("AfterSteering".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let registry = uncode_core::skill::SkillRegistry::load();
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        )
+        .with_skill_registry(registry);
+
+        // Steer with a skill command
+        agent.steer(Message::user("/code-review")).await;
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+
+        // The steering message should have been expanded from "/code-review"
+        // to the full skill prompt containing "代码审查"
+        assert_eq!(messages[3].role, Role::User);
+        match &messages[3].content[0] {
+            ContentBlock::Text { text } => {
+                assert!(
+                    text.contains("代码审查"),
+                    "Expected skill expansion with '代码审查', got: {text}"
+                );
+            }
+            other => panic!("Expected Text block, got: {other:?}"),
+        }
+    }
+
+    /// Skill expansion: `/code-review` is unchanged when no skill registry is set.
+    #[tokio::test]
+    async fn test_steering_skill_expansion_without_registry() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            vec![
+                StreamEvent::TextDelta("First".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                StreamEvent::TextDelta("AfterSteering".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        // No skill registry (default AgentLoop)
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+
+        agent.steer(Message::user("/code-review")).await;
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+
+        // Without registry, text should remain unchanged
+        assert_eq!(messages[3].role, Role::User);
+        match &messages[3].content[0] {
+            ContentBlock::Text { text } => {
+                assert_eq!(text, "/code-review");
+            }
+            other => panic!("Expected Text block, got: {other:?}"),
+        }
+    }
+
+    /// Skill expansion: non-prefixed text is unchanged even with registry.
+    #[tokio::test]
+    async fn test_steering_non_skill_text_unchanged() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            vec![
+                StreamEvent::TextDelta("First".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                StreamEvent::TextDelta("AfterSteering".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let registry = uncode_core::skill::SkillRegistry::load();
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        )
+        .with_skill_registry(registry);
+
+        // Steer with plain text (no / prefix)
+        agent.steer(Message::user("plain text message")).await;
+
+        let messages = agent.run(Message::user("go")).await.unwrap();
+
+        assert_eq!(messages[3].role, Role::User);
+        match &messages[3].content[0] {
+            ContentBlock::Text { text } => {
+                assert_eq!(text, "plain text message");
+            }
+            other => panic!("Expected Text block, got: {other:?}"),
+        }
+    }
+
+    // ── NextTurnDecision callback tests ────────────────────────────────
+
+    /// prepare_next_turn: callback returning NextTurnDecision is invoked per turn.
+    #[tokio::test]
+    async fn test_prepare_next_turn_returns_decision() {
+        let decisions: Arc<Mutex<Vec<crate::loop_engine::NextTurnDecision>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let decisions_clone = decisions.clone();
+
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            // Turn 1: tool call
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "x"}),
+                })),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            // Turn 2: text response
+            vec![
+                StreamEvent::TextDelta("done".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let mut agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+        agent.set_prepare_next_turn(Arc::new(move || {
+            let decision = crate::loop_engine::NextTurnDecision {
+                model_id: Some("mock".into()),
+                thinking_level: None,
+            };
+            decisions_clone.lock().unwrap().push(decision);
+            Some(crate::loop_engine::NextTurnDecision {
+                model_id: Some("mock".into()),
+                thinking_level: None,
+            })
+        }));
+
+        agent.run(Message::user("go")).await.unwrap();
+
+        // Two turns: tool call + text
+        let captured = decisions.lock().unwrap().clone();
+        assert_eq!(captured.len(), 2);
+        assert_eq!(captured[0].model_id, Some("mock".into()));
+        assert_eq!(captured[1].model_id, Some("mock".into()));
+    }
+
+    // ── LLM Retry tests ───────────────────────────────────────────────
+
+    /// Mock API that fails N times before succeeding.
+    #[derive(Clone, Copy)]
+    enum MockError {
+        RateLimit,
+        Auth,
+    }
+
+    struct RetryMockApi {
+        fail_remaining: AtomicUsize,
+        error_kind: MockError,
+        success_events: Mutex<Vec<StreamEvent>>,
+    }
+
+    impl RetryMockApi {
+        fn new(fail_count: usize, error_kind: MockError, success_events: Vec<StreamEvent>) -> Self {
+            Self {
+                fail_remaining: AtomicUsize::new(fail_count),
+                error_kind,
+                success_events: Mutex::new(success_events),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Api for RetryMockApi {
+        fn api_name(&self) -> &'static str {
+            "retry-mock"
+        }
+
+        async fn stream(
+            &self,
+            _model: &Model,
+            _context: &Context,
+            _options: &StreamOptions,
+        ) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
+            let remaining = self.fail_remaining.fetch_sub(1, Ordering::SeqCst);
+            if remaining > 0 {
+                Err(match self.error_kind {
+                    MockError::RateLimit => UncodeError::LlmRateLimit("rate limited".into()),
+                    MockError::Auth => UncodeError::LlmAuth("invalid key".into()),
+                })
+            } else {
+                let events = self.success_events.lock().unwrap().clone();
+                Ok(stream::iter(events).boxed())
+            }
+        }
+    }
+
+    fn make_retry_registries(
+        fail_count: usize,
+        error_kind: MockError,
+        success_events: Vec<StreamEvent>,
+    ) -> (
+        Arc<ApiRegistry>,
+        Arc<ModelRegistry>,
+        HashMap<String, String>,
+    ) {
+        let mut api_registry = ApiRegistry::new();
+        api_registry.register(Arc::new(RetryMockApi::new(
+            fail_count,
+            error_kind,
+            success_events,
+        )));
+        let mut model_registry = ModelRegistry::new();
+        model_registry.register(Model {
+            id: "mock".into(),
+            api: "retry-mock".into(),
+            ..Model::default()
+        });
+        (
+            Arc::new(api_registry),
+            Arc::new(model_registry),
+            HashMap::new(),
+        )
+    }
+
+    /// stream_with_retry: recovers from a single rate limit error and succeeds.
+    #[tokio::test]
+    async fn test_stream_retry_recovers_from_rate_limit() {
+        let (api_reg, model_reg, api_keys) = make_retry_registries(
+            1,
+            MockError::RateLimit,
+            vec![
+                StreamEvent::TextDelta("Recovered!".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        );
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+
+        let messages = agent.run(Message::user("hi")).await.unwrap();
+
+        // Should succeed after retry: System, User, Assistant
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[2].role, Role::Assistant);
+        match &messages[2].content[0] {
+            ContentBlock::Text { text } => assert_eq!(text, "Recovered!"),
+            other => panic!("Expected Text block, got: {other:?}"),
+        }
+    }
+
+    /// stream_with_retry: non-retryable error (auth) fails immediately.
+    #[tokio::test]
+    async fn test_stream_retry_non_retryable_fails_immediately() {
+        let (api_reg, model_reg, api_keys) = make_retry_registries(
+            1,
+            MockError::Auth,
+            vec![
+                StreamEvent::TextDelta("Should not reach".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        );
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+
+        let result = agent.run(Message::user("hi")).await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            UncodeError::LlmAuth(msg) => assert!(msg.contains("invalid key")),
+            other => panic!("Expected LlmAuth error, got: {other}"),
+        }
     }
 }

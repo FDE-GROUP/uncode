@@ -2,21 +2,26 @@
 //!
 //! **Pi:** 对应 Compaction 流程与 `session_before_compact` Hook；阈值约 context_window × 80%。
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::session::store::SessionStore;
 use futures::StreamExt;
 use uncode_ai::{ApiRegistry, StreamEvent};
 use uncode_core::api_types::{Context, StreamOptions};
+use uncode_core::config::CompactionConfig;
 use uncode_core::message::{ContentBlock, Message, Role};
 use uncode_core::model::Model;
 use uncode_core::session::{CompactionEntry, MessageEntry, SessionEntry, generate_entry_id};
 
 const COMPACTION_THRESHOLD_NUM: u64 = 80;
 const COMPACTION_THRESHOLD_DEN: u64 = 100;
-const KEEP_RECENT_RATIO_NUM: u64 = 20;
-const KEEP_RECENT_RATIO_DEN: u64 = 100;
 const EST_CHARS_PER_TOKEN: u64 = 4;
+
+/// 工具结果在摘要中的最大字符数。
+///
+/// **Pi:** 对照 `TOOL_RESULT_MAX_CHARS = 2000`。
+const TOOL_RESULT_MAX_CHARS: usize = 2000;
 
 // ── Legacy in-memory API (kept for backward compat) ──
 
@@ -80,9 +85,11 @@ pub async fn compact_messages(
     let summary = generate_summary(&conversation, None, api_registry, model, api_keys).await?;
 
     let compact_entry = Message::new(
-        Role::System,
+        Role::User,
         vec![ContentBlock::Text {
-            text: format!("[上下文摘要]\n{summary}"),
+            text: format!(
+                "The conversation history before this point was compacted into the following summary:\n\n<summary>\n{summary}\n</summary>"
+            ),
         }],
     );
 
@@ -102,18 +109,22 @@ pub(crate) fn extract_text(content: &[ContentBlock]) -> String {
     content
         .iter()
         .filter_map(|block| match block {
-            ContentBlock::Text { text } => Some(text.as_str()),
+            ContentBlock::Text { text } => Some(Cow::Borrowed(text.as_str())),
             ContentBlock::Thinking { .. } => None,
-            ContentBlock::ToolCall(_) => Some("\u{1f527}"),
+            ContentBlock::ToolCall(_) => Some(Cow::Borrowed("\u{1f527}")),
             ContentBlock::ToolResult(tr) => {
-                if tr.content.len() > 200 {
-                    let end = floor_char_boundary(&tr.content, 200);
-                    Some(&tr.content[..end])
+                if tr.content.len() > TOOL_RESULT_MAX_CHARS {
+                    let end = floor_char_boundary(&tr.content, TOOL_RESULT_MAX_CHARS);
+                    let truncated = tr.content.len() - end;
+                    Some(Cow::Owned(format!(
+                        "{}\n\n[... {truncated} more characters truncated]",
+                        &tr.content[..end]
+                    )))
                 } else {
-                    Some(&tr.content)
+                    Some(Cow::Borrowed(tr.content.as_str()))
                 }
             }
-            ContentBlock::Image { .. } => Some("[image]"),
+            ContentBlock::Image { .. } => Some(Cow::Borrowed("[image]")),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -124,18 +135,23 @@ pub(crate) fn extract_text(content: &[ContentBlock]) -> String {
 
 /// Check if a session needs compaction based on stored entry token estimate.
 ///
-/// **Pi:** 对应压缩触发判断（约 context_window × 80%）。
+/// **Pi:** 对应压缩触发判断（约 context_window × threshold%）。
 pub async fn should_compact_session(
     store: &SessionStore,
     session_id: &str,
     context_window: u64,
+    config: &CompactionConfig,
 ) -> bool {
+    if !config.enabled {
+        return false;
+    }
     let entries = match store.load_entries(session_id).await {
         Ok(e) => e,
         Err(_) => return false,
     };
     let estimated = estimate_entry_tokens(&entries);
-    let threshold = context_window * COMPACTION_THRESHOLD_NUM / COMPACTION_THRESHOLD_DEN;
+    let effective_window = context_window.saturating_sub(config.reserve_tokens);
+    let threshold = effective_window * config.threshold_percent / 100;
     estimated > threshold
 }
 
@@ -150,26 +166,45 @@ pub async fn compact_session(
     api_registry: &ApiRegistry,
     model: &Model,
     api_keys: &HashMap<String, String>,
+    config: &CompactionConfig,
 ) -> anyhow::Result<Option<CompactionEntry>> {
     let entries = store
         .load_entries(session_id)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // Find previous CompactionEntry for iterative summarization
-    let prev_summary = entries.iter().rev().find_map(|e| match e {
-        SessionEntry::Compaction(ce) => Some(ce.summary.clone()),
-        _ => None,
-    });
+    // Find previous CompactionEntry for iterative summarization and file tracking
+    let (prev_summary, prev_files_read, prev_files_modified) = entries
+        .iter()
+        .rev()
+        .find_map(|e| match e {
+            SessionEntry::Compaction(ce) => Some((
+                Some(ce.summary.clone()),
+                ce.files_read.clone(),
+                ce.files_modified.clone(),
+            )),
+            _ => None,
+        })
+        .unwrap_or((None, Vec::new(), Vec::new()));
 
-    // Calculate tokens to keep (20% of context window)
-    let keep_tokens = model.context_window as u64 * KEEP_RECENT_RATIO_NUM / KEEP_RECENT_RATIO_DEN;
+    // Calculate tokens to keep (configurable, default 20000)
+    let keep_tokens = config.keep_recent_tokens;
 
     // Find cut point
     let cut_id = match find_cut_point(&entries, keep_tokens) {
         Some(id) => id,
         None => return Ok(None),
     };
+
+    // Detect split turn and collect prefix messages
+    let cut_idx = entries
+        .iter()
+        .position(|e| match e {
+            SessionEntry::Message(me) => me.id == cut_id,
+            _ => false,
+        })
+        .unwrap_or(0);
+    let split_prefix = find_split_turn_prefix(&entries, cut_idx);
 
     // Collect message entries before cut point for summarization
     let mut to_summarize: Vec<&MessageEntry> = Vec::with_capacity(entries.len());
@@ -187,7 +222,14 @@ pub async fn compact_session(
     }
 
     // Extract file paths from ToolCalls in summarized range
-    let (files_read, files_modified) = extract_files_from_entries(&to_summarize);
+    let (mut files_read, mut files_modified) = extract_files_from_entries(&to_summarize);
+    // Merge file lists from previous compaction (cross-cycle tracking)
+    files_read.extend(prev_files_read);
+    files_modified.extend(prev_files_modified);
+    files_read.sort();
+    files_read.dedup();
+    files_modified.sort();
+    files_modified.dedup();
 
     // Build conversation text for summarization
     let conversation = to_summarize
@@ -209,6 +251,25 @@ pub async fn compact_session(
         api_keys,
     )
     .await?;
+
+    // If split turn detected, generate turn prefix summary and merge
+    let summary = if !split_prefix.is_empty() {
+        let turn_prefix =
+            generate_turn_prefix_summary(&split_prefix, api_registry, model, api_keys)
+                .await
+                .unwrap_or_default();
+
+        if turn_prefix.is_empty() {
+            summary
+        } else {
+            format!("{summary}\n\n---\n\n**Turn Context (split turn):**\n\n{turn_prefix}")
+        }
+    } else {
+        summary
+    };
+
+    // Append formatted file lists so LLM sees them via the summary injection
+    let summary = summary + &format_file_operations(&files_read, &files_modified);
 
     let tokens_before = estimate_entry_tokens(&entries);
 
@@ -277,7 +338,6 @@ pub(crate) fn find_cut_point(entries: &[SessionEntry], keep_recent_tokens: u64) 
 
 /// Detect if a cut at `cut_idx` would split a turn (assistant mid-turn without tool results).
 /// Returns true if the cut separates an assistant message from its subsequent tool results.
-#[cfg(test)]
 pub(crate) fn is_split_turn(entries: &[SessionEntry], cut_idx: usize) -> bool {
     if cut_idx >= entries.len() {
         return false;
@@ -313,6 +373,42 @@ pub(crate) fn is_split_turn(entries: &[SessionEntry], cut_idx: usize) -> bool {
     }
 
     false
+}
+
+/// Find the prefix messages of a split turn (entries from User to cut_idx, exclusive).
+///
+/// Returns empty Vec if not a split turn or no prefix found.
+fn find_split_turn_prefix<'a>(
+    entries: &'a [SessionEntry],
+    cut_idx: usize,
+) -> Vec<&'a MessageEntry> {
+    if !is_split_turn(entries, cut_idx) {
+        return Vec::new();
+    }
+
+    // Walk backward from cut_idx to find the User that started this turn
+    let mut turn_start = None;
+    for i in (0..cut_idx).rev() {
+        if let SessionEntry::Message(me) = &entries[i] {
+            if me.role == Role::User {
+                turn_start = Some(i);
+                break;
+            }
+        }
+    }
+
+    let start = match turn_start {
+        Some(s) => s,
+        None => return Vec::new(),
+    };
+
+    entries[start..cut_idx]
+        .iter()
+        .filter_map(|e| match e {
+            SessionEntry::Message(me) => Some(me.as_ref()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Adjust cut point to avoid splitting a turn. If split-turn detected, move cut backward
@@ -377,6 +473,26 @@ fn estimate_entry_tokens(entries: &[SessionEntry]) -> u64 {
             _ => None,
         })
         .sum()
+}
+
+fn format_file_operations(files_read: &[String], files_modified: &[String]) -> String {
+    let mut sections = Vec::new();
+    if !files_read.is_empty() {
+        sections.push(format!(
+            "<read-files>\n{}\n</read-files>",
+            files_read.join("\n")
+        ));
+    }
+    if !files_modified.is_empty() {
+        sections.push(format!(
+            "<modified-files>\n{}\n</modified-files>",
+            files_modified.join("\n")
+        ));
+    }
+    if sections.is_empty() {
+        return String::new();
+    }
+    format!("\n\n{}", sections.join("\n\n"))
 }
 
 fn extract_files_from_entries(entries: &[&MessageEntry]) -> (Vec<String>, Vec<String>) {
@@ -455,6 +571,29 @@ const UPDATE_SUMMARIZATION_PROMPT: &str = "\
 之前的摘要：
 ";
 
+/// Prompt for summarizing the prefix of a split turn.
+///
+/// **Pi:** 对照 `TURN_PREFIX_SUMMARIZATION_PROMPT`。
+const TURN_PREFIX_SUMMARIZATION_PROMPT: &str = "\
+This is the PREFIX of a turn that was too large to keep. \
+The SUFFIX (recent work) is retained.
+
+Summarize the prefix to provide context for the retained suffix:
+
+## Original Request
+[What did the user ask for in this turn?]
+
+## Early Progress
+- [Key decisions and work done in the prefix]
+
+## Context for Suffix
+- [Information needed to understand the retained recent work]
+
+Be concise. Focus on what's needed to understand the kept suffix.
+
+对话内容：
+";
+
 async fn generate_summary(
     conversation: &str,
     prev_summary: Option<&str>,
@@ -484,6 +623,53 @@ async fn generate_summary(
 
     let mut stream = uncode_ai::stream_simple(model, &context, &options, api_registry).await?;
     let mut summary = String::with_capacity(512);
+    while let Some(event) = stream.next().await {
+        if let StreamEvent::TextDelta(text) = event {
+            summary.push_str(&text);
+        }
+    }
+
+    Ok(summary)
+}
+
+/// Generate a turn prefix summary when compaction splits a turn mid-stream.
+///
+/// **Pi:** 对照 `generateTurnPrefixSummary()`。
+async fn generate_turn_prefix_summary(
+    prefix_messages: &[&MessageEntry],
+    api_registry: &ApiRegistry,
+    model: &Model,
+    api_keys: &HashMap<String, String>,
+) -> anyhow::Result<String> {
+    let conversation = prefix_messages
+        .iter()
+        .filter_map(|me| match me.role {
+            Role::User => Some(format!("用户: {}", extract_text(&me.content))),
+            Role::Assistant => Some(format!("Agent: {}", extract_text(&me.content))),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let prompt = format!("{TURN_PREFIX_SUMMARIZATION_PROMPT}\n{conversation}");
+
+    let api_key = api_keys.get(&model.provider).cloned();
+    let context = Context {
+        system_prompt: Some(
+            "你是一个会话摘要助手。用简洁的中英混合生成摘要，保留技术术语。".into(),
+        ),
+        messages: vec![Message::user(prompt)],
+        tools: vec![],
+    };
+    let options = StreamOptions {
+        api_key,
+        temperature: Some(0.3),
+        max_tokens: Some(512),
+        ..StreamOptions::default()
+    };
+
+    let mut stream = uncode_ai::stream_simple(model, &context, &options, api_registry).await?;
+    let mut summary = String::with_capacity(256);
     while let Some(event) = stream.next().await {
         if let StreamEvent::TextDelta(text) = event {
             summary.push_str(&text);
@@ -706,7 +892,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!should_compact_session(&store, "test-session", 1000).await);
+        assert!(
+            !should_compact_session(&store, "test-session", 1000, &CompactionConfig::default(),)
+                .await
+        );
     }
 
     #[tokio::test]
@@ -725,7 +914,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!should_compact_session(&store, "test-session", 1000).await);
+        let config = CompactionConfig {
+            reserve_tokens: 200,
+            ..CompactionConfig::default()
+        };
+        assert!(!should_compact_session(&store, "test-session", 1000, &config).await);
     }
 
     #[tokio::test]
@@ -736,7 +929,12 @@ mod tests {
             .await
             .unwrap();
 
-        // Add large messages (500 chars each ≈ 125 tokens, need > 800 for 1000 window)
+        // Add large messages (500 chars each ≈ 125 tokens, need > 640 for (1000-20000) → clamp to 0 threshold)
+        // Use a small reserve_tokens so threshold is meaningful
+        let config = CompactionConfig {
+            reserve_tokens: 200,
+            ..CompactionConfig::default()
+        };
         for _ in 0..10 {
             store
                 .append_entry(
@@ -747,8 +945,24 @@ mod tests {
                 .unwrap();
         }
 
-        // 10 * 500 chars = 5000 chars ≈ 1250 tokens > 1000 * 80% = 800
-        assert!(should_compact_session(&store, "test-session", 1000).await);
+        // 10 * 500 chars = 5000 chars ≈ 1250 tokens > (1000-200) * 80% = 640
+        assert!(should_compact_session(&store, "test-session", 1000, &config).await);
+    }
+
+    #[tokio::test]
+    async fn test_should_compact_session_disabled() {
+        let store = SessionStore::new_memory().await.expect("store");
+        store
+            .init_session("test-session", "model", "/test")
+            .await
+            .unwrap();
+
+        let config = CompactionConfig {
+            enabled: false,
+            ..CompactionConfig::default()
+        };
+
+        assert!(!should_compact_session(&store, "test-session", 1000, &config).await);
     }
 
     // ── split-turn detection tests ──
@@ -841,5 +1055,154 @@ mod tests {
         ];
         // cut at t1 (idx=2): split detected → move back to u1
         assert_eq!(adjust_for_split_turn(&entries, 2), Some("u1".into()));
+    }
+
+    // ── format_file_operations tests ──
+
+    #[test]
+    fn test_format_file_operations_empty() {
+        assert!(format_file_operations(&[], &[]).is_empty());
+    }
+
+    #[test]
+    fn test_format_file_operations_read_only() {
+        let result = format_file_operations(&["/a.rs".into(), "/b.rs".into()], &[]);
+        assert!(result.contains("<read-files>"));
+        assert!(result.contains("/a.rs"));
+        assert!(result.contains("/b.rs"));
+        assert!(!result.contains("<modified-files>"));
+    }
+
+    #[test]
+    fn test_format_file_operations_both() {
+        let result = format_file_operations(&["/a.rs".into()], &["/b.rs".into(), "/c.rs".into()]);
+        assert!(result.contains("<read-files>"));
+        assert!(result.contains("<modified-files>"));
+        assert!(result.contains("/a.rs"));
+        assert!(result.contains("/b.rs"));
+        assert!(result.contains("/c.rs"));
+    }
+
+    // ── cross-compaction file merging test ──
+
+    #[tokio::test]
+    async fn test_compact_session_merges_prev_files() {
+        let store = SessionStore::new_memory().await.expect("store");
+        store
+            .init_session("test-session", "model", "/test")
+            .await
+            .unwrap();
+
+        // First compaction: already compacted with some files
+        let first_kept_id = generate_entry_id();
+        store
+            .append_entry(
+                "test-session",
+                &SessionEntry::Compaction(Box::new(CompactionEntry {
+                    id: generate_entry_id(),
+                    parent_id: None,
+                    timestamp: chrono::Utc::now(),
+                    summary: "First compaction".into(),
+                    first_kept_entry_id: first_kept_id.clone(),
+                    tokens_before: 1000,
+                    files_read: vec!["/old_read.rs".into()],
+                    files_modified: vec!["/old_mod.rs".into()],
+                })),
+            )
+            .await
+            .unwrap();
+
+        // Add the kept entry from first compaction
+        store
+            .append_entry(
+                "test-session",
+                &SessionEntry::Message(Box::new(MessageEntry {
+                    id: first_kept_id.clone(),
+                    parent_id: None,
+                    timestamp: chrono::Utc::now(),
+                    role: Role::User,
+                    content: vec![ContentBlock::Text {
+                        text: "x".repeat(200),
+                    }],
+                    usage: None,
+                })),
+            )
+            .await
+            .unwrap();
+
+        // Add new entries that reference additional files
+        store
+            .append_entry(
+                "test-session",
+                &SessionEntry::Message(Box::new(MessageEntry {
+                    id: "a_new".into(),
+                    parent_id: None,
+                    timestamp: chrono::Utc::now(),
+                    role: Role::Assistant,
+                    content: vec![ContentBlock::ToolCall(Box::new(ToolCall {
+                        id: "tc_new".into(),
+                        name: "read".into(),
+                        arguments: serde_json::json!({"path": "/new_read.rs"}),
+                    }))],
+                    usage: None,
+                })),
+            )
+            .await
+            .unwrap();
+
+        // Add more large messages to trigger compaction
+        let u2_id = generate_entry_id();
+        store
+            .append_entry(
+                "test-session",
+                &SessionEntry::Message(Box::new(MessageEntry {
+                    id: u2_id.clone(),
+                    parent_id: None,
+                    timestamp: chrono::Utc::now(),
+                    role: Role::User,
+                    content: vec![ContentBlock::Text {
+                        text: "y".repeat(200),
+                    }],
+                    usage: None,
+                })),
+            )
+            .await
+            .unwrap();
+
+        // Verify: load entries and check the second compaction would merge files
+        let entries = store.load_entries("test-session").await.unwrap();
+
+        // Find previous compaction files
+        let (_, prev_read, prev_mod) = entries
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                SessionEntry::Compaction(ce) => Some((
+                    Some(ce.summary.clone()),
+                    ce.files_read.clone(),
+                    ce.files_modified.clone(),
+                )),
+                _ => None,
+            })
+            .unwrap_or((None, Vec::new(), Vec::new()));
+
+        assert_eq!(prev_read, vec!["/old_read.rs"]);
+        assert_eq!(prev_mod, vec!["/old_mod.rs"]);
+
+        // Extract files from new entries
+        let new_entries: Vec<&MessageEntry> = entries
+            .iter()
+            .filter_map(|e| match e {
+                SessionEntry::Message(me) if me.id != first_kept_id => Some(me.as_ref()),
+                _ => None,
+            })
+            .collect();
+        let (mut new_read, _) = extract_files_from_entries(&new_entries);
+        new_read.extend(prev_read);
+        new_read.sort();
+        new_read.dedup();
+
+        assert!(new_read.contains(&"/new_read.rs".to_string()));
+        assert!(new_read.contains(&"/old_read.rs".to_string()));
     }
 }

@@ -20,6 +20,10 @@ pub struct AppConfig {
     pub workspace_graph: WorkspaceGraphConfig,
     #[serde(default)]
     pub tools: ToolsConfig,
+    #[serde(default)]
+    pub permissions: PermissionConfig,
+    #[serde(default)]
+    pub compaction: CompactionConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +75,8 @@ impl Default for AppConfig {
             user_models: vec![],
             workspace_graph: WorkspaceGraphConfig::default(),
             tools: ToolsConfig::default(),
+            permissions: PermissionConfig::default(),
+            compaction: CompactionConfig::default(),
         }
     }
 }
@@ -244,4 +250,110 @@ fn default_wg_max_bytes() -> usize {
 }
 fn default_wg_max_file_bytes() -> usize {
     100_000
+}
+
+// ── Permission 配置 ──
+
+/// 工具权限策略配置（protected paths、dangerous bash detection、custom safe commands）。
+///
+/// **Pi:** 对照 `confirm-destructive` / `protected-paths` / `permission-gate` 扩展。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PermissionConfig {
+    /// Glob patterns for paths that always require confirmation for write/edit.
+    #[serde(default = "default_protected_paths")]
+    pub protected_paths: Vec<String>,
+    /// Regex patterns for dangerous bash commands (always require confirmation).
+    #[serde(default = "default_dangerous_patterns")]
+    pub dangerous_bash_patterns: Vec<String>,
+    /// Extra safe bash commands beyond the built-in whitelist.
+    #[serde(default)]
+    pub extra_safe_commands: Vec<String>,
+    /// Whether dangerous bash detection is enabled. Default: true.
+    #[serde(default = "default_true")]
+    pub dangerous_bash_detection: bool,
+    /// Whether protected path blocking is enabled. Default: true.
+    #[serde(default = "default_true")]
+    pub protected_paths_enabled: bool,
+}
+
+impl Default for PermissionConfig {
+    fn default() -> Self {
+        Self {
+            protected_paths: default_protected_paths(),
+            dangerous_bash_patterns: default_dangerous_patterns(),
+            extra_safe_commands: vec![],
+            dangerous_bash_detection: true,
+            protected_paths_enabled: true,
+        }
+    }
+}
+
+fn default_protected_paths() -> Vec<String> {
+    vec![
+        ".env".into(),
+        ".env.*".into(),
+        ".git/".into(),
+        ".ssh/".into(),
+        ".aws/".into(),
+        "**/credentials*".into(),
+        "**/id_rsa*".into(),
+        "**/id_ed25519*".into(),
+    ]
+}
+
+fn default_dangerous_patterns() -> Vec<String> {
+    vec![
+        r"rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|--recursive\s+|--force\s+)".into(),
+        r"\bsudo\b".into(),
+        r"chmod\s+(777|000|a\+rwx)".into(),
+        r"\bchown\b".into(),
+        r"\bmkfs\b".into(),
+        r"dd\s+if=".into(),
+    ]
+}
+
+fn default_true() -> bool {
+    true
+}
+
+// ── Compaction 配置 ──
+
+/// 上下文压缩策略配置。
+///
+/// **Pi:** 对照 `CompactionSettings`（enabled, reserveTokens, keepRecentTokens）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompactionConfig {
+    /// 是否启用自动压缩。Default: true。
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 压缩触发阈值（context window 百分比）。Default: 80。
+    #[serde(default = "default_threshold_percent")]
+    pub threshold_percent: u64,
+    /// 保留最近对话的 token 数。Default: 20000。
+    #[serde(default = "default_keep_recent_tokens")]
+    pub keep_recent_tokens: u64,
+    /// 为模型回复预留的 token 数。Default: 16384。
+    #[serde(default = "default_reserve_tokens")]
+    pub reserve_tokens: u64,
+}
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            threshold_percent: 80,
+            keep_recent_tokens: 20000,
+            reserve_tokens: 16384,
+        }
+    }
+}
+
+fn default_threshold_percent() -> u64 {
+    80
+}
+fn default_keep_recent_tokens() -> u64 {
+    20000
+}
+fn default_reserve_tokens() -> u64 {
+    16384
 }
