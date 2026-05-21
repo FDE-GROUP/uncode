@@ -283,7 +283,7 @@ impl EventRouter {
     }
 
     /// Dispatch an event to all hook handlers and collect results.
-    /// Returns Vec<HookResult> for the caller to aggregate.
+    /// Returns `Vec<HookResult>` for the caller to aggregate.
     pub async fn dispatch_hooks(&self, event: &AgentEvent) -> Vec<HookResult> {
         let tag = agent_event_tag(event);
         let mut results = Vec::new();

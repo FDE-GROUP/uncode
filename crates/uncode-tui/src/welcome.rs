@@ -42,7 +42,7 @@ impl WelcomeScreen {
             "  Ctrl+P 切换模型\n",
             "  Ctrl+C 退出\n",
             "\n",
-            "  按 Enter 或 Esc 开始",
+            "  按 Enter 开始",
         );
 
         let p = Paragraph::new(text)
