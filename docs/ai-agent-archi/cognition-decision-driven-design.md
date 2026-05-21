@@ -200,13 +200,36 @@ Normalizer →  ModifyFileCommand { file: "src/auth/mod.ts", operation: "append"
 
 ---
 
-## 第四部分：综合治理——范式的操作层
+## 第四部分：综合治理与 Harness Engineering——范式的操作层
 
 ### 4.1 范式是设计平面，治理是操作平面
 
 认知与决策驱动设计告诉你**系统该怎么分**。但它不告诉你**系统该怎么跑**。
 
-运行时治理是操作平面的问题。7 种架构范式（系列 ③）各自解决一类操作级复杂度：
+运行时治理有两个子层：
+
+| 子层 | 定位 | 内容 |
+|:---|:---|:---|
+| **Harness Engineering** | 工程实践层 | 编排器、工具注册、分层记忆、可观测性、自适应进化——具体"怎么搭" |
+| **7 种架构范式** | 模式工具层 | 事件驱动、事件溯源、约束设计等——各自解决一类操作级问题 |
+
+**Harness Engineering 是治理层的工程实现**。当我们说"决策层裁决"时，Harness Engineering 告诉我们裁决器怎么设计；当我们说"护栏"时，Harness Engineering 告诉我们工具如何注册、权限怎么检查。
+
+这不是两个独立的概念——Harness Engineering **从属于**认知与决策驱动设计的治理层，是它落地的工程方法。
+
+#### Harness Engineering 五模块在范式中的位置
+
+| Harness 模块 | 范式中的位置 | uncode 对应 |
+|:---|:---|:---|
+| **编排与状态管理** | 决策层 Adjudicator + AgentHarnessPhase | `build_decision_adjudicator()` + `PhaseGuardPolicy` |
+| **工具治理与安全** | 决策层 SemanticFirewall + ToolRegistry | `PermissionPolicyRule` + `PathSafetyRule` + `SchemaCoercionRule` |
+| **分层记忆** | 认知层 | `WorkingMemory` → `EpisodeMemory` → `MemoryManager` → `SessionStore` |
+| **可观测性与评估** | 治理层事件系统 | `AgentEvent` 30 变体 + `EventDetailLevel` + `SessionStore` |
+| **自适应与进化** | 预留 | 当前空缺（`GuardrailConfig` 为静态配置） |
+
+#### 7 种架构范式在 Harness 中的体现
+
+下面 7 种范式仍然是操作平面的工具——它们与 Harness Engineering 是不同粒度的治理：
 
 | 范式 | 在认知与决策驱动设计中的位置 | 解决的问题 |
 |:---|:---|:---|
@@ -246,7 +269,7 @@ uncode 在这三条上的工程化程度最高，这不是巧合——因为它�
 
 ### 4.3 完整的范式地图
 
-把范式层和治理层拼在一起，AI Agent 架构治理的全景是：
+把设计平面、Harness Engineering 和 7 种范式拼在一起，全景是：
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -258,13 +281,21 @@ uncode 在这三条上的工程化程度最高，这不是巧合——因为它�
 │   │  上下文构建           │     │  提案接收 ──→ 裁决    │      │
 │   │  提示词管理           │ ←→  │  执行派发 ──→ 审计    │      │
 │   │  不确定性管理         │     │                      │      │
-│   │                      │     │  事件驱动 (骨干)      │      │
-│   │  工作流编排           │     │  事件溯源 (存储)      │      │
-│   │  多Agent协作          │     │  约束设计 (安全)      │      │
-│   │                      │     │  状态机   (生命期)    │      │
-│   └──────────────────────┘     │  CQRS     (读写)      │      │
-│            ↕                   └──────────────────────┘      │
-│      语义防火墙 + 事件流桥梁                                   │
+│   │  分层记忆             │     │                      │      │
+│   │  (Working→Episode)  │     │                      │      │
+│   │  工作流编排           │     │  事件驱动 (骨干)      │      │
+│   │  多Agent协作          │     │  事件溯源 (存储)      │      │
+│   │                      │     │  约束设计 (安全)      │      │
+│   └──────────────────────┘     │  状态机   (生命期)    │      │
+│            ↕                   │  CQRS     (读写)      │      │
+│      语义防火墙 + 事件流桥梁   │                      │      │
+│                                │  ┌──────────────────┐ │      │
+│                                │  │ Harness Engineering│ │      │
+│                                │  │ (工程实践子层)     │ │      │
+│                                │  │ 编排·工具·记忆·   │ │      │
+│                                │  │ 观测·进化         │ │      │
+│                                │  └──────────────────┘ │      │
+│                                └──────────────────────┘      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -383,12 +414,14 @@ Anthropic 的"Think → Plan → Act"循环和 OpenAI 的 Swarm/Assistants 提�
 
 ## 延伸阅读：Harness Engineering
 
-本文提出的"决策层"在行业工程实践中常被称为 **Harness Engineering**。二者是同一事物的两种视角：
+本文提出的"治理层"在行业工程实践中对应 **Harness Engineering**（详见 `docs/others/HARNESS_ENGINEERING.md`）。二者的关系是**包含而非对立**：
 
-- **Harness Engineering**（`docs/others/HARNESS_ENGINEERING.md`）——告诉你"怎么搭"：编排、工具治理、记忆、观测、进化五模块
-- **认知与决策驱动设计**——告诉你"为什么要这样搭"：认知与决策分离、语义防火墙、决策即事件
+- **认知与决策驱动设计** = 完整的架构范式（三层 + 连接器）
+- **Harness Engineering** = 治理层的**工程实践子层**——编排器、工具注册、分层记忆、可观测性、自适应进化的具体实施方法
 
-Harness Engineering 的"护栏、工具注册、事件溯源"对应本文的"裁决器、防火墙、审计器"。不是替代关系——Harness Engineering 是决策层的工程语言翻译。
+当本文说"决策层裁决"时，Harness Engineering 告诉你裁决器怎么设计（Phase 守卫、策略链、超时控制）。当本文说"护栏"时，Harness Engineering 告诉你工具如何注册（九项元信息、安全等级）、参数如何校验（JSON Schema + coercion）。当本文说"事件溯源"时，Harness Engineering 告诉你事件如何分级（Critical/Standard/Verbose）、如何导出（JSONL）、如何用于回放和评估。
+
+**不是两个独立的视角——Harness Engineering 从属于本范式，是它落地的工程方法。**
 
 ---
 

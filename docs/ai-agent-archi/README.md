@@ -109,12 +109,12 @@
 
 ## 补充阅读：Harness Engineering
 
-本系列的工程语言翻译。Harness Engineering 是"认知与决策驱动设计"中**决策层**在行业中的工程实践名称。
+Harness Engineering 是**认知与决策驱动设计范式治理层的工程实践子层**——不是独立的理念，而是范式落地的施工方法。
 
 | 文件 | 类型 | 说明 |
 |:---|:---|:---|
 | [Harness Engineering 综述](../others/HARNESS_ENGINEERING.md) | 行业综述 | Prompt→Context→Harness 三层进化，OpenAI/Anthropic/Fowler/Hashimoto 四大案例 |
 | [Harness Engineering 术语表](../others/HARNESS_ENGINEERING_GLOSSARY.md) | 中英对照 | 120+ 术语，主题/字母双查法 |
-| [Harness Engineering 五模块架构](../others/Harness%20Engineering%20Archi.md) | 架构摘要 | 编排/工具/记忆/观测/进化 五模块 + 完整视图 |
+| [Harness Engineering 五模块架构](../others/Harness%20Engineering%20Archi.md) | 操作手册 | 编排/工具/记忆/观测/进化五模块在范式中的位置与 uncode 对应 |
 
-**与系列的关系**：Harness Engineering 告诉你怎么搭（工程实践），认知与决策驱动设计告诉你为什么要这样搭（架构范式）。同一问题的两种视角。
+**关系**：认知与决策驱动设计 = 顶层范式。Harness Engineering = 治理层的施工队。

@@ -419,11 +419,14 @@ LangChain 与 OpenAI 均指出：**模型与 Harness 协同训练**（post-train
 
 ---
 
-> **相关文档**：本文的工程实践在"认知与决策驱动设计"范式中有对应的架构层定义。  
-> Harness 的 Orchestrator / Guard / Tool Registry / Event Sourcing 分别对应  
-> `Adjudicator` / `SemanticFirewall` / `ToolRegistry` / `SessionStore + AgentEvent`。  
-> 范式定义：`docs/ai-agent-archi/cognition-decision-driven-design.md`  
-> uncode 实现：`docs/uncode-technologies/UNCODE_DECISION_LAYER.md`  
+> **范式整合**：Harness Engineering 是"认知与决策驱动设计"范式**治理层的工程实践子层**。  
+> 本综述中的 Harness 组件在范式中有精确的架构位置：  
+> - Orchestrator / State Machine → `decision/adjudication.rs`  
+> - Tool Registry / Sandbox → `decision/firewall.rs` + `tools/registry.rs`  
+> - Context / Memory → `cognition/` (WorkingMemory → EpisodeMemory → MemoryManager)  
+> - Observability → `AgentEvent` 30 variants + `EventDetailLevel` + `SessionStore`  
+> - Evolution → 当前空缺（`GuardrailConfig` 为静态）  
+> 范式定义：`docs/ai-agent-archi/cognition-decision-driven-design.md` §4  
 > 术语表：`docs/others/HARNESS_ENGINEERING_GLOSSARY.md`
 
 ---

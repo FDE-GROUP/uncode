@@ -1,3 +1,6 @@
+> **定位说明**：本文的五模块架构在"认知与决策驱动设计"范式中属于**治理层的工程实践子层**。
+> 范式总览见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §4，uncode 实现见 `docs/uncode-technologies/`。
+
 基于学术论文和工程实践的综合分析，一个完整的 AI Harness 工程通常由 **5 个核心部分组成**。学术论文《AI Harness Engineering》将其形式化为 11 项组件责任，而在工程落地中，这些责任聚合为以下五大模块：
 
 ---
@@ -105,10 +108,12 @@ flowchart TB
 
 这五个部分共同构成了 Agent 的“操作系统”——它不是简单的 Prompt 模板拼盘，而是让 Agent 从“即兴表演”变成“稳定每晚演两场，连演一年”的工程底座。
 
-> **延伸阅读**：本文的五模块架构在“认知与决策驱动设计”范式中对应**决策层 + 治理层**。
-> 编排/状态管理 → Adjudicator + AgentHarnessPhase
-> 工具治理 → SemanticFirewall + ToolRegistry
-> 分层记忆 → EpisodeMemory + WorkingMemory
-> 可观测性 → AgentEvent + SessionStore
-> 自适应进化 → （当前空缺）
-> 完整范式定义见 `docs/ai-agent-archi/cognition-decision-driven-design.md`，uncode 实现见 `docs/uncode-technologies/`。
+> **范式整合**：本文的五模块是“认知与决策驱动设计”范式治理层的**工程实践子层**。
+> 在 uncode 中的对应实现：
+> - 编排/状态管理 → `decision/adjudication.rs` + `AgentHarnessPhase`
+> - 工具治理 → `decision/firewall.rs` + `tools/registry.rs`
+> - 分层记忆 → `cognition/episode.rs` + `cognition/working_memory.rs` + `session/store.rs`
+> - 可观测性 → `uncode-core/event.rs` (30 variants + EventDetailLevel)
+> - 自适应进化 → 当前空缺，`GuardrailConfig` 为静态配置
+>
+> 完整范式定义：`docs/ai-agent-archi/cognition-decision-driven-design.md` §4
