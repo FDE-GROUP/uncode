@@ -849,6 +849,7 @@ impl ChatState {
                 tokens_before,
                 tokens_after,
                 summary_text,
+                reason: _,
             } => {
                 self.push_message(ChatMessage::CompactionSummary {
                     messages_replaced,

@@ -31,7 +31,10 @@ use uncode_core::config::CompactionConfig;
 use uncode_core::error::HarnessError;
 use uncode_core::error::UncodeError;
 use uncode_core::event::AgentEvent;
-use uncode_core::event::{SessionEndData, ToolCallEndEventData, ToolCallStatus};
+use uncode_core::event::{
+    CompactionReason, CompactionStartData, ModelChangeSource, ModelChangedData, RetryAttemptData,
+    SessionEndData, ThinkingLevelChangedData, ToolCallEndEventData, ToolCallStatus,
+};
 use uncode_core::message::{ContentBlock, Message, Role, UsageInfo};
 use uncode_core::session::{SessionEntry, ThinkingLevelChangeEntry, generate_entry_id};
 use uncode_core::tool::ExecutionEnv;
@@ -489,6 +492,15 @@ impl AgentLoop {
                         "LLM error (attempt {attempt}/{max_retries}), retrying in {}ms: {e}",
                         delay.as_millis()
                     );
+                    self.emit(AgentEvent::RetryAttempt {
+                        data: Box::new(RetryAttemptData {
+                            attempt,
+                            max_attempts: max_retries,
+                            delay_ms: delay.as_millis() as u64,
+                            error: e.to_string(),
+                            final_success: false,
+                        }),
+                    });
                     self.emit(AgentEvent::Error {
                         category: uncode_core::event::ErrorCategory::Llm,
                         message: format!("Retryable error, attempt {attempt}/{max_retries}: {e}"),
@@ -689,6 +701,13 @@ impl AgentLoop {
                 )
                 .await
                 {
+                    self.emit(AgentEvent::CompactionStart {
+                        data: Box::new(CompactionStartData {
+                            session_id: session_id.clone(),
+                            reason: CompactionReason::Threshold,
+                            tokens_before: model.context_window as u64,
+                        }),
+                    });
                     match crate::compaction::compact_session(
                         &self.session_store,
                         &session_id,
@@ -746,6 +765,7 @@ impl AgentLoop {
                                 tokens_before,
                                 tokens_after: 0,
                                 summary_text,
+                                reason: CompactionReason::Threshold,
                             });
                         }
                         Ok(None) => {}
@@ -821,6 +841,13 @@ impl AgentLoop {
                                     message: "Context overflow, triggering compaction".into(),
                                     recoverable: true,
                                 });
+                                self.emit(AgentEvent::CompactionStart {
+                                    data: Box::new(CompactionStartData {
+                                        session_id: session_id.clone(),
+                                        reason: CompactionReason::Overflow,
+                                        tokens_before: model.context_window as u64,
+                                    }),
+                                });
                                 match crate::compaction::compact_session(
                                     &self.session_store,
                                     &session_id,
@@ -831,7 +858,14 @@ impl AgentLoop {
                                 )
                                 .await
                                 {
-                                    Ok(Some(_)) => {
+                                    Ok(Some(overflow_summary)) => {
+                                        self.emit(AgentEvent::CompactionComplete {
+                                            messages_replaced: 0,
+                                            tokens_before: model.context_window as u64,
+                                            tokens_after: 0,
+                                            summary_text: overflow_summary.summary.clone(),
+                                            reason: CompactionReason::Overflow,
+                                        });
                                         match crate::context_builder::build_context(
                                             &self.session_store,
                                             &session_id,
@@ -1352,12 +1386,31 @@ impl AgentLoop {
                 }
 
                 // prepare_next_turn callback — may return model/thinking changes
-                // Applied on next loop iteration (self is &self here)
-                let _next_turn_decision = if let Some(ref cb) = self.prepare_next_turn {
-                    cb()
-                } else {
-                    None
-                };
+                if let Some(ref cb) = self.prepare_next_turn {
+                    if let Some(decision) = cb() {
+                        if let Some(new_model) = &decision.model_id {
+                            if *new_model != self.model_id {
+                                self.emit(AgentEvent::ModelChanged {
+                                    data: Box::new(ModelChangedData {
+                                        from: Some(self.model_id.clone()),
+                                        to: new_model.clone(),
+                                        source: ModelChangeSource::Auto,
+                                    }),
+                                });
+                            }
+                        }
+                        if let Some(new_tl) = &decision.thinking_level {
+                            if Some(new_tl) != effective_thinking_level.as_ref() {
+                                self.emit(AgentEvent::ThinkingLevelChanged {
+                                    data: Box::new(ThinkingLevelChangedData {
+                                        from: effective_thinking_level,
+                                        to: *new_tl,
+                                    }),
+                                });
+                            }
+                        }
+                    }
+                }
 
                 // should_stop_after_turn callback
                 if let Some(ref cb) = self.should_stop_after_turn
