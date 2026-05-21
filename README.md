@@ -119,6 +119,7 @@ cargo run -p uncode-cli -- "帮我分析这个项目"
 | [循环引擎](docs/uncode-technologies/UNCODE_LOOP_ENGINE.md) | Turn / Steering、`AgentLoop` |
 | [会话模型](docs/uncode-technologies/UNCODE_SESSION_MODEL.md) | `SessionEntry` 树、SurrealDB + JSONL |
 | [事件系统](docs/uncode-technologies/UNCODE_EVENT_SYSTEM.md) | 18 种 `AgentEvent` |
+| [Rust API 文档](docs/guides/RUSTDOC.md) | `cargo api-doc` / `cargo api-doc-open` |
 | [术语分层重构方案](docs/technologies/TERMINOLOGY_LAYERED_REFACTOR_PLAN.md) | Phase 1–3 与 backlog |
 | [项目愿景](docs/VISION.md) | 顶层设计 |
 | [架构设计](docs/ARCHITECTURE.md) | 系统架构详案 |

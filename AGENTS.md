@@ -70,6 +70,8 @@ cargo test               # 运行所有测试
 cargo test -p uncode-core # 运行单个 crate 测试
 cargo fmt --check        # 格式检查
 cargo clippy             # lint 检查
+cargo api-doc            # API 文档（见 docs/guides/RUSTDOC.md）
+cargo api-doc-open       # 打开 core/agent/ai 文档
 ```
 
 ## 开发约定

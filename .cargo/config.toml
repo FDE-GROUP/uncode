@@ -1,0 +1,13 @@
+# Workspace-local Cargo settings (see docs/guides/RUSTDOC.md).
+
+[build]
+# Treat rustdoc warnings as errors when generating docs (CI uses the same flags).
+rustdocflags = ["-D", "warnings"]
+
+[alias]
+# `doc` is a built-in cargo command; use `api-doc*` aliases (see docs/guides/RUSTDOC.md).
+api-doc = "doc --workspace --no-deps"
+api-doc-open = "doc --no-deps --open -p uncode-core -p uncode-agent -p uncode-ai"
+api-doc-core = "doc --no-deps --open -p uncode-core"
+api-doc-agent = "doc --no-deps --open -p uncode-agent"
+api-doc-ai = "doc --no-deps --open -p uncode-ai"
