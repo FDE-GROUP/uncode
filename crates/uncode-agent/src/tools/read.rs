@@ -107,7 +107,10 @@ impl ToolExecutor for ReadTool {
                         "description": "跳过的行数（0 表示从第一行开始）；显示行号 = offset + 行序号"
                     },
                     "limit": {"type": "integer", "description": "最多读取的行数"},
-                    "hashline": {"type": "boolean", "description": "If true, prepend LINE#HASH anchor to each line for use with edit tool"}
+                    "hashline": {
+                        "type": "boolean",
+                        "description": "为 true 时每行前置「行号#哈希」锚点，供 edit 工具的 hashline 模式使用"
+                    }
                 },
                 "required": ["path"]
             }),

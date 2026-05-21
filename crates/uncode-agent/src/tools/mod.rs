@@ -108,9 +108,15 @@ pub(crate) fn atomic_write(path: &std::path::Path, content: &str) -> Result<(), 
         .map_err(|e| format!("write {display}: {e}"))?;
     tmp.flush().map_err(|e| format!("write {display}: {e}"))?;
 
-    tmp.persist(path)
-        .map_err(|e| format!("write {display}: {}", e.error))?;
-    Ok(())
+    match tmp.persist(path) {
+        Ok(_) => Ok(()),
+        Err(e) if e.error.kind() == std::io::ErrorKind::CrossesDevices => {
+            std::fs::copy(e.file.path(), path)
+                .map_err(|ce| format!("write {display}: cross-device copy: {ce}"))?;
+            Ok(())
+        }
+        Err(e) => Err(format!("write {display}: {}", e.error)),
+    }
 }
 
 /// Resolve and validate a path argument.

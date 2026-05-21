@@ -32,6 +32,20 @@ fn sandbox_dir() -> (std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
 }
 
 #[tokio::test]
+async fn test_read_invalid_utf8_lossy_preview() {
+    let (_dir, _guard) = sandbox_dir();
+    std::fs::write("bad.txt", b"line\xff\n").unwrap();
+
+    let tool = ReadTool::new();
+    let result = tool
+        .execute(serde_json::json!({"path": "bad.txt"}))
+        .await
+        .unwrap();
+    assert!(result.contains("非 UTF-8"));
+    assert!(result.contains('\u{FFFD}'));
+}
+
+#[tokio::test]
 async fn test_read_tool() {
     let (_dir, _guard) = sandbox_dir();
     fs::write("test.txt", "line 1\nline 2\nline 3\nline 4\nline 5\n").unwrap();
@@ -1027,4 +1041,12 @@ async fn test_bash_prepare_rejects_workdir_outside_sandbox() {
         )
         .unwrap_err();
     assert!(err.contains("outside the project"));
+}
+
+#[test]
+fn test_atomic_write_same_directory() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("x.txt");
+    super::atomic_write(&path, "payload").unwrap();
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "payload");
 }

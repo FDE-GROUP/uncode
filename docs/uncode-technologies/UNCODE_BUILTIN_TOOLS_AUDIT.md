@@ -35,7 +35,7 @@
 |----------|------|--------|
 | **P0 安全/正确性** | 0（已修） | 见「已落地修复」表 |
 | **P1 可靠性** | 0（已修） | 七件套 + web + bash |
-| **P2 体验/对齐** | 3 | 非 UTF-8/binary 预览、跨 mount rename、描述语言混用 |
+| **P2 体验/对齐** | 0（已修） | 见 §4.2 |
 | **P3 增强** | 若干 | Platform 审批 UI、`ExecutionEnv` 全覆盖、语义编辑 |
 
 **沙箱路径（`resolve_path`）**：对 `..` 与 canonicalize 后落在 CWD 外的路径会拒绝，行为正确。
@@ -53,8 +53,8 @@
 | **已修复** | `offset` schema 写明「跳过的行数（0-based）」与显示行号关系（#286）。 |
 | **已修复** | 目录 listing **500 条上限** + `entry_limit` details，与 `ls` 一致。 |
 | **已修复** | 文件读取走 `spawn_blocking`（#286）。 |
-| **局限** | 非 UTF-8 文件直接报错；无 binary/hex 预览。 |
-| **局限** | `hashline` 描述为英文，与其余中文 description 不统一。 |
+| **已修复（P2）** | 非 UTF-8 降级为替换字符预览（`InvalidData` → lossy + 横幅）。 |
+| **已修复（P2）** | `hashline` 参数说明改为中文。 |
 | **优化** | 大文件默认建议 `limit`；非法 path 沙箱用例可再补。 |
 | **测试** | 有 offset/limit、hashline、mock_env；可补超大目录边界。 |
 
@@ -67,7 +67,8 @@
 | **已修复** | `atomic_write()` + 唯一临时文件（#281）；`test_write_distinct_temp_paths_for_same_stem`。 |
 | **已修复** | `spawn_blocking` + `details.bytes_written`（#290/#301）。 |
 | **局限** | 仅全文覆写；无 `append`、无 `mode`/`executable` 位。 |
-| **优化** | 跨设备 `rename` 未 fallback `copy`；写入前 mtime 检测（并发编辑）。 |
+| **已修复（P2）** | `atomic_write` 跨设备 `persist` 失败时 `fs::copy` 回退。 |
+| **优化** | 写入前 mtime 检测（并发编辑）。 |
 | **测试** | 基本写、父目录、tmp 碰撞；无跨 mount 专项。 |
 
 ---
@@ -78,6 +79,7 @@
 |------|------|
 | **已修复** | 与 `write` 共用 `atomic_write`（#281）。 |
 | **已修复** | `spawn_blocking`（#290）。 |
+| **已修复（P2）** | 工具 description 与 hashline 参数说明改为中文。 |
 | **局限** | Legacy 模式要求 `old_string` 全局唯一；`op` 大小写敏感。 |
 | **局限** | CRLF 文件写回可能变 LF-only。 |
 | **优化** | hashline 工作流说明、锚点过期 hint。 |
@@ -186,7 +188,7 @@
 |------|------|
 | **测试覆盖** | 七件套 + mock_env + web wiremock + grep rg/native + bash 取消/超时。 |
 | **async 一致性** | `read`/`write`/`edit`/`grep`/`find`/`ls` 主要路径已 `spawn_blocking`。 |
-| **描述语言** | 中英混用（`read.hashline`、`edit` 大段英文）。 |
+| **描述语言** | 七件套核心说明已中文；hashline 工作流细节仍可再润色。 |
 | **Pi 对齐** | `prepare_arguments`、`ExecutionEnv` 切片、bash sequential、`ToolResult.details` + `duration_ms`。 |
 | **可观测性** | 退出码/截断/bytes/url 等写入 `details`。 |
 
@@ -198,11 +200,11 @@
 
 **均已落地**（见 §「已落地修复」）。
 
-### 4.2 P2（可选）
+### 4.2 P2（可选）— 已落地
 
-1. 描述语言中英统一。  
-2. `read` 非 UTF-8 / binary 预览。  
-3. `write`/`edit` 跨 mount `rename` fallback。
+1. **描述语言**：`read` `hashline`、`edit` 工具说明与参数改为中文（#312 后 P2 批次）。  
+2. **`read` 非 UTF-8**：`LocalFileSystem::read_text_file` 在 `InvalidData` 时降级为 `clean_binary_output` 并提示横幅。  
+3. **`atomic_write`**：`persist` 遇 `CrossesDevices` 时 `fs::copy` 回退。
 
 ### 4.3 P3（架构）
 
