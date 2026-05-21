@@ -1,6 +1,6 @@
 //! uncode-tui — 对话驱动终端交互界面（L3 产品层）。
 //!
-//! 基于 ratatui + crossterm，订阅 [`AgentEvent`](uncode_core::event::AgentEvent) 广播，
+//! 基于 ratatui + crossterm，订阅 [`uncode_core::event::AgentEvent`] 广播，
 //! 渲染对话区、工具卡片、权限门控与页脚用量。
 //!
 //! **Pi:** 无独立 TUI crate；机制上对应 Pi 终端 UI 对 `agentLoop` 事件流的消费。
@@ -321,9 +321,17 @@ impl TuiEngine {
         self.model = model;
     }
 
-    /// Wire TUI confirmation UI to agent-side [`PermissionToolHooks`].
+    /// Wire TUI confirmation UI to agent-side [`PermissionToolHooks`](uncode_agent::PermissionToolHooks).
     pub fn set_permission_gate(&mut self, gate: Arc<PermissionGate>) {
         self.permission_gate = Some(gate);
+    }
+
+    /// Set the configurable permission policy for TUI-side confirmation checks.
+    pub fn set_permission_policy(
+        &mut self,
+        policy: Arc<uncode_agent::tool_permission::PermissionPolicy>,
+    ) {
+        self.permission.set_policy(policy);
     }
 
     fn resolve_permission(&self, tool_id: &str, approval: Approval) {

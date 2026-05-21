@@ -11,6 +11,7 @@ use uncode_core::event::AgentEvent;
 use uncode_core::tool::BeforeToolCallContext;
 
 use crate::tool_permission;
+use crate::tool_permission::PermissionPolicy;
 use crate::tools::registry::ToolRegistry;
 
 /// User decision on a pending tool call.
@@ -24,6 +25,7 @@ pub enum Approval {
 pub struct PermissionGate {
     auto_allow_readonly: bool,
     auto_allow_bash_safe: bool,
+    policy: Option<std::sync::Arc<PermissionPolicy>>,
     tool_registry: Option<std::sync::Arc<ToolRegistry>>,
     waiters: Mutex<HashMap<String, oneshot::Sender<Approval>>>,
     early: Mutex<HashMap<String, Approval>>,
@@ -35,7 +37,7 @@ impl PermissionGate {
         Self::new_inner(event_tx, None)
     }
 
-    /// TUI path: resolve [`ToolDefinition::description`] for approval UI.
+    /// TUI path: resolve [`ToolDefinition`](uncode_ai::tool_def::ToolDefinition) `description` for approval UI.
     pub fn new_with_registry(
         event_tx: broadcast::Sender<AgentEvent>,
         tool_registry: std::sync::Arc<ToolRegistry>,
@@ -50,10 +52,23 @@ impl PermissionGate {
         Self {
             auto_allow_readonly: true,
             auto_allow_bash_safe: true,
+            policy: None,
             tool_registry,
             waiters: Mutex::new(HashMap::new()),
             early: Mutex::new(HashMap::new()),
             event_tx: Some(event_tx),
+        }
+    }
+
+    /// With configurable permission policy.
+    pub fn new_with_policy(
+        event_tx: broadcast::Sender<AgentEvent>,
+        tool_registry: std::sync::Arc<ToolRegistry>,
+        policy: std::sync::Arc<PermissionPolicy>,
+    ) -> Self {
+        Self {
+            policy: Some(policy),
+            ..Self::new_inner(event_tx, Some(tool_registry))
         }
     }
 
@@ -62,6 +77,7 @@ impl PermissionGate {
         Self {
             auto_allow_readonly: true,
             auto_allow_bash_safe: true,
+            policy: None,
             tool_registry: None,
             waiters: Mutex::new(HashMap::new()),
             early: Mutex::new(HashMap::new()),
@@ -70,12 +86,21 @@ impl PermissionGate {
     }
 
     pub fn needs_confirmation(&self, tool_name: &str, arguments: &str) -> bool {
-        tool_permission::needs_confirmation(
-            tool_name,
-            arguments,
-            self.auto_allow_readonly,
-            self.auto_allow_bash_safe,
-        )
+        if let Some(ref policy) = self.policy {
+            policy.needs_confirmation(
+                tool_name,
+                arguments,
+                self.auto_allow_readonly,
+                self.auto_allow_bash_safe,
+            )
+        } else {
+            tool_permission::needs_confirmation(
+                tool_name,
+                arguments,
+                self.auto_allow_readonly,
+                self.auto_allow_bash_safe,
+            )
+        }
     }
 
     /// Called from TUI when user allows or denies (may arrive before or after the waiter registers).

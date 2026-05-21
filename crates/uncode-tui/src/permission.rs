@@ -28,6 +28,7 @@ pub struct PendingConfirmation {
 pub struct PermissionManager {
     auto_allow_readonly: bool,
     auto_allow_bash_safe: bool,
+    policy: Option<std::sync::Arc<uncode_agent::tool_permission::PermissionPolicy>>,
     pending: Option<PendingConfirmation>,
 }
 
@@ -36,18 +37,36 @@ impl PermissionManager {
         Self {
             auto_allow_readonly: true,
             auto_allow_bash_safe: true,
+            policy: None,
             pending: None,
         }
     }
 
+    /// Set the configurable permission policy.
+    pub fn set_policy(
+        &mut self,
+        policy: std::sync::Arc<uncode_agent::tool_permission::PermissionPolicy>,
+    ) {
+        self.policy = Some(policy);
+    }
+
     /// 判断工具调用是否需要确认
     pub fn needs_confirmation(&self, tool_name: &str, arguments: &str) -> bool {
-        uncode_agent::tool_permission::needs_confirmation(
-            tool_name,
-            arguments,
-            self.auto_allow_readonly,
-            self.auto_allow_bash_safe,
-        )
+        if let Some(ref policy) = self.policy {
+            policy.needs_confirmation(
+                tool_name,
+                arguments,
+                self.auto_allow_readonly,
+                self.auto_allow_bash_safe,
+            )
+        } else {
+            uncode_agent::tool_permission::needs_confirmation(
+                tool_name,
+                arguments,
+                self.auto_allow_readonly,
+                self.auto_allow_bash_safe,
+            )
+        }
     }
 
     /// 创建待确认项

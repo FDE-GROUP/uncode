@@ -1,5 +1,27 @@
+//! uncode-cli — 命令行入口
+//!
+//! clap 参数解析、配置加载、Agent 编排。
+//! 支持单次对话、REPL、TUI、JSON-RPC 等多种交互模式。
+
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Output guard — 在非 TUI 模式下保护 stdout 不被 tracing 污染。
+///
+/// **Pi:** 对照 `output-guard.ts`：`takeOverStdout` / `restoreStdout` / `writeRawStdout`。
+/// Rust 无法像 Node.js 替换 process.stdout，因此策略不同：
+/// tracing 显式写 stderr，协议输出通过 `write_raw_stdout` 显式写 stdout。
+mod output_guard {
+    use std::io::{self, Write};
+
+    /// 直接写 stdout（用于 JSON / RPC 协议输出）。
+    pub fn write_raw_stdout(data: &[u8]) -> io::Result<()> {
+        let mut stdout = io::stdout().lock();
+        stdout.write_all(data)?;
+        stdout.flush()?;
+        Ok(())
+    }
+}
 
 use anyhow::Context;
 use clap::{CommandFactory, Parser, Subcommand};
@@ -9,7 +31,7 @@ use uncode_agent::session::store::SessionStore;
 use uncode_agent::tools::{ToolLaunchConfig, ToolRegistry, register_coding_tools_and_configure};
 use uncode_agent::workspace_graph::WorkspaceGraphCache;
 use uncode_agent::{
-    AgentLoop, ContextLoader, GitHubClient, PermissionGate, PermissionToolHooks,
+    AgentLoop, ContextLoader, GitHubClient, PermissionGate, PermissionPolicy, PermissionToolHooks,
     SystemPromptBuilder,
 };
 use uncode_ai::{
@@ -54,7 +76,7 @@ struct Cli {
     mode: String,
 
     /// 使用 prompt 模板
-    #[arg(short = 't', long = "template", value_name = "TEMPLATE")]
+    #[arg(short = 'T', long = "template", value_name = "TEMPLATE")]
     template: Option<String>,
 
     /// 模板变量 key=value
@@ -126,6 +148,7 @@ enum Commands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
@@ -402,9 +425,11 @@ async fn main() -> anyhow::Result<()> {
     // 默认：启动 TUI（单例 AgentLoop：同 run 内 steer，避免每次 submit 新建 loop）
     let event_rx = agent.subscribe();
     let event_tx = agent.event_sender();
-    let permission_gate = Arc::new(PermissionGate::new_with_registry(
+    let permission_policy = Arc::new(PermissionPolicy::from_config(&config.permissions));
+    let permission_gate = Arc::new(PermissionGate::new_with_policy(
         event_tx.clone(),
         tool_registry.clone(),
+        permission_policy.clone(),
     ));
     agent.set_tool_hooks(Arc::new(PermissionToolHooks::new(permission_gate.clone())));
     let shared_agent = Arc::new(tokio::sync::RwLock::new(agent));
@@ -412,6 +437,7 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(async move {
         let mut tui = uncode_tui::TuiEngine::new();
         tui.set_permission_gate(permission_gate);
+        tui.set_permission_policy(permission_policy);
         let model_ids: Vec<String> = model_registry
             .all_models()
             .into_iter()
@@ -481,13 +507,10 @@ async fn run_json_mode(agent: AgentLoop, prompt: String) -> anyhow::Result<()> {
 
     let agent_handle = tokio::spawn(async move { agent.run(Message::user(prompt)).await });
 
-    use tokio::io::AsyncWriteExt;
-    let mut stdout = tokio::io::stdout();
     while let Ok(event) = event_rx.recv().await {
         let json = serde_json::to_string(&event)?;
-        stdout.write_all(json.as_bytes()).await?;
-        stdout.write_all(b"\n").await?;
-        stdout.flush().await?;
+        output_guard::write_raw_stdout(json.as_bytes())?;
+        output_guard::write_raw_stdout(b"\n")?;
 
         if matches!(event, AgentEvent::SessionEnd { .. }) {
             break;
