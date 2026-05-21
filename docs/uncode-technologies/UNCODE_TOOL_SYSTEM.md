@@ -176,7 +176,7 @@ pub struct ToolContext {
 
 `CancellationToken` 从 `AgentLoop` 一路透传到最底层工具——与 Pi 的 AbortController 模式一致。
 
-`execution_env` 为 `None` 时，工具通过 `default_execution_env()` 回退到进程内 `LocalExecutionEnv`。当前经 `FileSystem` 接入：`read`、`ls`、`write`/`edit`（读旧内容）、`grep`（`file_info` + `read_text_file`）；`find` 仅目录遍历（`ignore`），不读文件内容。
+`execution_env` 为 `None` 时，工具通过 `default_execution_env()` 回退到进程内 `LocalExecutionEnv`。`FileSystem`：`read`、`ls`、`write`/`edit`、`grep`；`find` 仅 `ignore` 遍历。`bash` 与 `LocalShell` 共享 `bash_exec`（`bash -c`、进程组超时杀死、流式/取消）；Agent 主路径经 `execute_with_context` 注入 `execution_env`（可替换沙箱实现）。
 
 ---
 
