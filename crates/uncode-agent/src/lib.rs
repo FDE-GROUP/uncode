@@ -12,6 +12,7 @@ pub mod branch_summarization;
 pub mod compaction;
 pub mod context;
 pub mod context_builder;
+pub mod decision;              // ★ 决策层 — 认知与决策驱动设计核心
 pub mod github;
 pub mod harness;
 pub mod hooks;
