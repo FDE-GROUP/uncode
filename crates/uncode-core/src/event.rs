@@ -203,6 +203,20 @@ pub enum AgentEvent {
         partial_response: bool,
     },
 
+    // ── Decision audit (认知与决策驱动设计) ──
+    /// Emitted when the adjudication pipeline rejects or approves an action.
+    /// Part of the Decision Layer in the Cognition & Decision-Driven Design paradigm.
+    /// See `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3
+    DecisionMade {
+        turn_id: String,
+        tool_name: String,
+        allowed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+    },
+
     // ── Settled state (after SessionEnd, agent fully idle) ──
     AgentSettled {
         session_id: String,
@@ -488,6 +502,7 @@ pub fn agent_event_tag(event: &AgentEvent) -> &'static str {
         AgentEvent::ContextThreshold { .. } => "context_threshold",
         AgentEvent::Error { .. } => "error",
         AgentEvent::AgentInterrupted { .. } => "agent_interrupted",
+        AgentEvent::DecisionMade { .. } => "decision_made",
         AgentEvent::AgentSettled { .. } => "agent_settled",
     }
 }
