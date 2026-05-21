@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use uncode_core::error::{UncodeError, UncodeResult};
-use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
+use uncode_core::tool::{ExecutionMode, ToolContext, ToolDefinition, ToolExecutor, ToolResult};
+
+const MAX_DIR_ENTRIES: usize = 500;
 
 #[derive(Default)]
 pub struct LsTool;
@@ -24,37 +26,63 @@ impl ToolExecutor for LsTool {
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
+        let tr = self
+            .execute_with_context(
+                arguments,
+                ToolContext {
+                    cancel_token: tokio_util::sync::CancellationToken::new(),
+                    on_progress: None,
+                    tool_call_id: String::new(),
+                    execution_env: None,
+                },
+            )
+            .await?;
+        Ok(tr.text_content())
+    }
+
+    async fn execute_with_context(
+        &self,
+        arguments: serde_json::Value,
+        ctx: ToolContext,
+    ) -> UncodeResult<ToolResult> {
         let raw = arguments["path"].as_str().unwrap_or(".").to_string();
-        let resolved = super::resolve_path(&raw).map_err(UncodeError::Tool)?;
+        let resolved = super::resolve_path(&raw).map_err(|e| UncodeError::Tool(e))?;
         let display = resolved.display().to_string();
 
-        tokio::task::spawn_blocking(move || list_dir(&display))
+        let env = super::ctx_execution_env(&ctx);
+        let info = env
+            .fs()
+            .file_info(&resolved)
             .await
-            .map_err(|e| UncodeError::Tool(format!("ls task failed: {e}")))?
-    }
-}
+            .map_err(|e| UncodeError::Tool(format!("ls {display}: {e}")))?;
 
-fn list_dir(path: &str) -> UncodeResult<String> {
-    let entries =
-        std::fs::read_dir(path).map_err(|e| UncodeError::Tool(format!("ls {path}: {e}")))?;
+        if !info.is_dir {
+            return Ok(ToolResult::err(format!("{display} is not a directory")));
+        }
 
-    let mut results: Vec<String> = entries
-        .flatten()
-        .take(500)
-        .map(|e| {
-            let name = e.file_name().to_string_lossy().to_string();
-            if e.file_type().is_ok_and(|t| t.is_dir()) {
-                format!("{name}/")
-            } else {
-                name
-            }
-        })
-        .collect();
+        let entries = env
+            .fs()
+            .list_dir(&resolved)
+            .await
+            .map_err(|e| UncodeError::Tool(format!("ls {display}: {e}")))?;
 
-    if results.is_empty() {
-        Ok("(empty)".into())
-    } else {
-        results.sort();
-        Ok(results.join("\n"))
+        let mut results: Vec<String> = entries
+            .into_iter()
+            .take(MAX_DIR_ENTRIES)
+            .map(|e| {
+                if e.is_dir {
+                    format!("{}/", e.name)
+                } else {
+                    e.name
+                }
+            })
+            .collect();
+
+        if results.is_empty() {
+            Ok(ToolResult::ok("(empty)"))
+        } else {
+            results.sort();
+            Ok(ToolResult::ok(results.join("\n")))
+        }
     }
 }
