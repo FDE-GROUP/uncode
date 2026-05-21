@@ -25,6 +25,7 @@
 pub mod adjudication;
 pub mod audit;
 pub mod execution;
+pub mod feedback;       // ★ 决策→认知 上行反馈通道
 pub mod firewall;
 pub mod proposal;
 pub mod types;
