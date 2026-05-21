@@ -45,7 +45,7 @@ use uncode_core::tool::{
     ToolProgress, ToolResult,
 };
 
-const MAX_TURNS: u64 = 50;
+pub const MAX_TURNS: u64 = 50;
 const MAX_LLM_RETRIES: u32 = 3;
 const BASE_RETRY_DELAY_MS: u64 = 1000;
 
