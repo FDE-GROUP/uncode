@@ -1,7 +1,9 @@
+use std::path::{Path, PathBuf};
+
 use async_trait::async_trait;
 use regex::Regex;
 use uncode_core::error::UncodeResult;
-use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
+use uncode_core::tool::{ExecutionMode, ToolContext, ToolDefinition, ToolExecutor, ToolResult};
 
 pub struct GrepTool {
     max_results: usize,
@@ -46,6 +48,25 @@ impl ToolExecutor for GrepTool {
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
+        let tr = self
+            .execute_with_context(
+                arguments,
+                ToolContext {
+                    cancel_token: tokio_util::sync::CancellationToken::new(),
+                    on_progress: None,
+                    tool_call_id: String::new(),
+                    execution_env: None,
+                },
+            )
+            .await?;
+        Ok(tr.text_content())
+    }
+
+    async fn execute_with_context(
+        &self,
+        arguments: serde_json::Value,
+        ctx: ToolContext,
+    ) -> UncodeResult<ToolResult> {
         let pattern = arguments["pattern"]
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("pattern required".into()))?
@@ -65,71 +86,83 @@ impl ToolExecutor for GrepTool {
                 uncode_core::error::UncodeError::Tool(format!("invalid include pattern: {e}"))
             })?;
 
-        let max_results = self.max_results;
-        let max_file_bytes = self.max_file_bytes;
-
-        // Run blocking file I/O on a dedicated thread to avoid stalling the tokio runtime
-        let result = tokio::task::spawn_blocking(move || {
-            grep_files(
-                &re,
-                &search_path,
-                glob_pattern.as_ref(),
-                max_results,
-                max_file_bytes,
-            )
+        let paths = tokio::task::spawn_blocking(move || {
+            collect_grep_file_paths(&search_path, glob_pattern.as_ref())
         })
         .await
         .map_err(|e| uncode_core::error::UncodeError::Tool(format!("grep task failed: {e}")))?;
 
-        Ok(result)
+        let env = super::ctx_execution_env(&ctx);
+        let output = grep_paths(
+            env.as_ref(),
+            &re,
+            paths,
+            self.max_results,
+            self.max_file_bytes,
+        )
+        .await;
+
+        Ok(ToolResult::ok(output))
     }
 }
 
-fn grep_files(
-    re: &Regex,
-    search_path: &std::path::Path,
+fn collect_grep_file_paths(
+    search_path: &Path,
     glob_pattern: Option<&glob::Pattern>,
+) -> Vec<PathBuf> {
+    let walker = ignore::WalkBuilder::new(search_path)
+        .standard_filters(true)
+        .max_depth(Some(20))
+        .build();
+
+    walker
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            if !path.is_file() {
+                return None;
+            }
+            if let Some(pat) = glob_pattern {
+                let rel = path
+                    .strip_prefix(search_path)
+                    .unwrap_or(path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let file_name = path.file_name().unwrap_or_default().to_string_lossy();
+                if !pat.matches(&rel) && !pat.matches(&file_name) {
+                    return None;
+                }
+            }
+            Some(path.to_path_buf())
+        })
+        .collect()
+}
+
+async fn grep_paths(
+    env: &dyn uncode_core::tool::ExecutionEnv,
+    re: &Regex,
+    paths: Vec<PathBuf>,
     max_results: usize,
     max_file_bytes: u64,
 ) -> String {
     let mut results = Vec::with_capacity(max_results.min(64));
     let mut count = 0;
 
-    let walker = ignore::WalkBuilder::new(search_path)
-        .standard_filters(true)
-        .max_depth(Some(20))
-        .build();
-
-    for entry in walker.filter_map(Result::ok) {
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-
+    for path in paths {
         if count >= max_results {
             results.push("... (truncated)".into());
             break;
         }
 
-        if let Some(pat) = glob_pattern {
-            let rel = path
-                .strip_prefix(search_path)
-                .unwrap_or(path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            let file_name = path.file_name().unwrap_or_default().to_string_lossy();
-            if !pat.matches(&rel) && !pat.matches(&file_name) {
-                continue;
-            }
-        }
-
-        if let Ok(meta) = std::fs::metadata(path)
-            && meta.len() > max_file_bytes
-        {
+        let info = match env.fs().file_info(&path).await {
+            Ok(i) => i,
+            Err(_) => continue,
+        };
+        if info.size > max_file_bytes {
             continue;
         }
 
-        let content = match std::fs::read_to_string(path) {
+        let content = match env.fs().read_text_file(&path).await {
             Ok(c) => c,
             Err(_) => continue,
         };
