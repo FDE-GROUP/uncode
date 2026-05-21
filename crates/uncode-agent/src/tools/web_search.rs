@@ -2,9 +2,13 @@ use async_trait::async_trait;
 use uncode_core::error::UncodeResult;
 use uncode_core::tool::{ToolDefinition, ToolExecutor};
 
+use super::local_env::truncate_output;
+
 const TAVILY_API_URL: &str = "https://api.tavily.com/search";
 const DEFAULT_MAX_RESULTS: usize = 5;
 const TIMEOUT_SECS: u64 = 30;
+/// Cap formatted search output (aligned with bash / web_fetch).
+const MAX_OUTPUT_BYTES: usize = 50 * 1024;
 
 pub struct WebSearchTool {
     api_key: String,
@@ -144,7 +148,7 @@ impl ToolExecutor for WebSearchTool {
             );
         }
 
-        Ok(output)
+        Ok(truncate_output(&output, MAX_OUTPUT_BYTES))
     }
 }
 
@@ -170,5 +174,13 @@ mod tests {
         let tool = WebSearchTool::new("test-key".into());
         let def = tool.definition();
         assert_eq!(def.name, "web_search");
+    }
+
+    #[test]
+    fn test_truncate_output_constant() {
+        let huge = "x".repeat(MAX_OUTPUT_BYTES + 1000);
+        let out = truncate_output(&huge, MAX_OUTPUT_BYTES);
+        assert!(out.contains("[truncated]"));
+        assert!(out.len() < huge.len());
     }
 }

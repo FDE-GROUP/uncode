@@ -13,6 +13,8 @@
 | [#284](https://github.com/FDE-GROUP/uncode/issues/284) | `url_safety::ensure_public_http_url`；`web_fetch` 限制重定向 |
 
 | [#285](https://github.com/FDE-GROUP/uncode/issues/285) | `grep` 使用 `ignore` 遍历（`.gitignore`）+ 单文件 1MB 上限；集成测试 |
+| [#286](https://github.com/FDE-GROUP/uncode/issues/286) | `read`：`spawn_blocking` + `offset` schema 澄清 + 边界测试 |
+| [#287](https://github.com/FDE-GROUP/uncode/issues/287) | 权限确认状态栏展示 `ToolDefinition.description`；`web_search` 输出截断 |
 
 额外（无单独 Issue）：`read` 目录 listing 上限 500 条，与 `ls` 一致。
 

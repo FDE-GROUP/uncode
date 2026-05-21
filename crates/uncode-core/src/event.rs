@@ -105,6 +105,9 @@ pub enum AgentEvent {
         tool_id: String,
         tool_name: String,
         arguments_summary: String,
+        /// Built-in tool description from registry (shown in TUI confirm UI).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_description: Option<String>,
     },
     ToolCallEnd {
         #[serde(flatten)]
