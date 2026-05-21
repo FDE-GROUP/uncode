@@ -156,8 +156,8 @@
 | **缺陷** | ~~无重定向上限~~ → `Policy::limited(5)`（#284）。 |
 | **缺陷** | ~~`html2text` 失败即整工具失败~~ → 降级为 lossy UTF-8 原始 HTML（#306）。 |
 | **局限** | 无 JS、无 cookie、无认证头。 |
-| **优化** | 返回 `Content-Type`、最终 URL 供模型判断（`details` / 输出前缀）。 |
-| **测试** | definition + SSRF + wiremock plain/html/503（#305）；`html2text` 单元测试（#306）。 |
+| **优化** | ~~返回 `Content-Type`、最终 URL~~ → `ToolResult.details`（#308）。 |
+| **测试** | definition + SSRF + wiremock plain/html/503 + details（#305/#308）；`html2text` 单元测试（#306）。 |
 
 ---
 
