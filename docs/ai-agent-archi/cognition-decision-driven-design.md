@@ -381,6 +381,17 @@ Anthropic 的"Think → Plan → Act"循环和 OpenAI 的 Swarm/Assistants 提�
 
 ---
 
+## 延伸阅读：Harness Engineering
+
+本文提出的"决策层"在行业工程实践中常被称为 **Harness Engineering**。二者是同一事物的两种视角：
+
+- **Harness Engineering**（`docs/others/HARNESS_ENGINEERING.md`）——告诉你"怎么搭"：编排、工具治理、记忆、观测、进化五模块
+- **认知与决策驱动设计**——告诉你"为什么要这样搭"：认知与决策分离、语义防火墙、决策即事件
+
+Harness Engineering 的"护栏、工具注册、事件溯源"对应本文的"裁决器、防火墙、审计器"。不是替代关系——Harness Engineering 是决策层的工程语言翻译。
+
+---
+
 ## 本文在系列中的位置
 
 | # | 文章 | 主题 | 与本文的关系 |

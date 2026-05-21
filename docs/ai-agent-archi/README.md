@@ -106,3 +106,15 @@
 ## 如何使用本文档集
 
 这五篇文章既可以独立阅读（每篇有自己的论点），也可以按论证链顺序阅读（每篇的结论是下一篇的前提）。最推荐的策略是：**从 ⑤ 入手建立完整框架，再按需回溯 ①③④ 获取具体论证细节。**
+
+## 补充阅读：Harness Engineering
+
+本系列的工程语言翻译。Harness Engineering 是"认知与决策驱动设计"中**决策层**在行业中的工程实践名称。
+
+| 文件 | 类型 | 说明 |
+|:---|:---|:---|
+| [Harness Engineering 综述](../others/HARNESS_ENGINEERING.md) | 行业综述 | Prompt→Context→Harness 三层进化，OpenAI/Anthropic/Fowler/Hashimoto 四大案例 |
+| [Harness Engineering 术语表](../others/HARNESS_ENGINEERING_GLOSSARY.md) | 中英对照 | 120+ 术语，主题/字母双查法 |
+| [Harness Engineering 五模块架构](../others/Harness%20Engineering%20Archi.md) | 架构摘要 | 编排/工具/记忆/观测/进化 五模块 + 完整视图 |
+
+**与系列的关系**：Harness Engineering 告诉你怎么搭（工程实践），认知与决策驱动设计告诉你为什么要这样搭（架构范式）。同一问题的两种视角。
