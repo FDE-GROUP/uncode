@@ -828,7 +828,7 @@ async fn build_builtin_agent(
     tool_registry.register("write".to_string(), Arc::new(WriteTool));
     tool_registry.register("edit".to_string(), Arc::new(EditTool));
     tool_registry.register("bash".to_string(), Arc::new(BashTool::new()));
-    tool_registry.register("grep".to_string(), Arc::new(GrepTool));
+    tool_registry.register("grep".to_string(), Arc::new(GrepTool::default()));
     tool_registry.register("find".to_string(), Arc::new(FindTool));
     tool_registry.register("ls".to_string(), Arc::new(LsTool));
 

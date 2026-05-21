@@ -3,8 +3,25 @@ use regex::Regex;
 use uncode_core::error::UncodeResult;
 use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
 
-#[derive(Default)]
-pub struct GrepTool;
+pub struct GrepTool {
+    max_results: usize,
+    max_file_bytes: u64,
+}
+
+impl Default for GrepTool {
+    fn default() -> Self {
+        Self::new(50, 1024 * 1024)
+    }
+}
+
+impl GrepTool {
+    pub fn new(max_results: usize, max_file_bytes: usize) -> Self {
+        Self {
+            max_results,
+            max_file_bytes: max_file_bytes as u64,
+        }
+    }
+}
 
 #[async_trait]
 impl ToolExecutor for GrepTool {
@@ -48,9 +65,18 @@ impl ToolExecutor for GrepTool {
                 uncode_core::error::UncodeError::Tool(format!("invalid include pattern: {e}"))
             })?;
 
+        let max_results = self.max_results;
+        let max_file_bytes = self.max_file_bytes;
+
         // Run blocking file I/O on a dedicated thread to avoid stalling the tokio runtime
         let result = tokio::task::spawn_blocking(move || {
-            grep_files(&re, &search_path, glob_pattern.as_ref())
+            grep_files(
+                &re,
+                &search_path,
+                glob_pattern.as_ref(),
+                max_results,
+                max_file_bytes,
+            )
         })
         .await
         .map_err(|e| uncode_core::error::UncodeError::Tool(format!("grep task failed: {e}")))?;
@@ -59,16 +85,14 @@ impl ToolExecutor for GrepTool {
     }
 }
 
-const MAX_RESULTS: usize = 50;
-/// Skip files larger than this when grepping (aligned with `read` max_size).
-const MAX_GREP_FILE_BYTES: u64 = 1024 * 1024;
-
 fn grep_files(
     re: &Regex,
     search_path: &std::path::Path,
     glob_pattern: Option<&glob::Pattern>,
+    max_results: usize,
+    max_file_bytes: u64,
 ) -> String {
-    let mut results = Vec::with_capacity(MAX_RESULTS);
+    let mut results = Vec::with_capacity(max_results.min(64));
     let mut count = 0;
 
     let walker = ignore::WalkBuilder::new(search_path)
@@ -82,7 +106,7 @@ fn grep_files(
             continue;
         }
 
-        if count >= MAX_RESULTS {
+        if count >= max_results {
             results.push("... (truncated)".into());
             break;
         }
@@ -100,7 +124,7 @@ fn grep_files(
         }
 
         if let Ok(meta) = std::fs::metadata(path)
-            && meta.len() > MAX_GREP_FILE_BYTES
+            && meta.len() > max_file_bytes
         {
             continue;
         }
@@ -114,7 +138,7 @@ fn grep_files(
             if re.is_match(line) {
                 results.push(format!("{}:{}: {}", path.display(), i + 1, line));
                 count += 1;
-                if count >= MAX_RESULTS {
+                if count >= max_results {
                     break;
                 }
             }

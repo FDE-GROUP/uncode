@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, ProviderConfigs, WorkspaceGraphConfig};
+use crate::config::{AppConfig, ProviderConfigs, ToolsConfig, WorkspaceGraphConfig};
 use crate::error::{
     BranchSummaryError, CompactionError, ExecutionError, FileError, HarnessError, UncodeError,
 };
@@ -27,6 +27,22 @@ fn test_default_models_count() {
     let config = AppConfig::default();
     assert_eq!(config.models.len(), 3);
     assert_eq!(config.models[0].id, "deepseek-v3");
+}
+
+#[test]
+fn test_tools_config_default() {
+    let tc = ToolsConfig::default();
+    assert_eq!(tc.max_file_bytes, 1024 * 1024);
+    assert_eq!(tc.max_grep_results, 50);
+}
+
+#[test]
+fn test_tools_config_roundtrip() {
+    let config = AppConfig::default();
+    let json = serde_json::to_string(&config).unwrap();
+    let parsed: AppConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.tools.max_file_bytes, 1024 * 1024);
+    assert_eq!(parsed.tools.max_grep_results, 50);
 }
 
 #[test]

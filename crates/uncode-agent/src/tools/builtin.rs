@@ -6,6 +6,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use uncode_core::config::ToolsConfig;
+
 use super::{
     BashTool, EditTool, FindTool, GrepTool, LsTool, ReadTool, ToolRegistry, WebFetchTool,
     WebSearchTool, WriteTool,
@@ -31,11 +33,24 @@ pub fn is_pi_builtin_tool(name: &str) -> bool {
 }
 
 /// Register all standard coding tools on the registry (superset of Pi builtins).
-pub fn register_coding_tools(registry: &ToolRegistry, api_keys: &HashMap<String, String>) {
-    registry.register("read", Arc::new(ReadTool::new()));
+pub fn register_coding_tools(
+    registry: &ToolRegistry,
+    api_keys: &HashMap<String, String>,
+    tools_config: &ToolsConfig,
+) {
+    registry.register(
+        "read",
+        Arc::new(ReadTool::with_max_file_bytes(tools_config.max_file_bytes)),
+    );
     registry.register("write", Arc::new(WriteTool));
     registry.register("edit", Arc::new(EditTool));
-    registry.register("grep", Arc::new(GrepTool));
+    registry.register(
+        "grep",
+        Arc::new(GrepTool::new(
+            tools_config.max_grep_results,
+            tools_config.max_file_bytes,
+        )),
+    );
     registry.register("bash", Arc::new(BashTool::new()));
     registry.register("find", Arc::new(FindTool));
     registry.register("ls", Arc::new(LsTool));
@@ -55,8 +70,20 @@ pub fn apply_pi_default_active_tools(registry: &ToolRegistry) -> Result<(), Stri
 
 /// In-memory registry with Pi coding tools registered and default active set.
 pub fn new_pi_coding_registry(api_keys: &HashMap<String, String>) -> Result<ToolRegistry, String> {
+    new_pi_coding_registry_with_tools(api_keys, &ToolsConfig::default())
+}
+
+pub fn new_pi_coding_registry_with_tools(
+    api_keys: &HashMap<String, String>,
+    tools_config: &ToolsConfig,
+) -> Result<ToolRegistry, String> {
     let registry = ToolRegistry::new();
-    register_coding_tools_and_configure(&registry, api_keys, &ToolLaunchConfig::default())?;
+    register_coding_tools_and_configure(
+        &registry,
+        api_keys,
+        &ToolLaunchConfig::default(),
+        tools_config,
+    )?;
     Ok(registry)
 }
 
@@ -65,8 +92,9 @@ pub fn register_coding_tools_and_configure(
     registry: &ToolRegistry,
     api_keys: &HashMap<String, String>,
     config: &ToolLaunchConfig,
+    tools_config: &ToolsConfig,
 ) -> Result<(), String> {
-    register_coding_tools(registry, api_keys);
+    register_coding_tools(registry, api_keys, tools_config);
     configure_active_tools(registry, config)
 }
 
@@ -108,7 +136,8 @@ mod tests {
 
     #[test]
     fn list_active_matches_pi_default() {
-        let reg = new_pi_coding_registry(&HashMap::new()).unwrap();
+        let reg =
+            new_pi_coding_registry_with_tools(&HashMap::new(), &ToolsConfig::default()).unwrap();
         let mut active = reg.list_active();
         active.sort();
         let mut expected: Vec<String> = PI_BUILTIN_TOOL_NAMES
@@ -121,7 +150,8 @@ mod tests {
 
     #[test]
     fn new_pi_coding_registry_has_seven_active() {
-        let reg = new_pi_coding_registry(&HashMap::new()).unwrap();
+        let reg =
+            new_pi_coding_registry_with_tools(&HashMap::new(), &ToolsConfig::default()).unwrap();
         assert_eq!(reg.definitions().len(), PI_BUILTIN_TOOL_NAMES.len());
         for name in PI_BUILTIN_TOOL_NAMES {
             assert!(reg.is_active(name));
@@ -132,7 +162,7 @@ mod tests {
     #[test]
     fn no_builtin_tools_leaves_extensions_only() {
         let reg = ToolRegistry::new();
-        register_coding_tools(&reg, &HashMap::new());
+        register_coding_tools(&reg, &HashMap::new(), &ToolsConfig::default());
         configure_active_tools(
             &reg,
             &ToolLaunchConfig {
