@@ -138,5 +138,41 @@ fn resolve_path(raw: &str) -> Result<std::path::PathBuf, String> {
     Ok(canonical)
 }
 
+/// 项目内相对路径显示（prepare 后回写给 hook / 日志）。
+pub fn display_path_within_project(resolved: &std::path::Path) -> String {
+    if let Ok(cwd) = std::env::current_dir() {
+        if let Ok(rel) = resolved.strip_prefix(&cwd) {
+            if rel.as_os_str().is_empty() {
+                return ".".into();
+            }
+            return rel.to_string_lossy().into();
+        }
+    }
+    resolved.display().to_string()
+}
+
+/// `prepare_arguments` 垫片：解析沙箱路径并写回相对路径字符串。
+pub fn prepare_arguments_path(
+    mut arguments: serde_json::Value,
+    field: &str,
+    default_if_missing: Option<&str>,
+) -> Result<serde_json::Value, uncode_core::error::UncodeError> {
+    let obj = arguments.as_object_mut().ok_or_else(|| {
+        uncode_core::error::UncodeError::Tool("arguments must be a JSON object".into())
+    })?;
+    if let Some(default) = default_if_missing {
+        obj.entry(field.to_string())
+            .or_insert_with(|| serde_json::Value::String(default.into()));
+    }
+    if let Some(raw) = obj.get(field).and_then(|v| v.as_str()) {
+        let resolved = resolve_path(raw).map_err(uncode_core::error::UncodeError::Tool)?;
+        obj.insert(
+            field.to_string(),
+            serde_json::Value::String(display_path_within_project(&resolved)),
+        );
+    }
+    Ok(arguments)
+}
+
 #[cfg(test)]
 mod tests;

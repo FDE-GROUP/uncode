@@ -110,6 +110,13 @@ impl ToolExecutor for ReadTool {
         }
     }
 
+    fn prepare_arguments(
+        &self,
+        arguments: serde_json::Value,
+    ) -> Result<serde_json::Value, uncode_core::error::UncodeError> {
+        super::prepare_arguments_path(arguments, "path", None)
+    }
+
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
         let tr = self
             .execute_with_context(
