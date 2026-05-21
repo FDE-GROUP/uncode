@@ -30,7 +30,7 @@ impl ToolExecutor for GrepTool {
     fn definition(&self) -> ToolDefinition {
         ToolDefinition {
             name: "grep".into(),
-            description: "使用正则表达式搜索文件内容；默认遵守 .gitignore，跳过超过 1MB 的文件"
+            description: "使用正则表达式搜索文件内容；已安装 ripgrep (`rg`) 时优先使用，否则回退内置实现；默认遵守 .gitignore，跳过超过 1MB 的文件"
                 .into(),
             parameters: serde_json::json!({
                 "type": "object",
@@ -79,11 +79,37 @@ impl ToolExecutor for GrepTool {
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("pattern required".into()))?
             .to_string();
 
-        let re = Regex::new(&pattern)
-            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("invalid regex: {e}")))?;
-
         let search_path = super::resolve_path(arguments["path"].as_str().unwrap_or("."))
             .map_err(uncode_core::error::UncodeError::Tool)?;
+
+        let include = arguments["include"].as_str().map(str::to_string);
+        let max_results = self.max_results;
+        let max_file_bytes = self.max_file_bytes;
+        let pattern_for_rg = pattern.clone();
+        let search_path_for_rg = search_path.clone();
+
+        let rg_result = tokio::task::spawn_blocking(move || {
+            super::grep_rg::try_search(
+                &pattern_for_rg,
+                &search_path_for_rg,
+                include.as_deref(),
+                max_results,
+                max_file_bytes,
+            )
+        })
+        .await
+        .map_err(|e| uncode_core::error::UncodeError::Tool(format!("grep task failed: {e}")))?;
+        if let Some(rg_out) = rg_result.map_err(uncode_core::error::UncodeError::Tool)? {
+            let (output, match_count, truncated) = rg_out;
+            return Ok(ToolResult::ok(output).with_details(serde_json::json!({
+                "match_count": match_count,
+                "truncated": truncated,
+                "backend": "ripgrep",
+            })));
+        }
+
+        let re = Regex::new(&pattern)
+            .map_err(|e| uncode_core::error::UncodeError::Tool(format!("invalid regex: {e}")))?;
 
         let glob_pattern = arguments["include"]
             .as_str()
@@ -112,6 +138,7 @@ impl ToolExecutor for GrepTool {
         Ok(ToolResult::ok(output).with_details(serde_json::json!({
             "match_count": match_count,
             "truncated": truncated,
+            "backend": "native",
         })))
     }
 }

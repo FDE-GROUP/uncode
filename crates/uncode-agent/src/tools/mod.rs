@@ -10,6 +10,7 @@ pub mod diff;
 pub mod edit;
 pub mod find;
 pub mod grep;
+mod grep_rg;
 pub mod hashline;
 pub mod local_env;
 pub mod ls;
