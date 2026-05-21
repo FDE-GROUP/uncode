@@ -801,6 +801,58 @@ async fn test_bash_description_in_args() {
 }
 
 #[tokio::test]
+async fn test_read_uses_injected_execution_env() {
+    let (_dir, _guard) = sandbox_dir();
+    fs::write("probe.txt", "FROM_DISK\n").unwrap();
+
+    let env = super::mock_env::StubExecutionEnv::with_file_content("FROM_MOCK\n");
+    let tool = ReadTool::new();
+    let tr = tool
+        .execute_with_context(
+            serde_json::json!({ "path": "probe.txt" }),
+            uncode_core::tool::ToolContext {
+                cancel_token: tokio_util::sync::CancellationToken::new(),
+                on_progress: None,
+                tool_call_id: String::new(),
+                execution_env: Some(env.clone()),
+            },
+        )
+        .await
+        .unwrap();
+
+    assert!(tr.text_content().contains("FROM_MOCK"));
+    assert!(!tr.text_content().contains("FROM_DISK"));
+    assert!(
+        env.fs()
+            .read_paths()
+            .iter()
+            .any(|p| p.ends_with("probe.txt"))
+    );
+}
+
+#[tokio::test]
+async fn test_ls_uses_injected_execution_env_list_dir() {
+    let (_dir, _guard) = sandbox_dir();
+
+    let env = super::mock_env::StubExecutionEnv::with_directory_listing();
+    let tool = LsTool;
+    let tr = tool
+        .execute_with_context(
+            serde_json::json!({ "path": "." }),
+            uncode_core::tool::ToolContext {
+                cancel_token: tokio_util::sync::CancellationToken::new(),
+                on_progress: None,
+                tool_call_id: String::new(),
+                execution_env: Some(env),
+            },
+        )
+        .await
+        .unwrap();
+
+    assert!(tr.text_content().contains("stub-entry"));
+}
+
+#[tokio::test]
 async fn test_read_prepare_normalizes_relative_path() {
     let (_dir, _guard) = sandbox_dir();
     fs::create_dir_all("nested").unwrap();

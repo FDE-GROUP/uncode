@@ -22,6 +22,7 @@
 
 | （切片，#244） | `ToolContext.execution_env`；文件工具走 `FileSystem`；`bash`/`LocalShell` 共享 `bash_exec` |
 | [#299](https://github.com/FDE-GROUP/uncode/issues/299) | 七件套 `prepare_arguments`：`path`/`workdir` 沙箱解析与相对路径回写 |
+| [#244](https://github.com/FDE-GROUP/uncode/issues/244) | `ExecutionEnv` 切片 + `mock_env` 注入测试（read/ls） |
 
 额外（无单独 Issue）：`read` 目录 listing 上限 500 条，与 `ls` 一致。
 
@@ -203,7 +204,7 @@
 
 | 主题 | 说明 |
 |------|------|
-| **测试覆盖** | `grep` 零测试；`web_*` 几乎无行为测试；`bash` 不测 Agent 主路径 `execute_with_context`。 |
+| **测试覆盖** | 七件套集成测试较全；`grep`/`web_*` 仍可加强；`ExecutionEnv` 有 `mock_env` 注入测试（read/ls）。 |
 | **async 一致性** | `read`/`write`/`edit` 同步 FS；`grep`/`find`/`ls` 用 `spawn_blocking`。 |
 | **描述语言** | 中英混用（`read.hashline`、`edit` 大段英文 description）。 |
 | **Pi 对齐** | 七件套已实现 `prepare_arguments`（路径沙箱 + 相对路径回写）；`ExecutionEnv` 切片已落地；`bash` sequential 已对齐。 |
