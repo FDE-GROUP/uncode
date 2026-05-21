@@ -13,9 +13,11 @@ pub struct ReadTool {
 
 impl ReadTool {
     pub fn new() -> Self {
-        Self {
-            max_size: 1024 * 1024,
-        }
+        Self::with_max_file_bytes(1024 * 1024)
+    }
+
+    pub fn with_max_file_bytes(max_size: usize) -> Self {
+        Self { max_size }
     }
 }
 

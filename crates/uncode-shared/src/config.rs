@@ -18,6 +18,8 @@ pub struct AppConfig {
     pub user_models: Vec<UserModelConfig>,
     #[serde(default)]
     pub workspace_graph: WorkspaceGraphConfig,
+    #[serde(default)]
+    pub tools: ToolsConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,8 +70,37 @@ impl Default for AppConfig {
             models: default_models(),
             user_models: vec![],
             workspace_graph: WorkspaceGraphConfig::default(),
+            tools: ToolsConfig::default(),
         }
     }
+}
+
+/// 内置 coding 工具限额（`read` / `grep` 等）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolsConfig {
+    /// 单文件最大读取/搜索字节数（`read`、`grep` 跳过更大文件）。
+    #[serde(default = "default_tools_max_file_bytes")]
+    pub max_file_bytes: usize,
+    /// `grep` 全局最多匹配条数。
+    #[serde(default = "default_tools_max_grep_results")]
+    pub max_grep_results: usize,
+}
+
+impl Default for ToolsConfig {
+    fn default() -> Self {
+        Self {
+            max_file_bytes: default_tools_max_file_bytes(),
+            max_grep_results: default_tools_max_grep_results(),
+        }
+    }
+}
+
+fn default_tools_max_file_bytes() -> usize {
+    1024 * 1024
+}
+
+fn default_tools_max_grep_results() -> usize {
+    50
 }
 
 fn default_max_tokens() -> u32 {

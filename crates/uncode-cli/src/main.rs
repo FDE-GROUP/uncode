@@ -189,6 +189,7 @@ async fn main() -> anyhow::Result<()> {
             no_builtin_tools: cli.no_builtin_tools,
             tools: tools_whitelist,
         },
+        &config.tools,
     )
     .map_err(|e| {
         if let Some(ref list) = cli.tools {

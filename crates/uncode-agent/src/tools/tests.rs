@@ -652,7 +652,7 @@ async fn test_grep_include_matches_relative_path() {
     fs::write("src/lib.rs", "fn pi() {}\n").unwrap();
     fs::write("other.rs", "fn other() {}\n").unwrap();
 
-    let tool = GrepTool;
+    let tool = GrepTool::default();
     let result = tool
         .execute(serde_json::json!({
             "pattern": "fn pi",
@@ -677,7 +677,7 @@ async fn test_grep_respects_gitignore() {
     fs::write("visible.rs", "fn secret_grep_marker() {}\n").unwrap();
     fs::write(".gitignore", "ignored/\n").unwrap();
 
-    let tool = GrepTool;
+    let tool = GrepTool::default();
     let result = tool
         .execute(serde_json::json!({
             "pattern": "secret_grep_marker",
