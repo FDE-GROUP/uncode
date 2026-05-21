@@ -829,6 +829,28 @@ async fn test_grep_prepare_defaults_path_to_dot() {
 }
 
 #[tokio::test]
+async fn test_write_tool_result_details_bytes_written() {
+    let (_dir, _guard) = sandbox_dir();
+    let tool = WriteTool;
+    let tr = tool
+        .execute_with_context(
+            serde_json::json!({
+                "path": "out.txt",
+                "content": "hello"
+            }),
+            uncode_core::tool::ToolContext {
+                cancel_token: tokio_util::sync::CancellationToken::new(),
+                on_progress: None,
+                tool_call_id: String::new(),
+                execution_env: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(tr.details.as_ref().unwrap()["bytes_written"], 5);
+}
+
+#[tokio::test]
 async fn test_bash_prepare_rejects_workdir_outside_sandbox() {
     let (_dir, _guard) = sandbox_dir();
 
