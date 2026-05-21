@@ -52,6 +52,7 @@ async fn execute_prepared_tool_shared(
     prepared_args: serde_json::Value,
     raw_args: serde_json::Value,
 ) -> ToolResult {
+    let started = std::time::Instant::now();
     let executor = registry.get(&name);
     let child = cancel_token.child_token();
     let ctx = ToolContext {
@@ -89,6 +90,8 @@ async fn execute_prepared_tool_shared(
     } else {
         ToolResult::err(format!("tool not found: {name}"))
     };
+
+    tool_result = tool_result.with_duration_ms(started.elapsed().as_millis() as u64);
 
     if let Some(ref h) = hooks {
         let after_ctx = AfterToolCallContext {

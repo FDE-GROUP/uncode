@@ -59,6 +59,22 @@ impl ToolResult {
         self
     }
 
+    /// 合并 `duration_ms` 等字段到现有 `details`（保留工具已写入的键）。
+    pub fn with_duration_ms(mut self, duration_ms: u64) -> Self {
+        let mut map = match self.details.take() {
+            Some(serde_json::Value::Object(m)) => m,
+            Some(other) => {
+                let mut m = serde_json::Map::new();
+                m.insert("_extra".into(), other);
+                m
+            }
+            None => serde_json::Map::new(),
+        };
+        map.insert("duration_ms".into(), serde_json::json!(duration_ms));
+        self.details = Some(serde_json::Value::Object(map));
+        self
+    }
+
     pub fn with_terminate(mut self) -> Self {
         self.terminate = true;
         self
@@ -229,4 +245,19 @@ pub trait Shell: Send + Sync {
 pub trait ExecutionEnv: Send + Sync {
     fn fs(&self) -> &dyn FileSystem;
     fn shell(&self) -> &dyn Shell;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToolResult;
+
+    #[test]
+    fn tool_result_with_duration_ms_merges_existing_details() {
+        let tr = ToolResult::ok("done")
+            .with_details(serde_json::json!({ "bytes_written": 3 }))
+            .with_duration_ms(42);
+        let d = tr.details.unwrap();
+        assert_eq!(d["bytes_written"], 3);
+        assert_eq!(d["duration_ms"], 42);
+    }
 }
