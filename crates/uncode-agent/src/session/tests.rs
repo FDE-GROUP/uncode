@@ -417,4 +417,148 @@ mod tests {
             .unwrap();
         assert_eq!(path.len(), 2);
     }
+
+    // ── Undo Turn tests ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_undo_turn_removes_last_user_message() {
+        let store = new_store().await;
+        store
+            .init_session("undo-test", "model", "/test")
+            .await
+            .unwrap();
+
+        // U1 → A1 → U2 → A2
+        let u1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("u1"))));
+        store.append_entry("undo-test", &u1).await.unwrap();
+        let a1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::assistant("a1"))));
+        store.append_entry("undo-test", &a1).await.unwrap();
+        let u2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("u2"))));
+        store.append_entry("undo-test", &u2).await.unwrap();
+        let a2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::assistant("a2"))));
+        store.append_entry("undo-test", &a2).await.unwrap();
+
+        // Undo 1 turn → leaf moves back to A1
+        let target = store.undo_turn("undo-test", 1).await.unwrap();
+
+        // Verify leaf points to A1
+        let entries = store.load_entries("undo-test").await.unwrap();
+        let a1_id = entries[1].entry_id();
+        assert_eq!(target, a1_id);
+    }
+
+    #[tokio::test]
+    async fn test_undo_turn_multiple() {
+        let store = new_store().await;
+        store
+            .init_session("undo-multi", "model", "/test")
+            .await
+            .unwrap();
+
+        // U1 → A1 → U2 → A2
+        let u1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("u1"))));
+        store.append_entry("undo-multi", &u1).await.unwrap();
+        let a1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::assistant("a1"))));
+        store.append_entry("undo-multi", &a1).await.unwrap();
+        let u2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("u2"))));
+        store.append_entry("undo-multi", &u2).await.unwrap();
+        let a2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::assistant("a2"))));
+        store.append_entry("undo-multi", &a2).await.unwrap();
+
+        // Undo 2 turns → nothing to point to (before first entry)
+        let result = store.undo_turn("undo-multi", 2).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_undo_turn_empty_session() {
+        let store = new_store().await;
+        store
+            .init_session("undo-empty", "model", "/test")
+            .await
+            .unwrap();
+
+        let result = store.undo_turn("undo-empty", 1).await;
+        assert!(result.is_err());
+    }
+
+    // ── Search / Filter tests ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_search_sessions_by_title() {
+        let store = new_store().await;
+
+        store
+            .init_session_with_title(
+                "s1",
+                "model",
+                "/test",
+                Some("Rust refactoring session".into()),
+            )
+            .await
+            .unwrap();
+        store
+            .init_session_with_title("s2", "model", "/test", Some("Python debugging".into()))
+            .await
+            .unwrap();
+
+        let results = store.search_sessions("rust").await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "s1");
+    }
+
+    #[tokio::test]
+    async fn test_search_sessions_case_insensitive() {
+        let store = new_store().await;
+
+        store
+            .init_session_with_title("s1", "model", "/test", Some("Rust Session".into()))
+            .await
+            .unwrap();
+
+        let results = store.search_sessions("rust").await.unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_search_sessions_no_match() {
+        let store = new_store().await;
+
+        store
+            .init_session_with_title("s1", "model", "/test", Some("Rust session".into()))
+            .await
+            .unwrap();
+
+        let results = store.search_sessions("python").await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_by_model() {
+        let store = new_store().await;
+
+        store
+            .init_session("s1", "deepseek-v3", "/test")
+            .await
+            .unwrap();
+        store.init_session("s2", "glm-5.1", "/test").await.unwrap();
+        store
+            .init_session("s3", "deepseek-v3", "/test")
+            .await
+            .unwrap();
+
+        let results = store.list_sessions_by_model("deepseek-v3").await.unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_update_title() {
+        let store = new_store().await;
+        store.init_session("s1", "model", "/test").await.unwrap();
+
+        store.update_title("s1", "New Title").await.unwrap();
+
+        let header = store.read_header("s1").await.unwrap();
+        assert_eq!(header.title.as_deref(), Some("New Title"));
+    }
 }

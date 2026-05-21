@@ -27,6 +27,7 @@ DEFINE FIELD model ON session TYPE string;
 DEFINE FIELD title ON session TYPE option<string>;
 DEFINE FIELD working_dir ON session TYPE string;
 DEFINE INDEX idx_session_updated ON session COLUMNS updated_at;
+DEFINE INDEX idx_session_model ON session COLUMNS model;
 
 DEFINE TABLE entry SCHEMAFULL;
 DEFINE FIELD session_id ON entry TYPE string;
@@ -593,6 +594,134 @@ impl SurrealSessionStore {
                 children,
             })
         })
+    }
+
+    /// 将 leaf 指针回退 n 个 User Message entry（跳过中间的 Assistant/Tool 等非 User 消息）。
+    ///
+    /// **Pi:** 对照 `navigateTree(targetId)` — 回退到历史 entry 并重建上下文。
+    pub async fn undo_turn(&self, session_id: &str, n: u64) -> SessionResult<String> {
+        let entries = self.load_entries(session_id).await?;
+        if entries.is_empty() {
+            return Err(SessionError::InvalidData("nothing to undo".into()));
+        }
+
+        let current_leaf = self.get_leaf_id(session_id).await?;
+
+        // 确定 leaf 在 entries 中的位置
+        let leaf_pos = match &current_leaf {
+            Some(lid) => entries
+                .iter()
+                .position(|e| e.entry_id() == lid.as_str())
+                .unwrap_or(entries.len().saturating_sub(1)),
+            None => entries.len().saturating_sub(1),
+        };
+
+        // 从 leaf 位置倒序扫描，数 n 个 User Message
+        let mut user_count = 0u64;
+        let mut target_idx: Option<usize> = None;
+
+        for i in (0..=leaf_pos).rev() {
+            if let SessionEntry::Message(me) = &entries[i] {
+                if me.role == uncode_core::message::Role::User {
+                    user_count += 1;
+                    if user_count == n {
+                        // 指向这条 User 消息之前的 entry
+                        target_idx = if i > 0 { Some(i - 1) } else { None };
+                        break;
+                    }
+                }
+            }
+        }
+
+        let target_id = match target_idx {
+            Some(idx) => entries[idx].entry_id().to_string(),
+            None => return Err(SessionError::InvalidData("nothing to undo".into())),
+        };
+
+        self.set_leaf(session_id, &target_id).await?;
+        Ok(target_id)
+    }
+
+    /// 按标题模糊搜索（大小写不敏感）。
+    pub async fn search_sessions(&self, query: &str) -> SessionResult<Vec<SessionMetadata>> {
+        let lower_query = query.to_lowercase();
+        let mut resp = self
+            .db
+            .query("SELECT * FROM session WHERE string::contains(string::lowercase(title), $q) ORDER BY updated_at DESC")
+            .bind(("q", lower_query))
+            .await
+            .map_err(db_err("search sessions"))?;
+
+        let results: Vec<serde_json::Value> =
+            resp.take(0).map_err(db_err("take search results"))?;
+
+        let mut metas = Vec::with_capacity(results.len());
+        for v in results {
+            let sid = v["id"].as_str().unwrap_or_default().to_string();
+            let mc = self.message_count(&sid).await as u64;
+            metas.push(value_to_metadata(&v, mc)?);
+        }
+        Ok(metas)
+    }
+
+    /// 按模型过滤 session 列表。
+    pub async fn list_sessions_by_model(&self, model: &str) -> SessionResult<Vec<SessionMetadata>> {
+        let mut resp = self
+            .db
+            .query("SELECT * FROM session WHERE model = $model ORDER BY updated_at DESC")
+            .bind(("model", model.to_string()))
+            .await
+            .map_err(db_err("list by model"))?;
+
+        let results: Vec<serde_json::Value> = resp.take(0).map_err(db_err("take by model"))?;
+
+        let mut metas = Vec::with_capacity(results.len());
+        for v in results {
+            let sid = v["id"].as_str().unwrap_or_default().to_string();
+            let mc = self.message_count(&sid).await as u64;
+            metas.push(value_to_metadata(&v, mc)?);
+        }
+        Ok(metas)
+    }
+
+    /// 按更新时间日期范围过滤。
+    pub async fn list_sessions_by_date(
+        &self,
+        from: &chrono::DateTime<chrono::Utc>,
+        to: &chrono::DateTime<chrono::Utc>,
+    ) -> SessionResult<Vec<SessionMetadata>> {
+        let mut resp = self
+            .db
+            .query("SELECT * FROM session WHERE updated_at >= $from AND updated_at <= $to ORDER BY updated_at DESC")
+            .bind(("from", from.to_rfc3339()))
+            .bind(("to", to.to_rfc3339()))
+            .await
+            .map_err(db_err("list by date"))?;
+
+        let results: Vec<serde_json::Value> = resp.take(0).map_err(db_err("take by date"))?;
+
+        let mut metas = Vec::with_capacity(results.len());
+        for v in results {
+            let sid = v["id"].as_str().unwrap_or_default().to_string();
+            let mc = self.message_count(&sid).await as u64;
+            metas.push(value_to_metadata(&v, mc)?);
+        }
+        Ok(metas)
+    }
+
+    /// 更新 session 标题。
+    pub async fn update_title(&self, session_id: &str, title: &str) -> SessionResult<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let _: Option<serde_json::Value> = self
+            .db
+            .update(("session", session_id))
+            .merge(serde_json::json!({
+                "title": title,
+                "updated_at": now,
+            }))
+            .await
+            .map_err(db_err("update title"))?;
+        Ok(())
     }
 
     pub async fn invalidate(&self, _session_id: &str) {

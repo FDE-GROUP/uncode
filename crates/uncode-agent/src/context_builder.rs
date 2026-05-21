@@ -42,6 +42,7 @@ pub struct BuiltContext {
 ///    - Other entries → skip
 pub async fn build_context(store: &SessionStore, session_id: &str) -> SessionResult<BuiltContext> {
     let entries = store.load_entries(session_id).await?;
+    let leaf_id = store.get_leaf_id(session_id).await?;
 
     let mut messages = Vec::with_capacity(entries.len());
     let mut effective_model: Option<String> = None;
@@ -71,8 +72,20 @@ pub async fn build_context(store: &SessionStore, session_id: &str) -> SessionRes
     }
 
     let mut skip_active = skip_before_id.is_some();
+    let mut reached_leaf_end = false;
 
     for entry in &entries {
+        if reached_leaf_end {
+            break;
+        }
+
+        // Leaf-boundary: include this entry but stop after it
+        if let Some(ref lid) = leaf_id {
+            if entry.entry_id() == lid.as_str() {
+                reached_leaf_end = true;
+            }
+        }
+
         match entry {
             SessionEntry::Message(me) => {
                 if skip_active {
@@ -333,5 +346,37 @@ mod tests {
 
         let ctx = build_context(&store, "test-session").await.unwrap();
         assert_eq!(ctx.effective_thinking_level, Some(ThinkingLevel::High));
+    }
+
+    #[tokio::test]
+    async fn test_build_context_respects_leaf() {
+        let store = SessionStore::new_memory().await.expect("store");
+        store
+            .init_session("leaf-ctx", "model", "/test")
+            .await
+            .unwrap();
+
+        // U1 → A1 → U2 → A2
+        let u1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("u1"))));
+        store.append_entry("leaf-ctx", &u1).await.unwrap();
+        let a1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::assistant("a1"))));
+        store.append_entry("leaf-ctx", &a1).await.unwrap();
+        let u2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("u2"))));
+        store.append_entry("leaf-ctx", &u2).await.unwrap();
+        let a2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::assistant("a2"))));
+        store.append_entry("leaf-ctx", &a2).await.unwrap();
+
+        // Before undo: 4 messages
+        let ctx = build_context(&store, "leaf-ctx").await.unwrap();
+        assert_eq!(ctx.messages.len(), 4);
+
+        // Undo 1 turn → leaf at A1
+        store.undo_turn("leaf-ctx", 1).await.unwrap();
+
+        // After undo: only U1 + A1
+        let ctx = build_context(&store, "leaf-ctx").await.unwrap();
+        assert_eq!(ctx.messages.len(), 2);
+        assert_eq!(ctx.messages[0].role, Role::User);
+        assert_eq!(ctx.messages[1].role, Role::Assistant);
     }
 }
