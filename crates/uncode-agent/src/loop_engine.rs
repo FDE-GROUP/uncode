@@ -172,6 +172,8 @@ pub struct AgentLoop {
     graph_cache: Option<Arc<crate::workspace_graph::WorkspaceGraphCache>>,
     compaction_config: CompactionConfig,
     skill_registry: Option<uncode_core::skill::SkillRegistry>,
+    /// 决策层提案累积器 — 认知与决策驱动设计 Phase 1 连线 (#339)
+    proposal_acc: std::sync::Mutex<crate::decision::proposal::ProposalAccumulator>,
 }
 
 impl AgentLoop {
@@ -208,6 +210,9 @@ impl AgentLoop {
             graph_cache: None,
             compaction_config: CompactionConfig::default(),
             skill_registry: None,
+            proposal_acc: std::sync::Mutex::new(
+                crate::decision::proposal::ProposalAccumulator::new(),
+            ),
         }
     }
 
@@ -282,6 +287,9 @@ impl AgentLoop {
             graph_cache: None,
             compaction_config: CompactionConfig::default(),
             skill_registry: None,
+            proposal_acc: std::sync::Mutex::new(
+                crate::decision::proposal::ProposalAccumulator::new(),
+            ),
         }
     }
 
@@ -971,6 +979,9 @@ impl AgentLoop {
                 let mut turn_phase_issues: Vec<String> = Vec::new();
                 let mut turn_assistant_snippet = String::new();
 
+                // ── 决策层连线 (#339): 重置提案累积器 ──
+                self.proposal_acc.lock().unwrap().reset();
+
                 // ── Stream processing loop ──
                 loop {
                     if self.cancel_token.is_cancelled() {
@@ -1025,6 +1036,9 @@ impl AgentLoop {
                             }
                         }
                     };
+
+                    // ── 决策层连线 (#339): 喂入提案累积器 ──
+                    self.proposal_acc.lock().unwrap().feed(&event);
 
                     match event {
                         StreamEvent::ThinkingDelta(text) => {
