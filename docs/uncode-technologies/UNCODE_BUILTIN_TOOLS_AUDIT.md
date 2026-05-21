@@ -154,7 +154,7 @@
 |------|------|
 | **P1 安全** | **无 SSRF 防护**：可请求 `http://127.0.0.1`、`http://169.254.169.254` 等内网/metadata；Coding Agent 常见高危项。 |
 | **缺陷** | 无重定向次数限制；`reqwest` 默认跟随重定向可能绕过 URL 检查。 |
-| **缺陷** | HTML 转文本 `html2text` 失败即整工具失败；可降级为原始文本。 |
+| **缺陷** | ~~HTML 转文本 `html2text` 失败即整工具失败~~ → 已降级为 lossy UTF-8 原始 HTML（#306）。 |
 | **局限** | 无 JS、无 cookie、无认证头。 |
 | **优化** |  blocklist 私有 IP、link-local；可选 allowlist 域名；重定向上限。 |
 | **优化** | 返回 `Content-Type`、最终 URL 供模型判断。 |
