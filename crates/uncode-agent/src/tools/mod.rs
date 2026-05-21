@@ -4,6 +4,7 @@
 //! All tools implement the `ToolExecutor` trait and are registered via `ToolRegistry`.
 
 pub mod bash;
+pub mod bash_exec;
 pub mod builtin;
 pub mod diff;
 pub mod edit;
