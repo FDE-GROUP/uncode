@@ -168,7 +168,7 @@
 | **缺陷** | ~~无输出长度上限~~ → `truncate_output` 50KB（#287）；`max_results` 上限 20（#307）。 |
 | **缺陷** | API key 随请求发送（Tavily 设计）；需确保日志/on_payload 不泄露。 |
 | **局限** | 强依赖 Tavily；无离线/备用搜索。 |
-| **优化** | 截断每条 snippet（可选）。 |
+| **优化** | ~~截断每条 snippet~~ → 单条 2KB、`answer` 4KB（#309）。 |
 | **测试** | key/definition + wiremock 成功/401 + `max_results` clamp（#305/#307）。 |
 
 ---

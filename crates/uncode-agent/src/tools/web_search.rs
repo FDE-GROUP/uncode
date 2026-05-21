@@ -11,6 +11,10 @@ const MAX_MAX_RESULTS: usize = 20;
 const TIMEOUT_SECS: u64 = 30;
 /// Cap formatted search output (aligned with bash / web_fetch).
 const MAX_OUTPUT_BYTES: usize = 50 * 1024;
+/// Per-result snippet cap before formatting (reduces huge Tavily payloads).
+const MAX_SNIPPET_BYTES: usize = 2 * 1024;
+/// Tavily `answer` summary cap.
+const MAX_ANSWER_BYTES: usize = 4 * 1024;
 
 pub struct WebSearchTool {
     api_key: String,
@@ -162,7 +166,7 @@ impl ToolExecutor for WebSearchTool {
         if let Some(answer) = tavily.answer.as_deref()
             && !answer.is_empty()
         {
-            output.push_str(answer);
+            output.push_str(&truncate_output(answer, MAX_ANSWER_BYTES));
             output.push_str("\n\n");
         }
 
@@ -174,13 +178,14 @@ impl ToolExecutor for WebSearchTool {
         let _ = write!(output, "Found {results_len} results:\n\n");
 
         for (i, result) in tavily.results.iter().enumerate() {
+            let snippet = truncate_output(result.content.trim(), MAX_SNIPPET_BYTES);
             let _ = write!(
                 output,
                 "{}. {} ({})\n   {}\n\n",
                 i + 1,
                 result.title,
                 result.url,
-                result.content.trim()
+                snippet
             );
         }
 
@@ -273,6 +278,32 @@ mod tests {
         tool.execute(serde_json::json!({ "query": "big", "max_results": 999 }))
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_search_truncates_long_snippet() {
+        let mock_server = wiremock::MockServer::start().await;
+        let long = "z".repeat(MAX_SNIPPET_BYTES + 500);
+        let body = serde_json::json!({
+            "results": [{
+                "title": "Long",
+                "url": "https://example.com/long",
+                "content": long,
+                "score": 0.5
+            }]
+        });
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+            .mount(&mock_server)
+            .await;
+
+        let tool = WebSearchTool::with_search_url("tvly-test".into(), mock_server.uri());
+        let out = tool
+            .execute(serde_json::json!({ "query": "long snippet" }))
+            .await
+            .unwrap();
+        assert!(out.contains("[truncated]"));
+        assert!(!out.contains(&"z".repeat(MAX_SNIPPET_BYTES + 100)));
     }
 
     #[tokio::test]
