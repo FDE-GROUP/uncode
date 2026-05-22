@@ -21,8 +21,6 @@
 //! | 常规内容 (ContentDelta) | 1 | 大量出现时累加 |
 //! | 用户消息 | 6 | 用户意图最重要 |
 
-use std::collections::HashMap;
-
 /// 记忆条目的重要性分数
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ImportanceScore(pub u32);

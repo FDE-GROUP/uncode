@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-uncode is a Rust-native AI Agent Coding system with two user-facing components: a TUI for front-line deployment engineers and a web Platform for software engineers. It supports 7 LLM providers (GLM, DeepSeek, Ollama, OpenAI, Anthropic, Gemini, OpenRouter) with streaming-first architecture.
+uncode is a Rust-native AI Agent Coding system with two user-facing components: a TUI for front-line deployment engineers and a web Platform for software engineers. It supports 11 LLM providers (GLM, DeepSeek, Ollama, OpenAI, Anthropic, Gemini, OpenRouter, Groq, Cerebras, Mistral, xAI) across 4 API protocols with streaming-first architecture.
 
 ## Build & Development Commands
 
@@ -22,7 +22,7 @@ cargo api-doc-open                  # Open uncode-core / uncode-agent / uncode-a
 cargo run -p uncode-cli -- --model deepseek-v3 "prompt"  # Run CLI
 cd apps/platform && bun install && bun dev   # Platform frontend dev server
 cd apps/platform && bun run build           # Platform frontend build
-cd apps/platform && bun run lint            # Platform frontend lint
+cd apps/platform && bun run lint            # Platform frontend lint (Biome)
 ```
 
 CI runs: `cargo fmt --check`, `cargo clippy --all-targets --no-deps`, `cargo build --workspace`, `cargo doc --workspace --no-deps`, `cargo test --workspace -- --test-threads=1` with `RUSTFLAGS="-D warnings"` (rustdoc uses `RUSTDOCFLAGS="-D warnings"` via `.cargo/config.toml`). CI also uses `--test-threads=1` because tools tests require it.
@@ -50,7 +50,13 @@ Cross-layer communication uses event streams. Upper layers subscribe to events, 
 
 ### LLM Provider Architecture
 
-All providers implement `Api` trait (`uncode-ai/src/api.rs`). 4 API protocol implementations in `uncode-ai/src/providers/`: openai_completions (covers OpenAI/DeepSeek/GLM/OpenRouter/Ollama-compatible), anthropic_messages, gemini_generative, ollama_native. Tool calls follow a three-stage protocol: `ToolCallStart` → `ToolCallDelta` → `ToolCallEnd`. Every stream must end with `StreamEvent::Done`.
+All providers implement `Api` trait (`uncode-ai/src/api.rs`). 4 API protocol implementations in `uncode-ai/src/providers/`:
+- `openai-completions` — covers DeepSeek, GLM, OpenAI, OpenRouter, Groq, Cerebras, Mistral, xAI
+- `anthropic-messages` — Anthropic
+- `google-generative-ai` — Gemini
+- `ollama-native` — Ollama
+
+New vendors are added via `ProviderPreset` declarations in `uncode-ai/src/provider_preset.rs` — no new protocol driver needed unless the API protocol is genuinely different. Tool calls follow a three-stage protocol: `ToolCallStart` → `ToolCallDelta` → `ToolCallEnd`. Every stream must end with `StreamEvent::Done`.
 
 ### Tool System
 
@@ -58,7 +64,18 @@ All providers implement `Api` trait (`uncode-ai/src/api.rs`). 4 API protocol imp
 
 ### Agent Loop
 
-`AgentHarness` (`uncode-agent/src/harness.rs`) orchestrates phases, session persistence, and compaction triggers. `AgentLoop` (`uncode-agent/src/loop_engine.rs`) is the core ReAct execution engine with a double-layer loop: outer loop handles follow-up injection; inner loop processes LLM streaming responses and tool calls. Three message queues: Steering (interrupt), Follow-up (within-turn), Next-turn (user input).
+`AgentHarness` (`uncode-agent/src/harness.rs`) orchestrates phases, session persistence, and compaction triggers. `AgentLoop` (`uncode-agent/src/loop_engine.rs`) is the core ReAct execution engine with a double-layer loop: outer loop handles follow-up injection; inner loop processes LLM streaming responses and tool calls. Three message queues: Steering (interrupt), Follow-up (within-turn), Next-turn (user input). `MAX_TURNS=50` hard limit prevents runaway loops.
+
+### Decision & Cognition Layers
+
+Implements the "Cognitive Explicitation & Decision-Driven Design" paradigm (`docs/ai-agent-archi/cognition-decision-driven-design.md`). Two independent top-level modules under `uncode-agent/src/`:
+
+- **`cognition/`** — answers "what can be done next?" Contains context builder, prompt manager, uncertainty classifier (three-category: generative / cognitive incompleteness / execution), and three-tier memory (working memory → episodic memory → memory manager).
+- **`decision/`** — governs "what actually happens." Four-stage pipeline: proposal → semantic firewall (parsing → validation → normalization) → adjudication → execution → audit. Independent from cognition — the core insight is that decision governance, not cognition management, is the system's strongest engineering force.
+
+### Compaction
+
+`uncode-agent/src/compaction.rs` handles automatic context compression when token usage approaches context window limits (default 80% threshold). Triggered by the harness at turn boundaries. Preserves decision-relevant content while condensing verbose tool output.
 
 ### Streaming Protocol
 
@@ -70,7 +87,7 @@ LLM responses stream as `StreamEvent` variants: `TextDelta` → `ToolCallStart` 
 
 ### Event System
 
-`AgentEvent` (`uncode-core/src/event.rs`) has ~12 variants for session/turn/message/tool lifecycle. `EventRouter` dispatches via dual channels: sync_handlers (observation) and hook_handlers (control flow — can block or redirect execution). Upper layers (TUI, Platform) subscribe to events, never call agent directly.
+`AgentEvent` (`uncode-core/src/event.rs`) has 31 variants for session/turn/message/tool/compaction/decision/evaluation lifecycle. `EventRouter` dispatches via dual channels: sync_handlers (observation) and hook_handlers (control flow — can block or redirect execution). Upper layers (TUI, Platform) subscribe to events, never call agent directly.
 
 ## Key Design Decisions
 

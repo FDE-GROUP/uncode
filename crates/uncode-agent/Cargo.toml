@@ -13,6 +13,7 @@ authors.workspace = true
 uncode-core.workspace = true
 uncode-ai.workspace = true
 uncode-shared.workspace = true
+uncode-extensions.workspace = true
 
 tokio.workspace = true
 tokio-util.workspace = true

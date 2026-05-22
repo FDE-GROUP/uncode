@@ -31,8 +31,8 @@ use uncode_agent::session::store::SessionStore;
 use uncode_agent::tools::{ToolLaunchConfig, ToolRegistry, register_coding_tools_and_configure};
 use uncode_agent::workspace_graph::WorkspaceGraphCache;
 use uncode_agent::{
-    AgentLoop, ContextLoader, GitHubClient, PermissionGate, PermissionPolicy, PermissionToolHooks,
-    SystemPromptBuilder,
+    AgentLoop, ChainedToolHooks, ContextLoader, ExtensionLifecycleBridge, ExtensionToolHooks,
+    GitHubClient, PermissionGate, PermissionPolicy, PermissionToolHooks, SystemPromptBuilder,
 };
 use uncode_ai::{
     AnthropicMessagesApi, GeminiGenerativeAiApi, OllamaNativeApi, OpenAiCompletionsApi,
@@ -431,7 +431,14 @@ async fn main() -> anyhow::Result<()> {
         tool_registry.clone(),
         permission_policy.clone(),
     ));
-    agent.set_tool_hooks(Arc::new(PermissionToolHooks::new(permission_gate.clone())));
+    let ext_registry = Arc::new(uncode_extensions::hooks::HookRegistry::new());
+    let ext_hooks = Arc::new(ExtensionToolHooks::new(ext_registry.clone()));
+    let ext_bridge = ExtensionLifecycleBridge::new(ext_registry);
+    agent.set_tool_hooks(Arc::new(ChainedToolHooks::new(vec![
+        Arc::new(PermissionToolHooks::new(permission_gate.clone())),
+        ext_hooks,
+    ])));
+    agent.set_extension_bridge(ext_bridge);
     let shared_agent = Arc::new(tokio::sync::RwLock::new(agent));
 
     tokio::spawn(async move {

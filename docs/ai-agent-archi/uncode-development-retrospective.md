@@ -182,7 +182,7 @@ Harnss Engineering 的**五模块架构**——编排与状态管理、工具治
 - **Phase 4**：文档体系——四层设计文档 + AGENTS.md 范式章节
 - **Phase 5**（持续进行）：FeedbackBridge 上行通道、H0-H3 评估框架、EvolutionEngine 自适应进化
 
-截至 2026-05-22，uncode 已累计 397 个测试，14/15 核心组件实现，与范式文档对齐度约 97%。
+截至 2026-05-22，uncode 已累计 788 个测试，14/15 核心组件实现，与范式文档对齐度约 97%。
 
 > 📄 **阶段文档**：
 > - [认知显化与决策驱动设计](./cognition-decision-driven-design.md) — 范式定义（核心文档）

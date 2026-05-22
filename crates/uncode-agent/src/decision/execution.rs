@@ -21,6 +21,7 @@ pub struct ExecutionOrchestrator {
     tool_registry: Arc<crate::tools::ToolRegistry>,
     tool_hooks: Option<Arc<dyn ToolHooks>>,
     cancel_token: CancellationToken,
+    #[expect(dead_code)]
     event_tx: tokio::sync::broadcast::Sender<AgentEvent>,
 }
 
@@ -188,7 +189,7 @@ impl ExecutionOrchestrator {
 
         let duration = start.elapsed().as_millis() as u64;
         let success = result.is_error;
-        let terminate = result.terminate;
+        let _terminate = result.terminate;
 
         // 4. after hook
         if let Some(ref hooks) = self.tool_hooks {

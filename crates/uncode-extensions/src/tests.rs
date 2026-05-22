@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
 use crate::api::ExtensionApi;
-use crate::hooks::{Extension, HookContext, HookEvent, HookRegistry, LifecycleHook};
+use crate::hooks::{
+    Extension, HookContext, HookEvent, HookModification, HookRegistry, HookResult, LifecycleHook,
+};
 
-// ── Test extension implementation ──
+// ── Test extension implementations ──
 
 struct TestExtension {
     name: String,
@@ -29,10 +31,56 @@ impl Extension for TestExtension {
         &self.name
     }
 
-    async fn on_hook(&self, _ctx: &HookContext) -> anyhow::Result<()> {
+    async fn on_hook(&self, _ctx: &HookContext) -> anyhow::Result<HookResult> {
         self.call_count
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Ok(())
+        Ok(HookResult::Continue)
+    }
+}
+
+struct BlockingExtension {
+    name: String,
+    call_count: std::sync::atomic::AtomicU32,
+}
+
+impl BlockingExtension {
+    fn new(name: &str) -> Self {
+        Self {
+            name: name.to_string(),
+            call_count: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+
+    fn count(&self) -> u32 {
+        self.call_count.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl Extension for BlockingExtension {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn on_hook(&self, _ctx: &HookContext) -> anyhow::Result<HookResult> {
+        self.call_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(HookResult::Block {
+            reason: "blocked by test".into(),
+        })
+    }
+}
+
+struct ModifyingExtension;
+
+#[async_trait::async_trait]
+impl Extension for ModifyingExtension {
+    fn name(&self) -> &str {
+        "modifying-ext"
+    }
+
+    async fn on_hook(&self, _ctx: &HookContext) -> anyhow::Result<HookResult> {
+        Ok(HookResult::Modify(HookModification::default()))
     }
 }
 
@@ -122,21 +170,22 @@ async fn test_fire_hook_calls_extension() {
         event: HookEvent::None,
     };
 
-    registry.fire(LifecycleHook::TurnStart, &ctx).await;
+    let result = registry.fire(LifecycleHook::TurnStart, &ctx).await;
 
     assert_eq!(ext.count(), 1);
+    assert!(matches!(result, HookResult::Continue));
 }
 
 #[tokio::test]
-async fn test_fire_nonexistent_hook_does_not_panic() {
+async fn test_fire_nonexistent_hook_returns_continue() {
     let registry = HookRegistry::new();
     let ctx = HookContext {
         session_id: None,
         event: HookEvent::None,
     };
 
-    // Should not panic; no extensions registered for this hook
-    registry.fire(LifecycleHook::ToolCallBefore, &ctx).await;
+    let result = registry.fire(LifecycleHook::ToolCallBefore, &ctx).await;
+    assert!(matches!(result, HookResult::Continue));
 }
 
 #[tokio::test]
@@ -179,6 +228,65 @@ async fn test_fire_respects_hook_filtering() {
     // Fire the registered hook — extension SHOULD be called
     registry.fire(LifecycleHook::SessionStart, &ctx).await;
     assert_eq!(ext.count(), 1);
+}
+
+#[tokio::test]
+async fn test_fire_returns_block() {
+    let registry = HookRegistry::new();
+    let ext = Arc::new(BlockingExtension::new("blocker"));
+
+    registry.register(ext.clone(), vec![LifecycleHook::ToolCallBefore]);
+
+    let ctx = HookContext {
+        session_id: None,
+        event: HookEvent::None,
+    };
+
+    let result = registry.fire(LifecycleHook::ToolCallBefore, &ctx).await;
+
+    assert_eq!(ext.count(), 1);
+    assert!(matches!(result, HookResult::Block { .. }));
+}
+
+#[tokio::test]
+async fn test_fire_returns_modify() {
+    let registry = HookRegistry::new();
+    let ext = Arc::new(ModifyingExtension);
+
+    registry.register(ext, vec![LifecycleHook::ToolCallAfter]);
+
+    let ctx = HookContext {
+        session_id: None,
+        event: HookEvent::None,
+    };
+
+    let result = registry.fire(LifecycleHook::ToolCallAfter, &ctx).await;
+
+    assert!(matches!(result, HookResult::Modify(_)));
+}
+
+#[tokio::test]
+async fn test_fire_first_block_wins() {
+    let registry = HookRegistry::new();
+    let blocker = Arc::new(BlockingExtension::new("blocker"));
+    let observer = Arc::new(TestExtension::new("observer"));
+
+    // Register blocker first, observer second
+    registry.register(blocker.clone(), vec![LifecycleHook::ToolCallBefore]);
+    registry.register(observer.clone(), vec![LifecycleHook::ToolCallBefore]);
+
+    let ctx = HookContext {
+        session_id: None,
+        event: HookEvent::None,
+    };
+
+    let result = registry.fire(LifecycleHook::ToolCallBefore, &ctx).await;
+
+    // Blocker ran and returned Block
+    assert_eq!(blocker.count(), 1);
+    // Observer was never called (first block wins)
+    assert_eq!(observer.count(), 0);
+    assert!(matches!(result, HookResult::Block { .. }));
 }
 
 // ── ExtensionApi tests ──
@@ -243,4 +351,11 @@ async fn test_load_from_dir_returns_zero() {
         .await
         .unwrap();
     assert_eq!(count, 0);
+}
+
+// ── HookResult tests ──
+
+#[test]
+fn test_hook_result_default_is_continue() {
+    assert!(matches!(HookResult::default(), HookResult::Continue));
 }
