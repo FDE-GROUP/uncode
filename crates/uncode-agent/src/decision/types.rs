@@ -97,3 +97,52 @@ pub struct DecisionRecord {
 pub use uncode_core::agent_step::{
     ActionObservation, AgentStateSnapshot, AgentStep, ExecutedAction, Feedback,
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_decision_verdict_approved() {
+        let v = DecisionVerdict::approved();
+        assert!(v.allowed);
+        assert!(v.reason.is_none());
+    }
+
+    #[test]
+    fn test_decision_verdict_denied() {
+        let v = DecisionVerdict::denied("dangerous");
+        assert!(!v.allowed);
+        assert_eq!(v.reason, Some("dangerous".into()));
+    }
+
+    #[test]
+    fn test_approved_action_fields() {
+        let action = NormalizedAction {
+            tool_name: "read".into(), arguments: serde_json::json!({"path": "a.rs"}),
+            normalized_fields: vec!["path".into()],
+        };
+        let approved = ApprovedAction { action, adjudicated_at: chrono::Utc::now() };
+        assert_eq!(approved.action.tool_name, "read");
+    }
+
+    #[test]
+    fn test_decision_context() {
+        let ctx = DecisionContext { turn_number: 3, max_turns: 50, active_tools: vec!["read".into()] };
+        assert_eq!(ctx.turn_number, 3);
+    }
+
+    #[test]
+    fn test_denied_record_has_no_action() {
+        let record = DecisionRecord {
+            turn_id: "t1".into(),
+            proposal: ActionProposal { tool_name: "rm".into(), raw_arguments: serde_json::json!({}), rationale: None, confidence: None },
+            verdict: DecisionVerdict::denied("dangerous"),
+            approved_action: None,
+            timestamp: chrono::Utc::now(),
+            adjudication_duration_ms: 1,
+        };
+        assert!(!record.verdict.allowed);
+        assert!(record.approved_action.is_none());
+    }
+}

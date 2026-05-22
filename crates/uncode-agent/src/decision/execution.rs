@@ -228,3 +228,54 @@ pub enum ExecutionError {
     #[error("tool execution failed: {0}")]
     ToolFailed(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_orchestrator() -> ExecutionOrchestrator {
+        let registry = Arc::new(crate::tools::ToolRegistry::new());
+        let (tx, _) = tokio::sync::broadcast::channel(256);
+        ExecutionOrchestrator::new(
+            registry, None,
+            tokio_util::sync::CancellationToken::new(), tx,
+        )
+    }
+
+    #[test]
+    fn test_orchestrator_construction() {
+        let orchestrator = make_orchestrator();
+        // 空 registry + 空 hooks → 构造成功即可
+        let _ = orchestrator;
+    }
+
+    #[test]
+    fn test_execution_result_fields() {
+        let result = ExecutionResult {
+            tool_id: "t1".into(), tool_name: "read".into(),
+            success: true, duration_ms: 100, output: Some("content".into()),
+            error: None, terminate: false,
+        };
+        assert!(result.success);
+        assert_eq!(result.tool_name, "read");
+        assert!(result.error.is_none());
+    }
+
+    #[test]
+    fn test_execution_result_failure() {
+        let result = ExecutionResult {
+            tool_id: "t2".into(), tool_name: "write".into(),
+            success: false, duration_ms: 50, output: None,
+            error: Some("permission denied".into()), terminate: false,
+        };
+        assert!(!result.success);
+        assert!(result.error.is_some());
+    }
+
+    #[test]
+    fn test_execution_result_with_output_builder() {
+        let result = ExecutionResult::success("t1", "read", 100)
+            .with_output("file contents");
+        assert_eq!(result.output, Some("file contents".into()));
+    }
+}
