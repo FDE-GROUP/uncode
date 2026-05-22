@@ -6106,6 +6106,7 @@ dependencies = [
  "tracing",
  "uncode-ai",
  "uncode-core",
+ "uncode-extensions",
  "uncode-shared",
  "uuid",
  "walkdir",
@@ -6154,6 +6155,7 @@ dependencies = [
  "uncode-agent",
  "uncode-ai",
  "uncode-core",
+ "uncode-extensions",
  "uncode-rpc",
  "uncode-tui",
 ]

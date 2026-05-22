@@ -4,6 +4,42 @@ use std::sync::Arc;
 use uncode_core::event::AgentEvent;
 use uncode_core::message::Message;
 
+/// Hook result: extensions can allow continuation, modify data, or block.
+///
+/// **Pi:** 对照 `ToolCallEventResult { block, reason }` 和 `ToolResultEventResult { content, details, isError }`。
+#[derive(Debug, Clone)]
+pub enum HookResult {
+    /// Allow the operation to proceed.
+    Continue,
+    /// Allow but modify data in transit.
+    Modify(HookModification),
+    /// Block the operation with a reason.
+    Block { reason: String },
+}
+
+impl Default for HookResult {
+    fn default() -> Self {
+        Self::Continue
+    }
+}
+
+/// Modification payload — what an extension wants to change.
+///
+/// **Pi:** 对照 `ContextEventResult { messages }`、`ToolResultEventResult { content, details, isError }` 等。
+#[derive(Debug, Clone, Default)]
+pub struct HookModification {
+    /// For ToolCallBefore: replace tool arguments.
+    pub args_override: Option<serde_json::Value>,
+    /// For ToolCallAfter: replace result content.
+    pub content_override: Option<Vec<uncode_core::tool::ToolContent>>,
+    /// For ToolCallAfter: replace result details.
+    pub details_override: Option<serde_json::Value>,
+    /// For ToolCallAfter: override error status.
+    pub is_error_override: Option<bool>,
+    /// For ToolCallAfter: override terminate flag.
+    pub terminate_override: Option<bool>,
+}
+
 /// Agent 生命周期钩子（扩展注入点）。
 ///
 /// **Pi:** 概念上接近 Pi Harness 扩展点；uncode 以 WASM 扩展 + 本枚举分发。
@@ -59,7 +95,13 @@ pub enum HookEvent {
 #[async_trait::async_trait]
 pub trait Extension: Send + Sync {
     fn name(&self) -> &str;
-    async fn on_hook(&self, ctx: &HookContext) -> anyhow::Result<()>;
+
+    /// Handle a lifecycle hook. Return `Continue` to pass, `Modify` to alter data,
+    /// or `Block` to stop the operation. Default: observe-only (`Continue`).
+    async fn on_hook(&self, ctx: &HookContext) -> anyhow::Result<HookResult> {
+        let _ = ctx;
+        Ok(HookResult::Continue)
+    }
 }
 
 /// 钩子注册表 — 管理扩展实例与 hook 名称映射。
@@ -89,17 +131,41 @@ impl HookRegistry {
         self.extensions.insert(name, ext);
     }
 
-    pub async fn fire(&self, hook: LifecycleHook, ctx: &HookContext) {
+    /// Fire a lifecycle hook to all registered extensions.
+    ///
+    /// Semantics: first `Block` or `Modify` wins; errors are logged as `Continue`.
+    pub async fn fire(&self, hook: LifecycleHook, ctx: &HookContext) -> HookResult {
         let hook_name = hook.name();
         if let Some(ext_names) = self.hooks.get(hook_name) {
             for ext_name in ext_names.value() {
-                if let Some(ext) = self.extensions.get(ext_name).as_deref()
-                    && let Err(e) = ext.on_hook(ctx).await
-                {
-                    tracing::warn!("extension {} hook {} failed: {e}", ext.name(), hook_name);
+                if let Some(ext) = self.extensions.get(ext_name).as_deref() {
+                    match ext.on_hook(ctx).await {
+                        Ok(HookResult::Continue) => {}
+                        Ok(result @ HookResult::Block { .. }) => {
+                            tracing::warn!(
+                                "extension {} blocked hook {}: {:?}",
+                                ext.name(),
+                                hook_name,
+                                result
+                            );
+                            return result;
+                        }
+                        Ok(result @ HookResult::Modify(_)) => {
+                            tracing::debug!("extension {} modified hook {}", ext.name(), hook_name,);
+                            return result;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "extension {} hook {} failed: {e}",
+                                ext.name(),
+                                hook_name
+                            );
+                        }
+                    }
                 }
             }
         }
+        HookResult::Continue
     }
 
     /// Number of registered extensions (for testing)
