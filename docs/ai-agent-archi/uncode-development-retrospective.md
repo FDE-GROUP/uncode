@@ -28,6 +28,8 @@ Pi 在 README 中明确写了六个"核心不做"：No MCP、No sub-agents、No 
 
 > "uncode 在 Agent 内核哲学与主路径行为上，已具备「Pi 的 Rust 方言」特征；在生态与存储工程化上做了符合团队产品的取舍。"
 
+> 📄 **阶段文档**：[PI_SOURCE_CORRIGENDUM.md](../others/PI_SOURCE_CORRIGENDUM.md) — Pi 源码分析纠正与 uncode 对照
+
 ---
 
 ## 阶段二：DDD 改造的困境与思考——"LLM 负责生成可能性，DDD 负责约束可能性"
@@ -69,6 +71,8 @@ uncode 用 DDD 分层来组织 Rust crate（core → llm → session → tools �
 
 这句话成为后续所有思考的出发点。
 
+> 📄 **阶段文档**：[ddd-ai-agent.md](./ddd-ai-agent.md) — DDD 在 AI Agent 系统中的适应与重生（覆盖阶段二、三）
+
 ---
 
 ## 阶段三：CDD 的"半对"——认知驱动设计的贡献与局限
@@ -104,6 +108,8 @@ Phase 守卫禁止并发运行 → 这是决策排他性。MAX_TURNS=50 硬限 �
 
 > **"认知驱动"这个名字本身就暴露了它的偏向——它把系统的全部复杂性归到了认知侧，没有为"决策"单独设立第一公民地位。**
 
+> 📄 **阶段文档**：[ddd-ai-agent.md](./ddd-ai-agent.md) — 第四部分 CDD 展望（覆盖阶段二、三）
+
 ---
 
 ## 阶段四：综合治理的战术研究——多范式融合与 Harness Engineering
@@ -131,6 +137,12 @@ Harnss Engineering 的**五模块架构**——编排与状态管理、工具治
 在研究过程中，我们面临一个关键的理论定位问题：Harness Engineering 与我们的范式是什么关系？
 
 答案是：**Harness Engineering 是治理层的工程实践子层。** 它不是独立于范式的概念——它从属于认知显化与决策驱动设计的治理层，是它落地的工程方法。认知显化与决策驱动设计是"设计平面"，Harness Engineering 是"施工队"。
+
+> 📄 **阶段文档**：
+> - [7 种架构范式](./DDD%20之外AI%20Agent%20系统治理复杂性的%207%20种架构范式.md) — DDD 之外的治理工具箱
+> - [Harness Engineering 五模块架构](../others/Harness_Engineering_Archi.md) — 编排·工具·记忆·观测·进化
+> - [HARNESS_ENGINEERING.md](../others/HARNESS_ENGINEERING.md) — 行业综述（Prompt→Context→Harness 三层进化）
+> - [HARNESS_ENGINEERING_GLOSSARY.md](../others/HARNESS_ENGINEERING_GLOSSARY.md) — 中英术语索引
 
 ---
 
@@ -171,6 +183,13 @@ Harnss Engineering 的**五模块架构**——编排与状态管理、工具治
 - **Phase 5**（持续进行）：FeedbackBridge 上行通道、H0-H3 评估框架、EvolutionEngine 自适应进化
 
 截至 2026-05-22，uncode 已累计 397 个测试，14/15 核心组件实现，与范式文档对齐度约 97%。
+
+> 📄 **阶段文档**：
+> - [认知显化与决策驱动设计](./cognition-decision-driven-design.md) — 范式定义（核心文档）
+> - [DOP 论文分析](./dop-analysis.md) — 外部验证：Decision-Oriented Programming
+> - [Cognitive Architecture 分析](./cognitive-architecture-analysis.md) — 外部验证：Autodesk 认知架构
+> - [代码组织与命名规范](./paradigm-aligned-code-organization.md) — 范式对应的理想代码结构
+> - [重构路线图](./uncodenow-refactoring-roadmap.md) — 五阶段工程落地计划
 
 ---
 
