@@ -14,6 +14,7 @@
 | ⑥ | [uncode 重构路线图：打造范式最佳实践](./uncodenow-refactoring-roadmap.md) | **工程篇** | ~660行 | **落地计划**：差距总览 + 四阶段重构路线 + 验证标准 |
 | ⑦ | [认知与决策驱动设计：代码组织与命名规范](./paradigm-aligned-code-organization.md) | **规范篇** | ~370行 | **理想结构**：crate 组织、依赖关系、类型/trait/文件命名规范、完整旅程追踪 |
 | ⑧ | [依据范式文档审查当前项目](./uncodenow-paradigm-audit.md) | **审计篇** | ~150行 | **对齐审查**：15 组件逐项验证 + 6 原则 + 7 范式覆盖 + 发现问题 |
+| ⑨ | [DOP 论文分析](./dop-analysis.md) | **研究篇** | ~180行 | **外部验证**：Decision-Oriented Programming 论文 (arXiv 2604.05203) 与范式的对照分析 |
 
 ## 阅读路径
 
