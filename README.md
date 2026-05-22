@@ -12,7 +12,7 @@ Rust 原生 AI Agent Coding 系统。**认知显化与决策驱动设计**范式
 
 uncode 是**认知显化与决策驱动设计**（Cognitive Explicitation & Decision-Driven Design）的参考实现。
 
-> **人机协同创作是一个愿景从模糊认知显化、再到 Agent 工程化实现的过程。决策的本质是模糊认知的显化。Agent Coding 不是 AI 替代，而是人机协同创作。**
+> **人机协同创作是一个愿景从模糊认知显化、再到 Agent 工程化实现的过程。决策的本质是模糊认知的显化。Agent Coding 不是 AI 替代，而是人与大模型的有机联动。**
 
 ```
 模糊认知                  显化                      工程化实现

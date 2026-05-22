@@ -35,15 +35,12 @@ impl WelcomeScreen {
             "  [认知显化与决策驱动开发]新范式的最佳实践  \n",
             "\n",
             "\n",
-            "  人机协同创作是一个愿景从模糊认知显化、\n",
-            "  再到 Agent 工程化实现的过程。\n",
-            "  决策的本质是模糊认知的显化。\n",
-            "  Agent Coding 不是 AI 替代，\n",
-            "  而是人机协同创作。\n",
+            "  我们的哲学主张：人机协同创作是一个愿景从模糊认知显化、再到 Agent 工程化实现的过程。\n",
+            "  决策的本质是模糊认知的显化，Agent Coding 不是 AI 替代，而是人与大模型的有机联动。\n",
             "\n",
             "\n",
-            "  面向 前线部署工程师 (FDE) 开发\n",
-            "  项目发起人：Abel TAN \n",
+            "  面向 前线部署工程师 (FDE) 开发            项目发起人：Abel TAN\n",
+            "   \n",
             "\n",
             "\n",
             "  ───────────────────────────────\n",
@@ -58,7 +55,7 @@ impl WelcomeScreen {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" 认知显化与决策驱动设计 — UnCodeNow ")
+                    .title(" Wellcome to UnCodeNow ")
                     .style(Style::default().fg(Color::Cyan)),
             )
             .alignment(Alignment::Left);
