@@ -61,7 +61,12 @@ impl ExecutionOrchestrator {
         cancel_token: CancellationToken,
         event_tx: tokio::sync::broadcast::Sender<AgentEvent>,
     ) -> Self {
-        Self { tool_registry, tool_hooks, cancel_token, event_tx }
+        Self {
+            tool_registry,
+            tool_hooks,
+            cancel_token,
+            event_tx,
+        }
     }
 
     /// 派发已批准的动作到工具执行管线
@@ -78,7 +83,9 @@ impl ExecutionOrchestrator {
             let id = uuid::Uuid::new_v4().to_string();
             let name = &action.action.tool_name;
 
-            let result = self.execute_single(&id, name, &action.action.arguments).await;
+            let result = self
+                .execute_single(&id, name, &action.action.arguments)
+                .await;
 
             let output_text = result.output.clone().unwrap_or_default();
 
@@ -87,7 +94,11 @@ impl ExecutionOrchestrator {
                 tool_name: name.clone(),
                 success: result.success,
                 duration_ms: result.duration_ms,
-                output: if output_text.is_empty() { None } else { Some(output_text) },
+                output: if output_text.is_empty() {
+                    None
+                } else {
+                    Some(output_text)
+                },
                 error: result.error.clone(),
                 terminate: result.terminate,
             });
@@ -237,8 +248,10 @@ mod tests {
         let registry = Arc::new(crate::tools::ToolRegistry::new());
         let (tx, _) = tokio::sync::broadcast::channel(256);
         ExecutionOrchestrator::new(
-            registry, None,
-            tokio_util::sync::CancellationToken::new(), tx,
+            registry,
+            None,
+            tokio_util::sync::CancellationToken::new(),
+            tx,
         )
     }
 
@@ -252,9 +265,13 @@ mod tests {
     #[test]
     fn test_execution_result_fields() {
         let result = ExecutionResult {
-            tool_id: "t1".into(), tool_name: "read".into(),
-            success: true, duration_ms: 100, output: Some("content".into()),
-            error: None, terminate: false,
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            success: true,
+            duration_ms: 100,
+            output: Some("content".into()),
+            error: None,
+            terminate: false,
         };
         assert!(result.success);
         assert_eq!(result.tool_name, "read");
@@ -264,9 +281,13 @@ mod tests {
     #[test]
     fn test_execution_result_failure() {
         let result = ExecutionResult {
-            tool_id: "t2".into(), tool_name: "write".into(),
-            success: false, duration_ms: 50, output: None,
-            error: Some("permission denied".into()), terminate: false,
+            tool_id: "t2".into(),
+            tool_name: "write".into(),
+            success: false,
+            duration_ms: 50,
+            output: None,
+            error: Some("permission denied".into()),
+            terminate: false,
         };
         assert!(!result.success);
         assert!(result.error.is_some());
@@ -274,8 +295,7 @@ mod tests {
 
     #[test]
     fn test_execution_result_with_output_builder() {
-        let result = ExecutionResult::success("t1", "read", 100)
-            .with_output("file contents");
+        let result = ExecutionResult::success("t1", "read", 100).with_output("file contents");
         assert_eq!(result.output, Some("file contents".into()));
     }
 }

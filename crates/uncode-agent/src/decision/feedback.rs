@@ -16,7 +16,9 @@
 //!   → AgentEvent (可观测性)
 //! ```
 
-use uncode_core::agent_step::{ActionObservation, AgentStep, AgentStateSnapshot, ExecutedAction, Feedback};
+use uncode_core::agent_step::{
+    ActionObservation, AgentStateSnapshot, AgentStep, ExecutedAction, Feedback,
+};
 
 use super::evaluator::{BasicEvaluator, EvaluationContext, Evaluator, TurnEvaluation};
 use super::execution::ExecutionResult;
@@ -78,7 +80,10 @@ impl FeedbackBridge {
                 }
             }
             return Some(Feedback::AutoRevert {
-                reason: result.error.clone().unwrap_or_else(|| "unknown error".into()),
+                reason: result
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "unknown error".into()),
             });
         }
 
@@ -106,11 +111,22 @@ pub struct TurnFeedback {
 
 impl TurnFeedback {
     pub fn new(turn_number: u32) -> Self {
-        Self { turn_number, observations: Vec::new(), agent_steps: Vec::new(), evaluation: None }
+        Self {
+            turn_number,
+            observations: Vec::new(),
+            agent_steps: Vec::new(),
+            evaluation: None,
+        }
     }
 
     /// 添加一个执行结果（含评估）
-    pub fn record(&mut self, result: &ExecutionResult, active_tools: &[String], context_tokens: usize, test_output: Option<&str>) {
+    pub fn record(
+        &mut self,
+        result: &ExecutionResult,
+        active_tools: &[String],
+        context_tokens: usize,
+        test_output: Option<&str>,
+    ) {
         let observation = FeedbackBridge::to_observation(result);
         let feedback = FeedbackBridge::infer_feedback(result);
         let step = FeedbackBridge::to_agent_step(
@@ -136,7 +152,9 @@ impl TurnFeedback {
         };
         let score = evaluator.evaluate(result, &eval_ctx);
         // 累积评估分数
-        let mut scores = self.evaluation.as_ref()
+        let mut scores = self
+            .evaluation
+            .as_ref()
             .map(|e| e.scores.clone())
             .unwrap_or_default();
         scores.push(score);
@@ -182,7 +200,11 @@ mod tests {
             success,
             duration_ms: 100,
             output: Some(output.into()),
-            error: if success { None } else { Some("test failed: assertion error".into()) },
+            error: if success {
+                None
+            } else {
+                Some("test failed: assertion error".into())
+            },
             terminate: false,
         }
     }
@@ -219,9 +241,8 @@ mod tests {
     #[test]
     fn test_agent_step_generation() {
         let result = make_result(true, "read", "content");
-        let step = FeedbackBridge::to_agent_step(
-            "turn-1", 1, &["read".into()], 5000, &result, None,
-        );
+        let step =
+            FeedbackBridge::to_agent_step("turn-1", 1, &["read".into()], 5000, &result, None);
         assert_eq!(step.action.tool_name, "read");
         assert!(step.observation.success);
     }

@@ -28,7 +28,9 @@ pub struct PromptManager {
 
 impl PromptManager {
     pub fn new() -> Self {
-        Self { builder: SystemPromptBuilder::new() }
+        Self {
+            builder: SystemPromptBuilder::new(),
+        }
     }
 
     /// 设置基础系统提示词
@@ -105,9 +107,7 @@ mod tests {
                 execution_mode: uncode_core::tool::ExecutionMode::Sequential,
             },
         ];
-        let prompt = PromptManager::new()
-            .with_tool_guide(&tools)
-            .build();
+        let prompt = PromptManager::new().with_tool_guide(&tools).build();
         assert!(prompt.contains("## 可用工具"));
         assert!(prompt.contains("read"));
         assert!(prompt.contains("write"));

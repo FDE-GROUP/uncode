@@ -20,7 +20,9 @@ pub struct GuardrailConfig {
     pub audit: AuditConfig,
 }
 
-fn default_version() -> u32 { 1 }
+fn default_version() -> u32 {
+    1
+}
 
 impl Default for GuardrailConfig {
     fn default() -> Self {
@@ -46,9 +48,15 @@ pub struct DecisionConfig {
     pub tool_timeout_seconds: u64,
 }
 
-fn default_turn_limit() -> u32 { 50 }
-fn default_max_concurrent_tools() -> u32 { 8 }
-fn default_tool_timeout() -> u64 { 120 }
+fn default_turn_limit() -> u32 {
+    50
+}
+fn default_max_concurrent_tools() -> u32 {
+    8
+}
+fn default_tool_timeout() -> u64 {
+    120
+}
 
 impl Default for DecisionConfig {
     fn default() -> Self {
@@ -98,11 +106,16 @@ pub struct PathSafetyConfig {
     pub allow_list: Vec<String>,
 }
 
-fn default_path_mode() -> PathSafetyMode { PathSafetyMode::CwdOnly }
+fn default_path_mode() -> PathSafetyMode {
+    PathSafetyMode::CwdOnly
+}
 
 impl Default for PathSafetyConfig {
     fn default() -> Self {
-        Self { mode: PathSafetyMode::CwdOnly, allow_list: vec![] }
+        Self {
+            mode: PathSafetyMode::CwdOnly,
+            allow_list: vec![],
+        }
     }
 }
 
@@ -122,11 +135,16 @@ pub enum ToolWhitelistMode {
     All,
 }
 
-fn default_whitelist_mode() -> ToolWhitelistMode { ToolWhitelistMode::Builtin }
+fn default_whitelist_mode() -> ToolWhitelistMode {
+    ToolWhitelistMode::Builtin
+}
 
 impl Default for ToolWhitelistConfig {
     fn default() -> Self {
-        Self { mode: ToolWhitelistMode::Builtin, blocked: vec![] }
+        Self {
+            mode: ToolWhitelistMode::Builtin,
+            blocked: vec![],
+        }
     }
 }
 
@@ -138,12 +156,19 @@ pub struct ResourceLimitConfig {
     pub max_bash_output_lines: u32,
 }
 
-fn default_max_file_mb() -> u32 { 10 }
-fn default_max_bash_lines() -> u32 { 1000 }
+fn default_max_file_mb() -> u32 {
+    10
+}
+fn default_max_bash_lines() -> u32 {
+    1000
+}
 
 impl Default for ResourceLimitConfig {
     fn default() -> Self {
-        Self { max_file_size_mb: 10, max_bash_output_lines: 1000 }
+        Self {
+            max_file_size_mb: 10,
+            max_bash_output_lines: 1000,
+        }
     }
 }
 
@@ -161,16 +186,28 @@ fn default_policies() -> Vec<AdjudicationPolicyConfig> {
             name: "no_destructive_commands".into(),
             enabled: true,
             rules: vec![
-                PolicyRule { pattern: "rm -rf".into(), action: PolicyAction::Block },
-                PolicyRule { pattern: "DROP TABLE".into(), action: PolicyAction::BlockAndWarn },
+                PolicyRule {
+                    pattern: "rm -rf".into(),
+                    action: PolicyAction::Block,
+                },
+                PolicyRule {
+                    pattern: "DROP TABLE".into(),
+                    action: PolicyAction::BlockAndWarn,
+                },
             ],
         },
         AdjudicationPolicyConfig {
             name: "require_approval_for_write".into(),
             enabled: false,
             rules: vec![
-                PolicyRule { pattern: "write".into(), action: PolicyAction::AskUser },
-                PolicyRule { pattern: "edit".into(), action: PolicyAction::AskUser },
+                PolicyRule {
+                    pattern: "write".into(),
+                    action: PolicyAction::AskUser,
+                },
+                PolicyRule {
+                    pattern: "edit".into(),
+                    action: PolicyAction::AskUser,
+                },
             ],
         },
     ]
@@ -178,7 +215,9 @@ fn default_policies() -> Vec<AdjudicationPolicyConfig> {
 
 impl Default for AdjudicationConfig {
     fn default() -> Self {
-        Self { policies: default_policies() }
+        Self {
+            policies: default_policies(),
+        }
     }
 }
 
@@ -191,7 +230,9 @@ pub struct AdjudicationPolicyConfig {
     pub rules: Vec<PolicyRule>,
 }
 
-fn default_enabled() -> bool { true }
+fn default_enabled() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyRule {
@@ -220,7 +261,10 @@ pub struct AuditConfig {
 
 impl Default for AuditConfig {
     fn default() -> Self {
-        Self { event_levels: EventLevelConfig::default(), retention: RetentionConfig::default() }
+        Self {
+            event_levels: EventLevelConfig::default(),
+            retention: RetentionConfig::default(),
+        }
     }
 }
 
@@ -235,14 +279,27 @@ pub struct EventLevelConfig {
 }
 
 fn default_critical_events() -> Vec<String> {
-    vec!["TurnStart".into(), "TurnEnd".into(), "ToolCallEnd".into(),
-         "DecisionMade".into(), "Error".into(), "SessionStart".into(),
-         "SessionEnd".into(), "CompactionComplete".into()]
+    vec![
+        "TurnStart".into(),
+        "TurnEnd".into(),
+        "ToolCallEnd".into(),
+        "DecisionMade".into(),
+        "Error".into(),
+        "SessionStart".into(),
+        "SessionEnd".into(),
+        "CompactionComplete".into(),
+    ]
 }
 
 fn default_standard_events() -> Vec<String> {
-    vec!["ContentDelta".into(), "ToolCallStart".into(), "CompactionStart".into(),
-         "ModelChanged".into(), "MessageQueued".into(), "MessageDelivered".into()]
+    vec![
+        "ContentDelta".into(),
+        "ToolCallStart".into(),
+        "CompactionStart".into(),
+        "ModelChanged".into(),
+        "MessageQueued".into(),
+        "MessageDelivered".into(),
+    ]
 }
 
 fn default_verbose_events() -> Vec<String> {
@@ -269,9 +326,15 @@ pub struct RetentionConfig {
     pub verbose_events: String,
 }
 
-fn default_permanent() -> String { "permanent".into() }
-fn default_90d() -> String { "90_days".into() }
-fn default_7d() -> String { "7_days".into() }
+fn default_permanent() -> String {
+    "permanent".into()
+}
+fn default_90d() -> String {
+    "90_days".into()
+}
+fn default_7d() -> String {
+    "7_days".into()
+}
 
 impl Default for RetentionConfig {
     fn default() -> Self {
@@ -312,6 +375,12 @@ mod tests {
     fn test_event_levels() {
         let config = GuardrailConfig::default();
         assert!(config.audit.event_levels.critical.contains(&"Error".into()));
-        assert!(config.audit.event_levels.verbose.contains(&"ToolCallProgress".into()));
+        assert!(
+            config
+                .audit
+                .event_levels
+                .verbose
+                .contains(&"ToolCallProgress".into())
+        );
     }
 }

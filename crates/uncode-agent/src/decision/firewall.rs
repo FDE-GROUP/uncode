@@ -106,11 +106,19 @@ pub struct ValidationVerdict {
 
 impl ValidationVerdict {
     pub fn approved() -> Self {
-        Self { approved: true, reason: None, violations: vec![] }
+        Self {
+            approved: true,
+            reason: None,
+            violations: vec![],
+        }
     }
 
     pub fn denied(reason: impl Into<String>) -> Self {
-        Self { approved: false, reason: Some(reason.into()), violations: vec![] }
+        Self {
+            approved: false,
+            reason: Some(reason.into()),
+            violations: vec![],
+        }
     }
 }
 
@@ -174,7 +182,11 @@ pub struct PermissionPolicyRule {
 
 impl PermissionPolicyRule {
     pub fn new(policy: Arc<crate::tool_permission::PermissionPolicy>) -> Self {
-        Self { policy, auto_allow_readonly: false, auto_allow_bash_safe: false }
+        Self {
+            policy,
+            auto_allow_readonly: false,
+            auto_allow_bash_safe: false,
+        }
     }
 
     pub fn with_auto_allow(mut self, readonly: bool, bash_safe: bool) -> Self {
@@ -194,12 +206,16 @@ impl ValidationRule for PermissionPolicyRule {
             self.auto_allow_bash_safe,
         );
         if needs {
-            Ok(ValidationVerdict::denied("permission policy requires user confirmation"))
+            Ok(ValidationVerdict::denied(
+                "permission policy requires user confirmation",
+            ))
         } else {
             Ok(ValidationVerdict::approved())
         }
     }
-    fn name(&self) -> &'static str { "permission_policy" }
+    fn name(&self) -> &'static str {
+        "permission_policy"
+    }
 }
 
 // ── PathSafetyRule ──────────────────────────────────────
@@ -223,13 +239,21 @@ impl PathSafetyRule {
 impl ValidationRule for PathSafetyRule {
     fn validate(&self, action: &ParsedAction) -> Result<ValidationVerdict, ValidationError> {
         // 只检查有 file/path 参数的工具
-        let path_key = if action.arguments.get("path").is_some() { "path" }
-            else if action.arguments.get("file").is_some() { "file" }
-            else { return Ok(ValidationVerdict::approved()) };
+        let path_key = if action.arguments.get("path").is_some() {
+            "path"
+        } else if action.arguments.get("file").is_some() {
+            "file"
+        } else {
+            return Ok(ValidationVerdict::approved());
+        };
 
         if let Some(path_str) = action.arguments.get(path_key).and_then(|v| v.as_str()) {
             let p = Path::new(path_str);
-            let full = if p.is_absolute() { p.to_path_buf() } else { self.cwd.join(p) };
+            let full = if p.is_absolute() {
+                p.to_path_buf()
+            } else {
+                self.cwd.join(p)
+            };
 
             // 规范化路径
             let resolved = match full.canonicalize() {
@@ -238,19 +262,19 @@ impl ValidationRule for PathSafetyRule {
                     // 路径可能不存在（新建文件），检查父目录
                     if let Some(parent) = full.parent() {
                         match parent.canonicalize() {
-                            Ok(parent_resolved) => parent_resolved.join(
-                                full.file_name().unwrap_or_default()
-                            ),
+                            Ok(parent_resolved) => {
+                                parent_resolved.join(full.file_name().unwrap_or_default())
+                            }
                             Err(_) => {
-                                return Ok(ValidationVerdict::denied(
-                                    format!("cannot resolve path: {path_str}")
-                                ))
+                                return Ok(ValidationVerdict::denied(format!(
+                                    "cannot resolve path: {path_str}"
+                                )));
                             }
                         }
                     } else {
-                        return Ok(ValidationVerdict::denied(
-                            format!("cannot resolve path: {path_str}")
-                        ));
+                        return Ok(ValidationVerdict::denied(format!(
+                            "cannot resolve path: {path_str}"
+                        )));
                     }
                 }
             };
@@ -267,7 +291,9 @@ impl ValidationRule for PathSafetyRule {
 
         Ok(ValidationVerdict::approved())
     }
-    fn name(&self) -> &'static str { "path_safety" }
+    fn name(&self) -> &'static str {
+        "path_safety"
+    }
 }
 
 // ── SchemaCoercionRule ──────────────────────────────────
@@ -285,7 +311,10 @@ impl SchemaCoercionRule {
 
 impl ValidationRule for SchemaCoercionRule {
     fn validate(&self, action: &ParsedAction) -> Result<ValidationVerdict, ValidationError> {
-        match self.registry.prepare_and_validate(&action.tool_name, action.arguments.clone()) {
+        match self
+            .registry
+            .prepare_and_validate(&action.tool_name, action.arguments.clone())
+        {
             Ok(_coerced) => {
                 // prepare_and_validate 已做类型 coercion + schema 校验
                 // 校验通过，不需要阻断
@@ -298,7 +327,9 @@ impl ValidationRule for SchemaCoercionRule {
             }),
         }
     }
-    fn name(&self) -> &'static str { "schema_coercion" }
+    fn name(&self) -> &'static str {
+        "schema_coercion"
+    }
 }
 
 // ── Composite builder ───────────────────────────────────
@@ -371,7 +402,10 @@ mod tests {
             arguments: serde_json::json!({"command": "ls -la"}),
         };
         let verdict = rule.validate(&action).unwrap();
-        assert!(verdict.approved, "ls should be allowed with auto_allow_bash_safe");
+        assert!(
+            verdict.approved,
+            "ls should be allowed with auto_allow_bash_safe"
+        );
     }
 
     // ── PathSafetyRule ──
@@ -410,7 +444,10 @@ mod tests {
 
         let raw = make_proposal("bash", serde_json::json!({"command": "rm -rf /"}));
         let result = firewall.process(&raw);
-        assert!(result.is_err(), "dangerous bash should be blocked by firewall pipeline");
+        assert!(
+            result.is_err(),
+            "dangerous bash should be blocked by firewall pipeline"
+        );
     }
 
     #[test]
@@ -439,8 +476,10 @@ mod tests {
         let raw = make_proposal("bash", serde_json::json!({"command": "rm -rf /"}));
         let err = firewall.process(&raw).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("blocked") || msg.contains("tool not found"),
-            "error should indicate blocking, got: {msg}");
+        assert!(
+            msg.contains("blocked") || msg.contains("tool not found"),
+            "error should indicate blocking, got: {msg}"
+        );
     }
 
     #[test]
@@ -451,7 +490,10 @@ mod tests {
             arguments: serde_json::json!({"path": "/etc/passwd"}),
         };
         let verdict = rule.validate(&action).unwrap();
-        assert!(!verdict.approved, "absolute path outside CWD should be blocked");
+        assert!(
+            !verdict.approved,
+            "absolute path outside CWD should be blocked"
+        );
     }
 
     #[test]
@@ -472,7 +514,8 @@ mod tests {
     fn test_normalizer_passthrough() {
         let normalizer = DefaultNormalizer;
         let validated = ValidatedAction {
-            tool_name: "read".into(), arguments: serde_json::json!({"path": "src/main.rs"}),
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"path": "src/main.rs"}),
             applied_rules: vec!["path_safety".into()],
         };
         let normalized = normalizer.normalize(&validated).unwrap();

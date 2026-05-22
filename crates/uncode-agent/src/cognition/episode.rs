@@ -64,7 +64,10 @@ pub struct EpisodeMemory {
 
 impl EpisodeMemory {
     pub fn new(capacity: usize) -> Self {
-        Self { entries: Vec::with_capacity(capacity), capacity }
+        Self {
+            entries: Vec::with_capacity(capacity),
+            capacity,
+        }
     }
 
     /// 记录一个事件，自动评分
@@ -110,7 +113,10 @@ impl EpisodeMemory {
 
     /// 按阈值查询保留的记忆
     pub fn query_by_importance(&self, threshold: ImportanceScore) -> Vec<&EpisodeEntry> {
-        self.entries.iter().filter(|e| e.importance.is_at_least(threshold)).collect()
+        self.entries
+            .iter()
+            .filter(|e| e.importance.is_at_least(threshold))
+            .collect()
     }
 
     /// 查询最近 N 条记忆
@@ -121,7 +127,10 @@ impl EpisodeMemory {
 
     /// 查询指定 turn 的记忆
     pub fn query_by_turn(&self, turn_number: u64) -> Vec<&EpisodeEntry> {
-        self.entries.iter().filter(|e| e.turn_number == turn_number).collect()
+        self.entries
+            .iter()
+            .filter(|e| e.turn_number == turn_number)
+            .collect()
     }
 
     /// 生成压缩候选：返回低于阈值的条目索引（按重要性从低到高）
@@ -147,7 +156,10 @@ impl EpisodeMemory {
         for entry in &retained {
             let _ = std::fmt::Write::write_fmt(
                 &mut summary,
-                format_args!("- [t{}] {}: {}\n", entry.turn_number, entry.event_type, entry.summary),
+                format_args!(
+                    "- [t{}] {}: {}\n",
+                    entry.turn_number, entry.event_type, entry.summary
+                ),
             );
         }
         Some(summary)
@@ -178,7 +190,10 @@ impl EpisodeMemory {
         };
 
         // 加权：包含错误关键词 +2
-        let weighted = if summary.contains("error") || summary.contains("fail") || summary.contains("denied") {
+        let weighted = if summary.contains("error")
+            || summary.contains("fail")
+            || summary.contains("denied")
+        {
             ImportanceScore((base.0 + 2).min(10))
         } else if summary.contains("test") {
             ImportanceScore((base.0 + 1).min(10))
@@ -246,12 +261,19 @@ mod tests {
         }
         // 驱逐将条目数限制在 capacity * 2 = 10
         // 所有条目都低于 MEDIUM，所以会被逐个逐出直到 ≤ 10
-        assert!(mem.len() <= 10, "expected <= 10 after eviction, got {}", mem.len());
+        assert!(
+            mem.len() <= 10,
+            "expected <= 10 after eviction, got {}",
+            mem.len()
+        );
         // 再插入一个 CRITICAL 条目——它应被保留
         mem.record("decision_made", "important decision", 1);
         // CRITICAL 条目不应被驱逐
         let critical = mem.query_by_importance(ImportanceScore::CRITICAL);
-        assert!(!critical.is_empty(), "critical entry should survive eviction");
+        assert!(
+            !critical.is_empty(),
+            "critical entry should survive eviction"
+        );
     }
 
     #[test]
@@ -272,7 +294,11 @@ mod tests {
         let mut mem = EpisodeMemory::new(100);
         // tool_result_success 基础分是 MEDIUM(4)
         // 但包含 "error" → +2 = 6
-        mem.record("tool_result_success", "command failed with error: ENOENT", 1);
+        mem.record(
+            "tool_result_success",
+            "command failed with error: ENOENT",
+            1,
+        );
         let high = mem.query_by_importance(ImportanceScore(6));
         assert_eq!(high.len(), 1);
     }

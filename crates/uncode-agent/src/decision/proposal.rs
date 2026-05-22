@@ -90,7 +90,9 @@ impl ProposalAccumulator {
 
     fn extract_rationale(&self, name: &str, args: &serde_json::Value) -> Option<String> {
         if name == "bash" {
-            args.get("description").and_then(|v| v.as_str()).map(|s| s.to_string())
+            args.get("description")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
         } else {
             None
         }
@@ -101,10 +103,8 @@ impl ProposalAccumulator {
 pub async fn process_proposals(
     proposals: Vec<ActionProposal>,
     firewall: &SemanticFirewall,
-) -> Result<
-    Vec<crate::decision::types::NormalizedAction>,
-    crate::decision::firewall::FirewallError,
-> {
+) -> Result<Vec<crate::decision::types::NormalizedAction>, crate::decision::firewall::FirewallError>
+{
     let mut results = Vec::with_capacity(proposals.len());
     for proposal in &proposals {
         let normalized = firewall.process(proposal)?;
@@ -134,10 +134,20 @@ mod tests {
     fn test_accumulator_single_tool_call() {
         let mut acc = ProposalAccumulator::new();
 
-        acc.feed(&StreamEvent::ToolCallStart { id: "1".into(), name: "read".into() });
-        acc.feed(&StreamEvent::ToolCallDelta { id: "1".into(), arguments: r#"{"path":"src/main.rs"}"#.into() });
+        acc.feed(&StreamEvent::ToolCallStart {
+            id: "1".into(),
+            name: "read".into(),
+        });
+        acc.feed(&StreamEvent::ToolCallDelta {
+            id: "1".into(),
+            arguments: r#"{"path":"src/main.rs"}"#.into(),
+        });
 
-        let proposal = acc.feed(&make_end("1", "read", serde_json::json!({"path": "src/main.rs"})));
+        let proposal = acc.feed(&make_end(
+            "1",
+            "read",
+            serde_json::json!({"path": "src/main.rs"}),
+        ));
         assert!(proposal.is_some());
         let p = proposal.unwrap();
         assert_eq!(p.tool_name, "read");
@@ -148,12 +158,24 @@ mod tests {
     fn test_accumulator_multiple_tool_calls() {
         let mut acc = ProposalAccumulator::new();
 
-        acc.feed(&StreamEvent::ToolCallStart { id: "1".into(), name: "read".into() });
-        acc.feed(&StreamEvent::ToolCallDelta { id: "1".into(), arguments: r#"{"path":"a.rs"}"#.into() });
+        acc.feed(&StreamEvent::ToolCallStart {
+            id: "1".into(),
+            name: "read".into(),
+        });
+        acc.feed(&StreamEvent::ToolCallDelta {
+            id: "1".into(),
+            arguments: r#"{"path":"a.rs"}"#.into(),
+        });
         acc.feed(&make_end("1", "read", serde_json::json!({"path": "a.rs"})));
 
-        acc.feed(&StreamEvent::ToolCallStart { id: "2".into(), name: "write".into() });
-        acc.feed(&StreamEvent::ToolCallDelta { id: "2".into(), arguments: r#"{"path":"b.rs"}"#.into() });
+        acc.feed(&StreamEvent::ToolCallStart {
+            id: "2".into(),
+            name: "write".into(),
+        });
+        acc.feed(&StreamEvent::ToolCallDelta {
+            id: "2".into(),
+            arguments: r#"{"path":"b.rs"}"#.into(),
+        });
         acc.feed(&make_end("2", "write", serde_json::json!({"path": "b.rs"})));
 
         assert_eq!(acc.completed().len(), 2);
@@ -163,7 +185,10 @@ mod tests {
     fn test_accumulator_reset() {
         let mut acc = ProposalAccumulator::new();
 
-        acc.feed(&StreamEvent::ToolCallStart { id: "1".into(), name: "read".into() });
+        acc.feed(&StreamEvent::ToolCallStart {
+            id: "1".into(),
+            name: "read".into(),
+        });
         acc.feed(&make_end("1", "read", serde_json::json!({"path": "a.rs"})));
 
         assert_eq!(acc.completed().len(), 1);

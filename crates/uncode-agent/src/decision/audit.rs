@@ -8,7 +8,9 @@
 //!
 //! 参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3 决策层
 
-use super::types::{ActionObservation, AgentStateSnapshot, AgentStep, DecisionRecord, ExecutedAction, Feedback};
+use super::types::{
+    ActionObservation, AgentStateSnapshot, AgentStep, DecisionRecord, ExecutedAction, Feedback,
+};
 
 /// 审计器 — 决策轨迹的管理者
 pub struct Auditor {
@@ -21,10 +23,7 @@ impl Auditor {
     }
 
     /// 记录一次裁决 + 执行结果
-    pub fn record(
-        &mut self,
-        record: DecisionRecord,
-    ) {
+    pub fn record(&mut self, record: DecisionRecord) {
         self.trail.push(record);
     }
 
@@ -43,7 +42,9 @@ impl Auditor {
                 turn_id: turn_id.into(),
                 state_before,
                 action: ExecutedAction {
-                    tool_name: action.map(|a| a.action.tool_name.clone()).unwrap_or_default(),
+                    tool_name: action
+                        .map(|a| a.action.tool_name.clone())
+                        .unwrap_or_default(),
                     arguments_summary: String::new(),
                     duration_ms: 0,
                 },
@@ -66,15 +67,15 @@ impl Auditor {
 
 #[cfg(test)]
 mod tests {
+    use super::super::types::{ActionProposal, ApprovedAction, DecisionVerdict, NormalizedAction};
     use super::*;
-    use super::super::types::{
-        ActionProposal, ApprovedAction, DecisionVerdict, NormalizedAction,
-    };
 
     fn make_record(approved: bool, tool: &str) -> DecisionRecord {
         let proposal = ActionProposal {
-            tool_name: tool.into(), raw_arguments: serde_json::json!({}),
-            rationale: None, confidence: None,
+            tool_name: tool.into(),
+            raw_arguments: serde_json::json!({}),
+            rationale: None,
+            confidence: None,
         };
         let verdict = if approved {
             DecisionVerdict::approved()
@@ -84,7 +85,8 @@ mod tests {
         let approved_action = if approved {
             Some(ApprovedAction {
                 action: NormalizedAction {
-                    tool_name: tool.into(), arguments: serde_json::json!({}),
+                    tool_name: tool.into(),
+                    arguments: serde_json::json!({}),
                     normalized_fields: vec![],
                 },
                 adjudicated_at: chrono::Utc::now(),
@@ -93,17 +95,32 @@ mod tests {
             None
         };
         DecisionRecord {
-            turn_id: "turn-1".into(), proposal, verdict, approved_action,
-            timestamp: chrono::Utc::now(), adjudication_duration_ms: 5,
+            turn_id: "turn-1".into(),
+            proposal,
+            verdict,
+            approved_action,
+            timestamp: chrono::Utc::now(),
+            adjudication_duration_ms: 5,
         }
     }
 
     fn make_snapshot() -> AgentStateSnapshot {
-        AgentStateSnapshot { phase: "turn".into(), turn_number: 1, active_tools: vec![], context_size_tokens: 1000 }
+        AgentStateSnapshot {
+            phase: "turn".into(),
+            turn_number: 1,
+            active_tools: vec![],
+            context_size_tokens: 1000,
+        }
     }
 
     fn make_observation(success: bool) -> ActionObservation {
-        ActionObservation { success, output_summary: "test".into(), files_changed: vec![], duration_ms: 10, terminate: false }
+        ActionObservation {
+            success,
+            output_summary: "test".into(),
+            files_changed: vec![],
+            duration_ms: 10,
+            terminate: false,
+        }
     }
 
     #[test]
@@ -124,9 +141,7 @@ mod tests {
     fn test_generate_step_from_approved_action() {
         let mut auditor = Auditor::new();
         auditor.record(make_record(true, "read"));
-        let step = auditor.generate_step(
-            "turn-1", make_snapshot(), make_observation(true), None,
-        );
+        let step = auditor.generate_step("turn-1", make_snapshot(), make_observation(true), None);
         assert!(step.is_some());
         let s = step.unwrap();
         assert_eq!(s.action.tool_name, "read");
@@ -138,8 +153,12 @@ mod tests {
         let mut auditor = Auditor::new();
         auditor.record(make_record(false, "rm"));
         let step = auditor.generate_step(
-            "turn-1", make_snapshot(), make_observation(false),
-            Some(Feedback::AutoRevert { reason: "blocked by policy".into() }),
+            "turn-1",
+            make_snapshot(),
+            make_observation(false),
+            Some(Feedback::AutoRevert {
+                reason: "blocked by policy".into(),
+            }),
         );
         assert!(step.is_some());
         let s = step.unwrap();

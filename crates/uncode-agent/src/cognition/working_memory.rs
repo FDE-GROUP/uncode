@@ -44,7 +44,10 @@ pub struct WorkingMemory {
 
 impl WorkingMemory {
     pub fn new(turn_number: u64) -> Self {
-        Self { entries: Vec::with_capacity(32), turn_number }
+        Self {
+            entries: Vec::with_capacity(32),
+            turn_number,
+        }
     }
 
     /// 记录一次观察
@@ -159,7 +162,10 @@ impl ScratchEntry {
             Self::Observation { content, .. } => format!("[观察] {content}"),
             Self::Decision { content, outcome } => format!("[决策] {content} → {outcome}"),
             Self::PendingTask { description } => format!("[待办] {description}"),
-            Self::Hypothesis { content, confidence } => {
+            Self::Hypothesis {
+                content,
+                confidence,
+            } => {
                 format!("[假设📈{:.0}%] {content}", confidence * 100.0)
             }
             Self::Note(text) => format!("[备注] {text}"),

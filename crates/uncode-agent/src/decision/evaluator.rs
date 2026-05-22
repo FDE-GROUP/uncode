@@ -68,7 +68,13 @@ impl EvaluationScore {
             failed.push(format!("execution failed: {}", error.unwrap_or("unknown")));
             Some("review error and retry".into())
         };
-        Self { level: AssessmentLevel::Basic, quality_score: quality, passed, failed, recommendation }
+        Self {
+            level: AssessmentLevel::Basic,
+            quality_score: quality,
+            passed,
+            failed,
+            recommendation,
+        }
     }
 
     pub fn h2(success: bool, test_output: &str) -> Self {
@@ -90,7 +96,11 @@ impl EvaluationScore {
             quality_score: quality,
             passed,
             failed,
-            recommendation: if !tests_passed { Some("fix failing tests".into()) } else { None },
+            recommendation: if !tests_passed {
+                Some("fix failing tests".into())
+            } else {
+                None
+            },
         }
     }
 }
@@ -127,7 +137,9 @@ impl Evaluator for BasicEvaluator {
             result.error.as_deref(),
         )
     }
-    fn name(&self) -> &'static str { "basic" }
+    fn name(&self) -> &'static str {
+        "basic"
+    }
 }
 
 /// 验证级评估器 — H2 级别
@@ -148,7 +160,9 @@ impl Evaluator for VerifiedEvaluator {
             result.error.as_deref(),
         )
     }
-    fn name(&self) -> &'static str { "verified" }
+    fn name(&self) -> &'static str {
+        "verified"
+    }
 }
 
 /// 评估聚合器 — 对 turn 内的多个评估结果汇总
@@ -174,7 +188,12 @@ impl TurnEvaluation {
             scores.iter().map(|s| s.quality_score).sum::<f32>() / scores.len() as f32
         };
 
-        Self { turn_number, scores, overall_level, overall_quality }
+        Self {
+            turn_number,
+            scores,
+            overall_level,
+            overall_quality,
+        }
     }
 
     /// 生成评估摘要
@@ -211,7 +230,11 @@ mod tests {
             success,
             duration_ms: 50,
             output: Some(output.into()),
-            error: if success { None } else { Some("command failed".into()) },
+            error: if success {
+                None
+            } else {
+                Some("command failed".into())
+            },
             terminate: false,
         }
     }
@@ -257,7 +280,12 @@ mod tests {
     fn test_basic_evaluator() {
         let eval = BasicEvaluator;
         let result = make_result(true, "ok");
-        let ctx = EvaluationContext { turn_number: 1, tool_name: "bash".into(), test_output: None, lint_output: None };
+        let ctx = EvaluationContext {
+            turn_number: 1,
+            tool_name: "bash".into(),
+            test_output: None,
+            lint_output: None,
+        };
         let score = eval.evaluate(&result, &ctx);
         assert_eq!(score.level, AssessmentLevel::Basic);
     }
@@ -267,7 +295,8 @@ mod tests {
         let eval = VerifiedEvaluator;
         let result = make_result(true, "tests: test result: ok. 5 passed");
         let ctx = EvaluationContext {
-            turn_number: 1, tool_name: "bash".into(),
+            turn_number: 1,
+            tool_name: "bash".into(),
             test_output: Some("test result: ok. 5 passed".into()),
             lint_output: None,
         };
@@ -285,7 +314,10 @@ mod tests {
         assert!(turn_eval.overall_quality > 0.7);
         let summary = turn_eval.summary();
         // overall_level = min(H1, H2) = H1 (weakest link)
-        assert!(summary.contains("H1"), "expected H1 (weakest link), got: {summary}");
+        assert!(
+            summary.contains("H1"),
+            "expected H1 (weakest link), got: {summary}"
+        );
     }
 
     #[test]

@@ -662,8 +662,9 @@ impl AgentEvent {
             | Self::AgentInterrupted { .. } => EventDetailLevel::Critical,
 
             // Verbose: 高频细粒度事件
-            Self::ToolCallProgress { .. }
-            | Self::ToolCallAwaitingApproval { .. } => EventDetailLevel::Verbose,
+            Self::ToolCallProgress { .. } | Self::ToolCallAwaitingApproval { .. } => {
+                EventDetailLevel::Verbose
+            }
 
             // Standard: 其余所有
             _ => EventDetailLevel::Standard,

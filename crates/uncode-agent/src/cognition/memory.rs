@@ -34,9 +34,16 @@ pub enum CompactionDecision {
     /// 不需要压缩
     Noop,
     /// 应该触发压缩
-    ShouldCompact { current_tokens: u64, threshold: u64, reason: String },
+    ShouldCompact {
+        current_tokens: u64,
+        threshold: u64,
+        reason: String,
+    },
     /// 强制压缩（上下文溢出紧急恢复）
-    ForceCompact { current_tokens: u64, max_tokens: u64 },
+    ForceCompact {
+        current_tokens: u64,
+        max_tokens: u64,
+    },
 }
 
 /// 记忆压缩管理器

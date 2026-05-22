@@ -153,11 +153,11 @@ impl AgentHarness {
         cancel_token: tokio_util::sync::CancellationToken,
     ) -> crate::decision::adjudication::Adjudicator {
         use crate::decision::adjudication::{
-            build_default_adjudicator, CancellationPolicy, ConcurrencyPolicy,
-            PhaseGuardPolicy, TurnLimitPolicy,
+            CancellationPolicy, ConcurrencyPolicy, PhaseGuardPolicy, TurnLimitPolicy,
+            build_default_adjudicator,
         };
-        use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
 
         let phase_policy = PhaseGuardPolicy::new(self.phase.clone());
 

@@ -7,4 +7,4 @@
 //! 本模块提供到认知层命名空间的路径别名。
 //! 参见 `docs/ai-agent-archi/uncodenow-refactoring-roadmap.md` §2.1
 
-pub use crate::context_builder::{build_context, BuiltContext};
+pub use crate::context_builder::{BuiltContext, build_context};
