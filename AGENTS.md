@@ -61,6 +61,21 @@ uncode/
   - `ollama-native` — Ollama 原生 API
 - **Platform 前端**：TypeScript（React 19 + TanStack 全家桶）
 
+## 架构范式：认知显化与决策驱动设计
+
+uncode 采用**认知显化与决策驱动设计**作为架构方法论。参见 [`docs/ai-agent-archi/cognition-decision-driven-design.md`](docs/ai-agent-archi/cognition-decision-driven-design.md)。
+
+**四层架构**：
+
+| 层 | Crate/模块 | 职责 |
+|:---|:---|:---|
+| **认知层** | `crates/uncode-agent/src/cognition/` + `crates/uncode-ai/` | LLM 生成可能性：上下文构建、提示词管理、不确定性管理 |
+| **语义防火墙** | `crates/uncode-agent/src/decision/firewall.rs` | Parsing → Validation → Normalization 三层管线 |
+| **决策层** | `crates/uncode-agent/src/decision/` | 系统约束可能性：提案接收、裁决、执行、审计 |
+| **治理层** | `crates/uncode-shared/src/guardrails.rs` + `uncode-core` 事件系统 + Harness Engineering（编排·工具·记忆·观测·进化） | 事件驱动、事件溯源、约束设计、状态机；Harness Engineering 为工程实践子层 |
+
+**核心公式**："LLM 负责认知与生成，系统架构负责决策与治理。"
+
 ## 构建与验证
 
 ```bash

@@ -25,17 +25,23 @@ impl WelcomeScreen {
             return;
         }
 
-        let popup_area = centered_rect(55, 45, area);
+        let popup_area = centered_rect(65, 55, area);
         f.render_widget(Clear, popup_area);
 
         let text = concat!(
             "\n",
-            "  ╔══════════════════════════════════╗\n",
-            "  ║        UnCode                    ║\n",
-            "  ║   Agent Coding 系统              ║\n",
-            "  ╚══════════════════════════════════╝\n",
             "\n",
-            "  面向 前线部署工程师 (FDE) 开发\n",
+            "      UnCode Agent Coding System         \n",
+            "  [认知显化与决策驱动开发]新范式的最佳实践  \n",
+            "\n",
+            "\n",
+            "  我们的哲学主张：人机协同创作是一个愿景从模糊认知显化、再到 Agent 工程化实现的过程。\n",
+            "  决策的本质是模糊认知的显化，Agent Coding 不是 AI 替代，而是人与大模型的有机联动。\n",
+            "\n",
+            "\n",
+            "  面向 前线部署工程师 (FDE) 开发            项目发起人：Abel TAN\n",
+            "   \n",
+            "\n",
             "\n",
             "  ───────────────────────────────\n",
             "  斜杠命令 / 查看所有可用命令\n",
@@ -49,7 +55,7 @@ impl WelcomeScreen {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" 欢迎使用 UnCode ")
+                    .title(" Wellcome to UnCodeNow ")
                     .style(Style::default().fg(Color::Cyan)),
             )
             .alignment(Alignment::Left);

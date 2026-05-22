@@ -1,0 +1,226 @@
+# uncode 开发心路历程：从 Pi 复刻到认知显化与决策驱动设计
+
+> 本文回顾 uncode 项目从 2025 年至今的思想演进，记录了一条从"复刻一个更好的 Pi"到"提出一种新的 AI Agent 架构范式"的完整心路历程。
+
+---
+
+## 阶段一：从 Pi 到 Rust 复刻——"Pi 的 Rust 方言"
+
+### 起点
+
+uncode 的第一条 commit（`386ba1e`）就明确了参照系：`earendil-works/pi`，一个获得 52.5k Stars 的 TypeScript AI Coding Agent。当时的目标很简单——用 Rust 重写一个更好、更快、更安全的 Pi。初始工作流完全对应 Pi 的功能分解：core 类型系统、JSONL 存储、LLM 驱动、基础工具集、Agent 循环引擎、GitHub 集成、CI、TUI。
+
+### 发现：架构哲学对齐，不必字节级兼容
+
+研究 Pi 的过程中，一个重要的判断逐渐成形：**对齐 Pi 的架构哲学，而非复制 Pi 的代码结构。** 这个判断在三个方面产生了后果：
+
+**1. Cargo workspace 的同构拆分**。Pi 用三个 npm 包（`pi-ai`、`pi-agent-core`、`pi-coding-agent`）分离了不同性质的子系统。uncode 用 Cargo workspace 做了同构拆分，依赖方向自上而下，与 Pi 的"库 → Agent → UI"一致。
+
+**2. API-first 的 LLM 层**。Pi 以供应商为粒度维护大量端点代码。uncode 做了一次有意的架构强化：以 API 协议为组织单位（OpenAI Completions、Anthropic Messages、Gemini、Ollama Native），新供应商通过 Model 声明接入，不新增驱动实现。这是"把统一从包边界挪到协议边界"。
+
+**3. SurrealDB 替代 JSONL**。Pi 用 JSONL 行文件做主存储，哲学是"单目录纯文本即真相"。uncode 的逻辑模型与 Pi 同构（树状 SessionEntry + 分支 + 压缩），但物理存储选了嵌入式 SurrealDB——这是"工程化取舍"：牺牲了极简运维故事，换来了查询、索引和多客户端并发访问能力。
+
+### 六条哲学条款全部遵循
+
+Pi 在 README 中明确写了六个"核心不做"：No MCP、No sub-agents、No permission popups、No plan mode、No built-in to-dos、No background bash。uncode 在这些条款上全部遵循，确立了"最小默认 + 扩展位"的路线。
+
+### 阶段的自我认知
+
+> "uncode 在 Agent 内核哲学与主路径行为上，已具备「Pi 的 Rust 方言」特征；在生态与存储工程化上做了符合团队产品的取舍。"
+
+> 📄 **阶段文档**：[PI_SOURCE_CORRIGENDUM.md](../others/PI_SOURCE_CORRIGENDUM.md) — Pi 源码分析纠正与 uncode 对照
+
+---
+
+## 阶段二：DDD 改造的困境与思考——"LLM 负责生成可能性，DDD 负责约束可能性"
+
+### 为什么 DDD 突然不够用了
+
+uncode 用 DDD 分层来组织 Rust crate（core → llm → session → tools → agent → tui → cli），这看起来自然且优雅。但随着 Agent 循环的深入开发，我们开始感受到一种**持续不断的摩擦**——DDD 的假设和 AI Agent 的现实之间存在根本性的错位。
+
+这个困境最终被形式化为**四重冲突**：
+
+| 冲突 | DDD 假设 | AI Agent 现实 |
+|:---|:---|:---|
+| 确定性 vs 概率性 | 相同输入产生相同输出 | 相同 prompt 可能产生不同的 plan |
+| 短事务 vs 长流程 | 毫秒级聚合事务 | 数分钟的认知过程 |
+| 显式规则 vs 涌现行为 | 领域逻辑显式编码 | 行为从提示词和模型中涌现 |
+| 无状态服务 vs 深度状态依赖 | 服务通过参数获取状态 | 上下文窗口是硬限 |
+
+最深刻的一个体会是：**DDD 默认的世界是确定性的，而 Agent 的世界是概率性的。** 这不是工程技巧可以弥补的差距——这是两种完全不同的计算范式。
+
+### 但答案不是"抛弃 DDD"
+
+在四重冲突的分析中，一个重要的判断浮现出来：**战略 DDD 仍然有价值，需要调整的是战术 DDD。**
+
+限界上下文、上下文映射、通用语言——这些战略模式在 AI Agent 系统中不仅适用，反而变得更加重要。因为当你面对一个概率性的决策核心时，边界管理就成了唯一可以信赖的工程手段。
+
+### 不确定性的三层解构（核心贡献）
+
+将"概率性"当作一个整体来讨论是不够精确的。我们发现 Agent 系统中的不确定性实际上可以拆解为三种不同性质：
+
+- **生成不确定性**（LLM 采样机制）→ 用约束+验证
+- **认知不完全性**（上下文不足）→ 用记忆与检索建模——**这是一类新的"领域对象"**
+- **执行不确定性**（外部系统失败）→ 用补偿事务/事件溯源
+
+这个解构后来成为整个范式的基础——DDD 的适配策略不应该用一个笼统的"概率性"标签抹平所有差异，而应该在领域模型内部为每一类不确定性提供专属的处理路径。
+
+### 阶段的核心公式
+
+> **"LLM 负责生成可能性，DDD 负责约束可能性。"**
+
+这句话成为后续所有思考的出发点。
+
+> 📄 **阶段文档**：[ddd-ai-agent.md](./ddd-ai-agent.md) — DDD 在 AI Agent 系统中的适应与重生（覆盖阶段二、三）
+
+---
+
+## 阶段三：CDD 的"半对"——认知驱动设计的贡献与局限
+
+### CDD 做对了什么
+
+在 DDD 困境的基础上，我们提出了 CDD（认知驱动设计）作为进化方向——把 DDD 的几个关键概念"认知化"：
+
+| DDD 概念 | CDD 重定义 |
+|:---|:---|
+| 限界上下文 | → 认知边界 |
+| 聚合 | → 快照验证 + 事件流 |
+| 防腐层 | → 语义防火墙（Parsing → Validation → Normalization） |
+| 领域事件 | → 事件认知溯源 |
+
+这些调整方向是对的。uncode 的工程实践证明了这一点——限界上下文隔离、事件系统、护栏体系，都是在 CDD 方向上做扎实了的。
+
+### 但 CDD 没回答的核心问题
+
+然而，在持续深化 uncode 的代码结构时，一个反复出现的困惑把我们引向了 CDD 的根本局限：
+
+**CDD 告诉你"要关注认知"，但它没有告诉你系统的"第一公民"到底是什么。**
+
+在 DDD 中，这个答案是清楚的：业务规则。所有建模都围绕规则展开。在 CDD 中，第一公民被模糊地指向"认知过程"——但这其实是 LLM 内部的事，不是架构师可控的。
+
+更重要的是，uncode 的工程实践暴露了一个关键事实：
+
+> **uncode 最强的工程力，不是"认知管理"，而是"决策治理"。**
+
+Phase 守卫禁止并发运行 → 这是决策排他性。MAX_TURNS=50 硬限 → 这是决策容量约束。terminate AND 语义 → 这是决策完成条件。事件链完整记录每步决策 → 这是决策审计。这些都不是"认知建模"，这些是"决策建模"。
+
+**CDD 本质上把决策层的工程实践错误地归到了认知层名下。**
+
+> **"认知驱动"这个名字本身就暴露了它的偏向——它把系统的全部复杂性归到了认知侧，没有为"决策"单独设立第一公民地位。**
+
+> 📄 **阶段文档**：[ddd-ai-agent.md](./ddd-ai-agent.md) — 第四部分 CDD 展望（覆盖阶段二、三）
+
+---
+
+## 阶段四：综合治理的战术研究——多范式融合与 Harness Engineering
+
+### DDD 之外还有什么？
+
+认识到 CDD 的局限后，我们展开了更广泛的调研。DDD 之外，还有哪些架构范式可以治理 AI Agent 的复杂性？答案是 **7 种**：
+
+**工作流编排**控制大任务路径，**有限状态机**限制每一步能做什么，**事件驱动**连接各个阶段，**事件溯源**保存全过程，**CQRS** 分离读写职责，**约束式设计**兜住安全边界，**多 Agent 协作**分担复杂职责。
+
+这七种范式的关键洞察是：**它们不是备选方案——它们在同一系统中同时存在。** 事件驱动是通信机制，事件溯源是存储策略，约束设计是安全策略，状态机是生命周期策略——它们是不同层面的治理，不是互相替代。
+
+其中三个范式构成了 AI Agent 治理的"**铁三角**"：事件驱动保证信息无损流动，事件溯源保证每条决策有据可查，约束设计保证错误决策不会变成系统事故。
+
+### Harness Engineering 的抽象与定位
+
+在调研 7 种范式的过程中，我们遇到了 2026 年初业界集中讨论的一个新概念：**Harness Engineering**。
+
+Mitchell Hashimoto 提出"Engineer the Harness"——Agent 犯错的根因，沉淀为 AGENTS.md 规则或可验证工具。OpenAI 在 5 个月、近百万行、零手写代码的实验中总结了 Humans steer, agents execute。Anthropic 提出 Planner/Generator/Evaluator 三 Agent 架构和生成/评估分离。Martin Fowler 提出 Guides（前馈）与 Sensors（反馈）的控制回路。
+
+Harnss Engineering 的**五模块架构**——编排与状态管理、工具治理与安全、分层记忆与上下文、可观测性与评估、自适应与进化——成为我们理解 Agent 系统工程实践的基础框架。
+
+### 关键决策：Harness Engineering 从属于范式，不是独立的视角
+
+在研究过程中，我们面临一个关键的理论定位问题：Harness Engineering 与我们的范式是什么关系？
+
+答案是：**Harness Engineering 是治理层的工程实践子层。** 它不是独立于范式的概念——它从属于认知显化与决策驱动设计的治理层，是它落地的工程方法。认知显化与决策驱动设计是"设计平面"，Harness Engineering 是"施工队"。
+
+> 📄 **阶段文档**：
+> - [7 种架构范式](./DDD%20之外AI%20Agent%20系统治理复杂性的%207%20种架构范式.md) — DDD 之外的治理工具箱
+> - [Harness Engineering 五模块架构](../others/Harness_Engineering_Archi.md) — 编排·工具·记忆·观测·进化
+> - [HARNESS_ENGINEERING.md](../others/HARNESS_ENGINEERING.md) — 行业综述（Prompt→Context→Harness 三层进化）
+> - [HARNESS_ENGINEERING_GLOSSARY.md](../others/HARNESS_ENGINEERING_GLOSSARY.md) — 中英术语索引
+
+---
+
+## 阶段五：认知显化与决策驱动设计——新范式的提出与实践
+
+### 从分散观点到统一范式
+
+前四个阶段的积累已经产生了丰富的理论素材：DDD 的四重冲突、CDD 的"半对"、7 种范式的工具箱、Harness Engineering 的五模块架构。但这些观点是分散的——它们缺少一个**统一的范式名称和核心命题**。
+
+这个统一的过程最终凝结为范式更名的两个关键节点：
+
+**第一个节点：范式命名的本质化**。`认知与决策驱动设计 → 认知显化与决策驱动设计`。"显化"两个字进入了范式名称——它直接编码了核心洞察：认知层的根本职责不是"驱动认知"，而是**显化模糊认知**。
+
+**第二个节点：核心命题的凝练**。经过多次提炼，最终的核心命题是：
+
+> **"人机协同创作是一个愿景从模糊认知显化、再到 Agent 工程化实现的过程。决策的本质是模糊认知的显化。Agent Coding 不是 AI 替代，而是人与大模型的有机联动。"**
+
+### 三个独立的外部验证
+
+当我们将范式系统化之后，发现三个完全独立的外部研究从不同路径得出了与我们一致的结论：
+
+1. **DOP 论文**（arXiv 2604.05203）：Decision Bank 将隐式设计决策显化为可编辑的第一公民对象，用户理解准确度提升 5x——验证了"决策第一公民"和"决策显化"的核心主张。
+
+2. **Autodesk 认知架构**（2026-05）："Perception is not preprocessing. It is a representational pipeline. Intelligent behavior comes from closed-loop coordination, not from a single model."——验证了"感知即显化管道"和"闭环协调"的架构哲学。
+
+3. **Anthropic Harness**（2026-05）："The harness matters as much as the model."——验证了"模型外的工程基础设施决定 Agent 行为"的根本立场。
+
+这三份文献从 HCI 用户研究、认知科学工程化、工业实践的三个完全独立的路径，为我们的范式提供了强有力的外部证据。
+
+### 工程落地
+
+最终的工程落地分为五个阶段的重构路线图：
+
+- **Phase 1**：决策层形式化——创建 `decision/` 模块，提取语义防火墙、裁决器、审计器
+- **Phase 2**：认知层形式化——`cognition/` 模块，不确定性三分类、分层记忆
+- **Phase 3**：治理层完善——GuardrailConfig、EventDetailLevel、AgentStep
+- **Phase 4**：文档体系——四层设计文档 + AGENTS.md 范式章节
+- **Phase 5**（持续进行）：FeedbackBridge 上行通道、H0-H3 评估框架、EvolutionEngine 自适应进化
+
+截至 2026-05-22，uncode 已累计 397 个测试，14/15 核心组件实现，与范式文档对齐度约 97%。
+
+> 📄 **阶段文档**：
+> - [认知显化与决策驱动设计](./cognition-decision-driven-design.md) — 范式定义（核心文档）
+> - [DOP 论文分析](./dop-analysis.md) — 外部验证：Decision-Oriented Programming
+> - [Cognitive Architecture 分析](./cognitive-architecture-analysis.md) — 外部验证：Autodesk 认知架构
+> - [代码组织与命名规范](./paradigm-aligned-code-organization.md) — 范式对应的理想代码结构
+> - [重构路线图](./uncodenow-refactoring-roadmap.md) — 五阶段工程落地计划
+
+---
+
+## 思想演进总览
+
+```
+Stage 1: Pi 学习与复刻               (2025)
+  "uncode 是 Pi 的 Rust 方言"
+  API-first 架构、双环 ReAct、六条哲学条款
+        │
+        ▼
+Stage 2: DDD 适应性困境              (2026 Q1)
+  "LLM 负责生成可能性，DDD 负责约束可能性"
+  四重冲突分析、三类不确定性解构
+        │
+        ▼
+Stage 3: CDD 的"半对"                (2026 Q1-Q2)
+  "最强的工程力不在认知管理，而在决策治理"
+  发现 CDD 的本质局限：没有为决策设第一公民
+        │
+        ▼
+Stage 4: 综合治理与 Harness Engineering (2026 Q2)
+  "7 种范式 + Harness Engineering 五模块"
+  铁三角治理、工程实践子层的定位
+        │
+        ▼
+Stage 5: 认知显化与决策驱动设计       (2026 Q2)
+  "决策的本质是模糊认知的显化"
+  范式命名系统化、三方外部验证、五阶段工程落地
+```
+
+---
+
+*本文随 uncode 项目的持续演进应定期更新。每个阶段代表了团队在当时的知识边界和工程判断——回头看可能会有遗憾，但每一步都是到达现在位置的必经之路。*

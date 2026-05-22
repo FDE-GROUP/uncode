@@ -6106,6 +6106,7 @@ dependencies = [
  "tracing",
  "uncode-ai",
  "uncode-core",
+ "uncode-shared",
  "uuid",
  "walkdir",
  "wiremock",
@@ -6242,6 +6243,7 @@ dependencies = [
 name = "uncode-shared"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "serde_json",
  "thiserror 2.0.18",

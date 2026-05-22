@@ -12,6 +12,7 @@ authors.workspace = true
 [dependencies]
 uncode-core.workspace = true
 uncode-ai.workspace = true
+uncode-shared.workspace = true
 
 tokio.workspace = true
 tokio-util.workspace = true
