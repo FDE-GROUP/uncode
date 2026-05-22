@@ -178,6 +178,8 @@ pub struct AgentLoop {
     firewall: std::sync::Mutex<Option<crate::decision::firewall::SemanticFirewall>>,
     /// 演化引擎 — 认知显化与决策驱动设计 自适应进化 (#342)
     evolution: std::sync::Mutex<uncode_shared::evolution::EvolutionEngine>,
+    /// 扩展生命周期桥接 — Extension Runtime Phase 1 (#344)
+    extension_bridge: Option<crate::hooks::ExtensionLifecycleBridge>,
 }
 
 impl AgentLoop {
@@ -219,6 +221,7 @@ impl AgentLoop {
             ),
             firewall: std::sync::Mutex::new(None),
             evolution: std::sync::Mutex::new(uncode_shared::evolution::EvolutionEngine::new(3)),
+            extension_bridge: None,
         }
     }
 
@@ -298,6 +301,7 @@ impl AgentLoop {
             ),
             firewall: std::sync::Mutex::new(None),
             evolution: std::sync::Mutex::new(uncode_shared::evolution::EvolutionEngine::new(3)),
+            extension_bridge: None,
         }
     }
 
@@ -331,6 +335,10 @@ impl AgentLoop {
 
     pub fn set_tool_hooks(&mut self, hooks: Arc<dyn ToolHooks>) {
         self.tool_hooks = Some(hooks);
+    }
+
+    pub fn set_extension_bridge(&mut self, bridge: crate::hooks::ExtensionLifecycleBridge) {
+        self.extension_bridge = Some(bridge);
     }
 
     /// Restrict tools visible to the LLM and executable in this loop.
@@ -642,6 +650,10 @@ impl AgentLoop {
             timestamp: chrono::Utc::now(),
         });
 
+        if let Some(ref bridge) = self.extension_bridge {
+            bridge.fire_session_start(&session_id).await;
+        }
+
         // Build context from session store (picks up all previous messages for resume)
         let built = crate::context_builder::build_context(&self.session_store, &session_id)
             .await
@@ -888,6 +900,12 @@ impl AgentLoop {
                 };
 
                 self.emit(AgentEvent::TurnStart { turn });
+
+                if let Some(ref bridge) = self.extension_bridge {
+                    if let Some(ref sid) = self.session_id {
+                        bridge.fire_turn_start(sid, turn).await;
+                    }
+                }
 
                 self.emit(AgentEvent::LlmRequestStart {
                     data: Box::new(LlmRequestStartData {
@@ -1561,6 +1579,11 @@ impl AgentLoop {
                         turn,
                         usage: turn_usage.clone(),
                     });
+                    if let Some(ref bridge) = self.extension_bridge {
+                        if let Some(ref sid) = self.session_id {
+                            bridge.fire_turn_end(sid, turn).await;
+                        }
+                    }
                     if !turn_phase_completed.is_empty() || !turn_phase_issues.is_empty() {
                         let heuristic = build_phase_summary_heuristic(
                             turn,
@@ -1679,6 +1702,10 @@ impl AgentLoop {
                 .into(),
             }),
         });
+
+        if let Some(ref bridge) = self.extension_bridge {
+            bridge.fire_session_end(&session_id).await;
+        }
 
         self.emit(AgentEvent::AgentSettled {
             session_id: session_id.clone(),

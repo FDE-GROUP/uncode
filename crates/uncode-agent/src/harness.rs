@@ -152,10 +152,7 @@ impl AgentHarness {
         &self,
         cancel_token: tokio_util::sync::CancellationToken,
     ) -> crate::decision::adjudication::Adjudicator {
-        use crate::decision::adjudication::{
-            CancellationPolicy, ConcurrencyPolicy, PhaseGuardPolicy, TurnLimitPolicy,
-            build_default_adjudicator,
-        };
+        use crate::decision::adjudication::{PhaseGuardPolicy, build_default_adjudicator};
         use std::sync::Arc;
         use std::sync::atomic::AtomicBool;
 
@@ -172,7 +169,7 @@ impl AgentHarness {
     /// 构建语义防火墙（包装现有 PermissionPolicy）
     pub fn build_firewall(
         &self,
-        cancel_token: tokio_util::sync::CancellationToken,
+        _cancel_token: tokio_util::sync::CancellationToken,
         tool_registry: std::sync::Arc<crate::tools::ToolRegistry>,
     ) -> crate::decision::firewall::SemanticFirewall {
         use crate::decision::firewall::build_default_firewall;

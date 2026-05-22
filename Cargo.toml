@@ -118,6 +118,7 @@ uncode-shared = { path = "crates/uncode-shared" }
 uncode-ai = { path = "crates/uncode-ai" }
 uncode-core = { path = "crates/uncode-core" }
 uncode-macros = { path = "crates/uncode-macros" }
+uncode-extensions = { path = "crates/uncode-extensions" }
 uncode-agent = { path = "crates/uncode-agent" }
 uncode-tui = { path = "crates/uncode-tui" }
 uncode-rpc = { path = "crates/uncode-rpc" }

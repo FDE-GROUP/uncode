@@ -127,7 +127,7 @@ impl TurnFeedback {
         context_tokens: usize,
         test_output: Option<&str>,
     ) {
-        let observation = FeedbackBridge::to_observation(result);
+        let _observation = FeedbackBridge::to_observation(result);
         let feedback = FeedbackBridge::infer_feedback(result);
         let step = FeedbackBridge::to_agent_step(
             format!("turn-{}", self.turn_number),

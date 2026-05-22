@@ -37,7 +37,9 @@ pub use compaction::{
 pub use context::ContextLoader;
 pub use github::GitHubClient;
 pub use harness::{AgentHarness, AgentHarnessPhase, HarnessResources};
-pub use hooks::{ChainedToolHooks, PermissionToolHooks};
+pub use hooks::{
+    ChainedToolHooks, ExtensionLifecycleBridge, ExtensionToolHooks, PermissionToolHooks,
+};
 pub use loop_engine::{AgentLoop, NextTurnDecision};
 pub use permission_gate::{Approval, PermissionGate};
 pub use steering::DrainMode;

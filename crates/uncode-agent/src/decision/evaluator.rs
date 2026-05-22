@@ -57,7 +57,7 @@ impl EvaluationScore {
         }
     }
 
-    pub fn h1(success: bool, output_summary: &str, error: Option<&str>) -> Self {
+    pub fn h1(success: bool, _output_summary: &str, error: Option<&str>) -> Self {
         let quality = if success { 0.7 } else { 0.3 };
         let mut passed = Vec::new();
         let mut failed = Vec::new();
