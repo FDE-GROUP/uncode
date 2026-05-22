@@ -218,9 +218,7 @@ impl AgentLoop {
                 crate::decision::proposal::ProposalAccumulator::new(),
             ),
             firewall: std::sync::Mutex::new(None),
-            evolution: std::sync::Mutex::new(
-                uncode_shared::evolution::EvolutionEngine::new(3),
-            ),
+            evolution: std::sync::Mutex::new(uncode_shared::evolution::EvolutionEngine::new(3)),
         }
     }
 
@@ -299,9 +297,7 @@ impl AgentLoop {
                 crate::decision::proposal::ProposalAccumulator::new(),
             ),
             firewall: std::sync::Mutex::new(None),
-            evolution: std::sync::Mutex::new(
-                uncode_shared::evolution::EvolutionEngine::new(3),
-            ),
+            evolution: std::sync::Mutex::new(uncode_shared::evolution::EvolutionEngine::new(3)),
         }
     }
 
@@ -1262,7 +1258,10 @@ impl AgentLoop {
                                                     // 提案通过防火墙——继续执行
                                                 }
                                                 Err(e) => {
-                                                    tracing::warn!("firewall blocked proposal {}: {e}", proposal.tool_name);
+                                                    tracing::warn!(
+                                                        "firewall blocked proposal {}: {e}",
+                                                        proposal.tool_name
+                                                    );
                                                     self.emit(AgentEvent::DecisionMade {
                                                         turn_id: format!("turn-{turn}"),
                                                         tool_name: proposal.tool_name.clone(),
@@ -1410,10 +1409,18 @@ impl AgentLoop {
                                             success: !is_error,
                                             duration_ms,
                                             output: Some(content_text.clone()),
-                                            error: if is_error { Some(content_text.clone()) } else { None },
+                                            error: if is_error {
+                                                Some(content_text.clone())
+                                            } else {
+                                                None
+                                            },
                                             terminate: tool_result.terminate,
                                         };
-                                        let evaluator: &dyn Evaluator = if result.output.as_ref().map_or(false, |o| o.contains("test result:")) {
+                                        let evaluator: &dyn Evaluator = if result
+                                            .output
+                                            .as_ref()
+                                            .map_or(false, |o| o.contains("test result:"))
+                                        {
                                             &crate::decision::evaluator::VerifiedEvaluator
                                         } else {
                                             &crate::decision::evaluator::BasicEvaluator
@@ -1421,7 +1428,11 @@ impl AgentLoop {
                                         let ctx = crate::decision::evaluator::EvaluationContext {
                                             turn_number: turn as u32,
                                             tool_name: name.clone(),
-                                            test_output: if content_text.contains("test result:") { Some(content_text.clone()) } else { None },
+                                            test_output: if content_text.contains("test result:") {
+                                                Some(content_text.clone())
+                                            } else {
+                                                None
+                                            },
                                             lint_output: None,
                                         };
                                         let score = evaluator.evaluate(&result, &ctx);
@@ -1435,7 +1446,11 @@ impl AgentLoop {
                                             turn_id: format!("turn-{turn}"),
                                             level: level_name.to_string(),
                                             quality_score: score.quality_score,
-                                            summary: Some(format!("{}: {:.0}%", name, score.quality_score * 100.0)),
+                                            summary: Some(format!(
+                                                "{}: {:.0}%",
+                                                name,
+                                                score.quality_score * 100.0
+                                            )),
                                         });
                                         let _feedback = FeedbackBridge::infer_feedback(&result);
                                     }
@@ -1448,7 +1463,9 @@ impl AgentLoop {
                                         turn_phase_issues.push(label);
                                         // ── 演化引擎: 记录失败 ──
                                         self.evolution.lock().unwrap().record_failure(
-                                            turn as u32, name.clone(), content_text.clone(),
+                                            turn as u32,
+                                            name.clone(),
+                                            content_text.clone(),
                                         );
                                     } else {
                                         turn_phase_completed.push(label);
@@ -1530,7 +1547,10 @@ impl AgentLoop {
                         let evolution = self.evolution.lock().unwrap();
                         let mutations = evolution.analyze();
                         if !mutations.is_empty() {
-                            tracing::info!("evolution engine detected {} mutation suggestion(s)", mutations.len());
+                            tracing::info!(
+                                "evolution engine detected {} mutation suggestion(s)",
+                                mutations.len()
+                            );
                             for m in &mutations {
                                 tracing::debug!("  suggested: {m:?}");
                             }
