@@ -208,10 +208,14 @@ Normalizer →  ModifyFileCommand { file: "src/auth/mod.ts", operation: "append"
 
 运行时治理有两个子层：
 
-| 子层 | 定位 | 内容 |
-|:---|:---|:---|
-| **Harness Engineering** | 工程实践层 | 编排器、工具注册、分层记忆、可观测性、自适应进化——具体"怎么搭" |
-| **7 种架构范式** | 模式工具层 | 事件驱动、事件溯源、约束设计等——各自解决一类操作级问题 |
+| 子层 | 定位 | 内容 | 范围说明 |
+|:---|:---|:---|:---|
+| **Harness Engineering** | 工程实践层 | 编排器、工具注册、分层记忆、可观测性、自适应进化 | Agent **内部**架构——"怎么搭" |
+| **7 种架构范式** | 模式工具层 | 事件驱动、事件溯源、约束设计等 | 跨系统的通用模式——"用什么模式" |
+
+> **注意**：Anthropic 在 Claude Code 博文中提出的 Harness 概念（CLAUDE.md、hooks、skills、plugins、MCP）
+> 属于**开发者界面层**——开发者如何配置和治理 Agent。本文的 Harness Engineering 指代 Agent 的内部工程架构。
+> 详见 `docs/others/Harness_Engineering_Archi.md` 附注。
 
 **Harness Engineering 是治理层的工程实现**。当我们说"决策层裁决"时，Harness Engineering 告诉我们裁决器怎么设计；当我们说"护栏"时，Harness Engineering 告诉我们工具如何注册、权限怎么检查。
 
@@ -221,11 +225,11 @@ Normalizer →  ModifyFileCommand { file: "src/auth/mod.ts", operation: "append"
 
 | Harness 模块 | 范式中的位置 | uncode 对应 |
 |:---|:---|:---|
-| **编排与状态管理** | 决策层 Adjudicator + AgentHarnessPhase | `build_decision_adjudicator()` + `PhaseGuardPolicy` |
-| **工具治理与安全** | 决策层 SemanticFirewall + ToolRegistry | `PermissionPolicyRule` + `PathSafetyRule` + `SchemaCoercionRule` |
+| **编排与状态管理** | 决策层 | `decision/adjudication.rs` + `AgentHarnessPhase` + `ProposalAccumulator` |
+| **工具治理与安全** | 决策层 SemanticFirewall | `decision/firewall.rs` + `tools/registry.rs` + `tool_permission.rs` |
 | **分层记忆** | 认知层 | `WorkingMemory` → `EpisodeMemory` → `MemoryManager` → `SessionStore` |
-| **可观测性与评估** | 治理层事件系统 | `AgentEvent` 30 变体 + `EventDetailLevel` + `SessionStore` |
-| **自适应与进化** | 预留 | 当前空缺（`GuardrailConfig` 为静态配置） |
+| **可观测性与评估** | 治理层事件系统 | `AgentEvent` 32 变体 + `EventDetailLevel` + `decision/evaluator.rs` + `FeedbackBridge` |
+| **自适应与进化** | 治理层 | `EvolutionEngine` + `HarnessMutation` + `GuardrailConfig` |
 
 #### 7 种架构范式在 Harness 中的体现
 
@@ -390,7 +394,7 @@ Anthropic 的"Think → Plan → Act"循环和 OpenAI 的 Swarm/Assistants 提�
 
 因此，完整的答案是：
 
-> **认知与决策驱动设计 + 7 种综合治理范式。**
+> **认知与决策驱动设计 + Harness Engineering + 7 种综合治理范式。**
 
 其中：
 
@@ -398,7 +402,8 @@ Anthropic 的"Think → Plan → Act"循环和 OpenAI 的 Swarm/Assistants 提�
 - **决策层** = 系统的"铁律"。回答"哪些可以做，做了什么，结果怎样？"
 - **语义防火墙** = 两者之间的"唯一通道"
 - **事件流** = 两者之间的"双向信息桥梁"
-- **7 种治理范式** = 运行时"操作级工具箱"
+- **Harness Engineering** = 治理层的工程实践（编排、工具、记忆、观测、进化五模块）
+- **7 种治理范式** = 治理层的模式工具（事件驱动、事件溯源、约束设计、状态机、CQRS、工作流、多Agent协作）
 
 这五个组件，构成了一个**可命名、可教学、可实现**的完整范式地图。
 
@@ -414,14 +419,15 @@ Anthropic 的"Think → Plan → Act"循环和 OpenAI 的 Swarm/Assistants 提�
 
 ## 延伸阅读：Harness Engineering
 
-本文提出的"治理层"在行业工程实践中对应 **Harness Engineering**（详见 `docs/others/HARNESS_ENGINEERING.md`）。二者的关系是**包含而非对立**：
+本文提出的"治理层"在工程实践中有两个维度：
 
-- **认知与决策驱动设计** = 完整的架构范式（三层 + 连接器）
-- **Harness Engineering** = 治理层的**工程实践子层**——编排器、工具注册、分层记忆、可观测性、自适应进化的具体实施方法
+1. **内部工程架构**（`docs/others/Harness_Engineering_Archi.md`）——编排器、工具注册、分层记忆、可观测性、自适应进化五模块。这是本文 §4 对应的工程实现。
 
-当本文说"决策层裁决"时，Harness Engineering 告诉你裁决器怎么设计（Phase 守卫、策略链、超时控制）。当本文说"护栏"时，Harness Engineering 告诉你工具如何注册（九项元信息、安全等级）、参数如何校验（JSON Schema + coercion）。当本文说"事件溯源"时，Harness Engineering 告诉你事件如何分级（Critical/Standard/Verbose）、如何导出（JSONL）、如何用于回放和评估。
+2. **开发者界面层**（Anthropic Claude Code 博文，2026-05）——CLAUDE.md、hooks、skills、plugins、MCP、LSP、subagents。这是开发者如何配置和治理 Agent 的**控制面**。
 
-**不是两个独立的视角——Harness Engineering 从属于本范式，是它落地的工程方法。**
+二者的关系：**内部架构决定 Agent "能做什么"，开发者界面决定"怎么用好它"。** 完整的 Harness Engineering 实践应同时覆盖这两个维度。本文的治理层侧重前者（设计平面上的工程组织），后者是操作平面上的配置管理。
+
+详见 `docs/others/HARNESS_ENGINEERING.md`（行业综述）和 `docs/others/Harness_Engineering_Archi.md`（五模块详解）。
 
 ---
 
