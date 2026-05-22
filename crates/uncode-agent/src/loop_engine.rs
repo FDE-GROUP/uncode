@@ -176,6 +176,8 @@ pub struct AgentLoop {
     proposal_acc: std::sync::Mutex<crate::decision::proposal::ProposalAccumulator>,
     /// 语义防火墙 — 认知与决策驱动设计 原则2 (#339 强制执行)
     firewall: std::sync::Mutex<Option<crate::decision::firewall::SemanticFirewall>>,
+    /// 演化引擎 — 认知与决策驱动设计 自适应进化 (#342)
+    evolution: std::sync::Mutex<uncode_shared::evolution::EvolutionEngine>,
 }
 
 impl AgentLoop {
@@ -216,6 +218,9 @@ impl AgentLoop {
                 crate::decision::proposal::ProposalAccumulator::new(),
             ),
             firewall: std::sync::Mutex::new(None),
+            evolution: std::sync::Mutex::new(
+                uncode_shared::evolution::EvolutionEngine::new(3),
+            ),
         }
     }
 
@@ -294,6 +299,9 @@ impl AgentLoop {
                 crate::decision::proposal::ProposalAccumulator::new(),
             ),
             firewall: std::sync::Mutex::new(None),
+            evolution: std::sync::Mutex::new(
+                uncode_shared::evolution::EvolutionEngine::new(3),
+            ),
         }
     }
 
@@ -1438,6 +1446,10 @@ impl AgentLoop {
                                     let label = format_tool_phase_label(name, &args_short);
                                     if is_error {
                                         turn_phase_issues.push(label);
+                                        // ── 演化引擎: 记录失败 ──
+                                        self.evolution.lock().unwrap().record_failure(
+                                            turn as u32, name.clone(), content_text.clone(),
+                                        );
                                     } else {
                                         turn_phase_completed.push(label);
                                     }
@@ -1513,6 +1525,18 @@ impl AgentLoop {
                         output_tokens: turn_output_tokens,
                         cost: None,
                     };
+                    // ── 演化引擎: 模式检测 ──
+                    {
+                        let evolution = self.evolution.lock().unwrap();
+                        let mutations = evolution.analyze();
+                        if !mutations.is_empty() {
+                            tracing::info!("evolution engine detected {} mutation suggestion(s)", mutations.len());
+                            for m in &mutations {
+                                tracing::debug!("  suggested: {m:?}");
+                            }
+                        }
+                    }
+
                     self.emit(AgentEvent::TurnEnd {
                         turn,
                         usage: turn_usage.clone(),
