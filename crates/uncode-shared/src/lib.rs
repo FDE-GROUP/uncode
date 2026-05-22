@@ -6,6 +6,8 @@
 
 pub mod config;
 pub mod error;
+pub mod evolution; // ★ 自适应进化 — Harness Engineering §5
+pub mod guardrails;
 
 #[cfg(test)]
 mod tests;

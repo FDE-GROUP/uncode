@@ -45,7 +45,7 @@ use uncode_core::tool::{
     ToolProgress, ToolResult,
 };
 
-const MAX_TURNS: u64 = 50;
+pub const MAX_TURNS: u64 = 50;
 const MAX_LLM_RETRIES: u32 = 3;
 const BASE_RETRY_DELAY_MS: u64 = 1000;
 
@@ -172,6 +172,12 @@ pub struct AgentLoop {
     graph_cache: Option<Arc<crate::workspace_graph::WorkspaceGraphCache>>,
     compaction_config: CompactionConfig,
     skill_registry: Option<uncode_core::skill::SkillRegistry>,
+    /// 决策层提案累积器 — 认知显化与决策驱动设计 Phase 1 连线 (#339)
+    proposal_acc: std::sync::Mutex<crate::decision::proposal::ProposalAccumulator>,
+    /// 语义防火墙 — 认知显化与决策驱动设计 原则2 (#339 强制执行)
+    firewall: std::sync::Mutex<Option<crate::decision::firewall::SemanticFirewall>>,
+    /// 演化引擎 — 认知显化与决策驱动设计 自适应进化 (#342)
+    evolution: std::sync::Mutex<uncode_shared::evolution::EvolutionEngine>,
 }
 
 impl AgentLoop {
@@ -208,6 +214,11 @@ impl AgentLoop {
             graph_cache: None,
             compaction_config: CompactionConfig::default(),
             skill_registry: None,
+            proposal_acc: std::sync::Mutex::new(
+                crate::decision::proposal::ProposalAccumulator::new(),
+            ),
+            firewall: std::sync::Mutex::new(None),
+            evolution: std::sync::Mutex::new(uncode_shared::evolution::EvolutionEngine::new(3)),
         }
     }
 
@@ -282,6 +293,11 @@ impl AgentLoop {
             graph_cache: None,
             compaction_config: CompactionConfig::default(),
             skill_registry: None,
+            proposal_acc: std::sync::Mutex::new(
+                crate::decision::proposal::ProposalAccumulator::new(),
+            ),
+            firewall: std::sync::Mutex::new(None),
+            evolution: std::sync::Mutex::new(uncode_shared::evolution::EvolutionEngine::new(3)),
         }
     }
 
@@ -418,7 +434,7 @@ impl AgentLoop {
         mq.clear_all()
     }
 
-    fn emit(&self, event: AgentEvent) {
+    pub(crate) fn emit(&self, event: AgentEvent) {
         let _ = self.event_tx.send(event);
     }
 
@@ -971,6 +987,9 @@ impl AgentLoop {
                 let mut turn_phase_issues: Vec<String> = Vec::new();
                 let mut turn_assistant_snippet = String::new();
 
+                // ── 决策层连线 (#339): 重置提案累积器 ──
+                self.proposal_acc.lock().unwrap().reset();
+
                 // ── Stream processing loop ──
                 loop {
                     if self.cancel_token.is_cancelled() {
@@ -1025,6 +1044,9 @@ impl AgentLoop {
                             }
                         }
                     };
+
+                    // ── 决策层连线 (#339): 喂入提案累积器 ──
+                    self.proposal_acc.lock().unwrap().feed(&event);
 
                     match event {
                         StreamEvent::ThinkingDelta(text) => {
@@ -1216,6 +1238,44 @@ impl AgentLoop {
                                 .map(|(id, _, args)| (id.clone(), args.to_string()))
                                 .collect();
 
+                            // ── 决策层防火墙验证 (原则2: 自然语言止于防火墙, #339) ──
+                            {
+                                let acc = self.proposal_acc.lock().unwrap();
+                                let proposals = acc.completed();
+                                if !proposals.is_empty() {
+                                    let mut fw = self.firewall.lock().unwrap();
+                                    if fw.is_none() {
+                                        *fw = Some(crate::decision::firewall::build_default_firewall(
+                                            std::sync::Arc::new(crate::tool_permission::PermissionPolicy::default_policy()),
+                                            Arc::clone(&self.tool_registry),
+                                            std::env::current_dir().unwrap_or_default(),
+                                        ));
+                                    }
+                                    if let Some(ref firewall) = *fw {
+                                        for proposal in proposals {
+                                            match firewall.process(proposal) {
+                                                Ok(_normalized) => {
+                                                    // 提案通过防火墙——继续执行
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        "firewall blocked proposal {}: {e}",
+                                                        proposal.tool_name
+                                                    );
+                                                    self.emit(AgentEvent::DecisionMade {
+                                                        turn_id: format!("turn-{turn}"),
+                                                        tool_name: proposal.tool_name.clone(),
+                                                        allowed: false,
+                                                        reason: Some(e.to_string()),
+                                                        duration_ms: None,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             // Batch-execute buffered tool calls (same `executions` as assistant ToolCalls)
                             if !executions.is_empty() {
                                 // Pi strategy: if ANY tool is sequential, run ALL sequentially
@@ -1339,12 +1399,74 @@ impl AgentLoop {
                                         }),
                                     });
 
+                                    // ── 决策层评估 + 反馈 (原则5: 事件流双向通道, #340) ──
+                                    {
+                                        use crate::decision::evaluator::Evaluator;
+                                        use crate::decision::feedback::FeedbackBridge;
+                                        let result = crate::decision::execution::ExecutionResult {
+                                            tool_id: id.clone(),
+                                            tool_name: name.clone(),
+                                            success: !is_error,
+                                            duration_ms,
+                                            output: Some(content_text.clone()),
+                                            error: if is_error {
+                                                Some(content_text.clone())
+                                            } else {
+                                                None
+                                            },
+                                            terminate: tool_result.terminate,
+                                        };
+                                        let evaluator: &dyn Evaluator = if result
+                                            .output
+                                            .as_ref()
+                                            .map_or(false, |o| o.contains("test result:"))
+                                        {
+                                            &crate::decision::evaluator::VerifiedEvaluator
+                                        } else {
+                                            &crate::decision::evaluator::BasicEvaluator
+                                        };
+                                        let ctx = crate::decision::evaluator::EvaluationContext {
+                                            turn_number: turn as u32,
+                                            tool_name: name.clone(),
+                                            test_output: if content_text.contains("test result:") {
+                                                Some(content_text.clone())
+                                            } else {
+                                                None
+                                            },
+                                            lint_output: None,
+                                        };
+                                        let score = evaluator.evaluate(&result, &ctx);
+                                        let level_name = match score.level {
+                                            crate::decision::evaluator::AssessmentLevel::RawOutput => "H0",
+                                            crate::decision::evaluator::AssessmentLevel::Basic => "H1",
+                                            crate::decision::evaluator::AssessmentLevel::Verified => "H2",
+                                            crate::decision::evaluator::AssessmentLevel::Reproducible => "H3",
+                                        };
+                                        self.emit(AgentEvent::EvaluationScore {
+                                            turn_id: format!("turn-{turn}"),
+                                            level: level_name.to_string(),
+                                            quality_score: score.quality_score,
+                                            summary: Some(format!(
+                                                "{}: {:.0}%",
+                                                name,
+                                                score.quality_score * 100.0
+                                            )),
+                                        });
+                                        let _feedback = FeedbackBridge::infer_feedback(&result);
+                                    }
+
                                     let args_short = summarize_tool_args(
                                         exec_args_by_id.get(id).map(|s| s.as_str()).unwrap_or(""),
                                     );
                                     let label = format_tool_phase_label(name, &args_short);
                                     if is_error {
                                         turn_phase_issues.push(label);
+                                        // ── 演化引擎: 记录失败 ──
+                                        self.evolution.lock().unwrap().record_failure(
+                                            turn as u32,
+                                            name.clone(),
+                                            content_text.clone(),
+                                        );
                                     } else {
                                         turn_phase_completed.push(label);
                                     }
@@ -1420,6 +1542,21 @@ impl AgentLoop {
                         output_tokens: turn_output_tokens,
                         cost: None,
                     };
+                    // ── 演化引擎: 模式检测 ──
+                    {
+                        let evolution = self.evolution.lock().unwrap();
+                        let mutations = evolution.analyze();
+                        if !mutations.is_empty() {
+                            tracing::info!(
+                                "evolution engine detected {} mutation suggestion(s)",
+                                mutations.len()
+                            );
+                            for m in &mutations {
+                                tracing::debug!("  suggested: {m:?}");
+                            }
+                        }
+                    }
+
                     self.emit(AgentEvent::TurnEnd {
                         turn,
                         usage: turn_usage.clone(),

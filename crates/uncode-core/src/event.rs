@@ -203,6 +203,48 @@ pub enum AgentEvent {
         partial_response: bool,
     },
 
+    // ── Uncertainty (认知层 — 认知显化与决策驱动设计) ──
+    /// Emitted when an uncertainty is classified and resolved.
+    /// Maps to UncertaintyClass in cognition/uncertainty.rs.
+    /// Part of the Cognitive Layer in the Cognition & Decision-Driven Design paradigm.
+    /// See `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3
+    UncertaintyEncountered {
+        /// "generative" | "cognitive" | "executional"
+        uncertainty_kind: String,
+        turn_id: String,
+        description: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resolution_strategy: Option<String>,
+    },
+
+    // ── Decision audit (认知显化与决策驱动设计) ──
+    /// Emitted when the adjudication pipeline rejects or approves an action.
+    /// Part of the Decision Layer in the Cognition & Decision-Driven Design paradigm.
+    /// See `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3
+    DecisionMade {
+        turn_id: String,
+        tool_name: String,
+        allowed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_ms: Option<u64>,
+    },
+
+    // ── Evaluation (决策层审计 — H0-H3 评估阶梯) ──
+    /// Emitted after turn evaluation completes.
+    /// Part of the Harness Engineering evaluation framework.
+    /// See `docs/ai-agent-archi/cognition-decision-driven-design.md` §4.1
+    EvaluationScore {
+        turn_id: String,
+        /// "H0" | "H1" | "H2" | "H3"
+        level: String,
+        /// 0.0 - 1.0
+        quality_score: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        summary: Option<String>,
+    },
+
     // ── Settled state (after SessionEnd, agent fully idle) ──
     AgentSettled {
         session_id: String,
@@ -488,6 +530,9 @@ pub fn agent_event_tag(event: &AgentEvent) -> &'static str {
         AgentEvent::ContextThreshold { .. } => "context_threshold",
         AgentEvent::Error { .. } => "error",
         AgentEvent::AgentInterrupted { .. } => "agent_interrupted",
+        AgentEvent::UncertaintyEncountered { .. } => "uncertainty_encountered",
+        AgentEvent::DecisionMade { .. } => "decision_made",
+        AgentEvent::EvaluationScore { .. } => "evaluation_score",
         AgentEvent::AgentSettled { .. } => "agent_settled",
     }
 }
@@ -580,6 +625,51 @@ pub fn validate_pi_turn_lifecycle_order(events: &[AgentEvent]) -> Result<(), Str
         return Err("turn_start without matching turn_end".into());
     }
     Ok(())
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Event detail level — 认知显化与决策驱动设计 治理层 §3.2
+// ═══════════════════════════════════════════════════════════════
+
+/// 事件重要性分级（用于导出和保留策略）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum EventDetailLevel {
+    /// 必须记录 — 关键决策和系统事件
+    Critical = 0,
+    /// 默认记录 — 常规流程
+    Standard = 1,
+    /// 仅调试时记录 — 高频细粒度事件
+    Verbose = 2,
+}
+
+impl AgentEvent {
+    /// 返回事件的重要性分级
+    ///
+    /// 对应 `docs/ai-agent-archi/uncodenow-refactoring-roadmap.md` §3.2
+    pub fn detail_level(&self) -> EventDetailLevel {
+        match self {
+            // Critical: 关键决策和生命周期事件
+            Self::SessionStart { .. }
+            | Self::SessionEnd { .. }
+            | Self::TurnStart { .. }
+            | Self::TurnEnd { .. }
+            | Self::ToolCallEnd { .. }
+            | Self::DecisionMade { .. }
+            | Self::Error { .. }
+            | Self::CompactionComplete { .. }
+            | Self::AgentInterrupted { .. } => EventDetailLevel::Critical,
+
+            // Verbose: 高频细粒度事件
+            Self::ToolCallProgress { .. } | Self::ToolCallAwaitingApproval { .. } => {
+                EventDetailLevel::Verbose
+            }
+
+            // Standard: 其余所有
+            _ => EventDetailLevel::Standard,
+        }
+    }
 }
 
 #[cfg(test)]

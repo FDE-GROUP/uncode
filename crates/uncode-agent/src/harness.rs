@@ -1,4 +1,26 @@
-//! AgentHarness — 生产编排器（Pi 三层架构的最高层）
+//! AgentHarness — 决策层编排器
+//!
+//! ## 认知显化与决策驱动设计中的定位
+//!
+//! `AgentHarness` 是决策层的最高编排点，对应范式中的
+//! "Harness = 决策层编排器"（参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §附注）。
+//!
+//! ## 与 decision/ 模块的映射
+//!
+//! | AgentHarness 职责 | 映射到的 decision/ 模块 |
+//! |:---|:---|
+//! | Phase 守卫 | `decision::adjudication::PhaseGuardPolicy` |
+//! | MAX_TURNS 检查 | `decision::adjudication::TurnLimitPolicy` |
+//! | CancellationToken 检查 | `decision::adjudication::CancellationPolicy` |
+//! | active_run CAS | `decision::adjudication::ConcurrencyPolicy` |
+//! | 权限策略 | `decision::firewall::PermissionPolicyRule` |
+//! | 路径安全 | `decision::firewall::PathSafetyRule` |
+//! | Schema 验证 | `decision::firewall::SchemaCoercionRule` |
+//!
+//! ## 演进方向
+//!
+//! 当前 AgentHarness 内联了部分决策逻辑。在后续重构中，
+//! 这些逻辑将逐步委托给 `decision/` 模块的 Adjudicator 和 SemanticFirewall。
 //!
 //! 职责：
 //! - Phase 守卫（Idle/Turn/Compaction/BranchSummary/Retry）
@@ -117,8 +139,91 @@ impl AgentHarness {
         &self.phase
     }
 
+    // ── 决策层集成（认知显化与决策驱动设计）──
+
+    /// 构建完整的决策管线：防火墙 → 裁决器 → 执行编排器
+    ///
+    /// 组合 `decision/` 模块中的 firewall、adjudication、execution 组件。
+    /// 当前用于验证新增决策层组件可与现有 AgentLoop 并行工作；
+    /// 后续 refactor 中 AgentLoop 的工具执行将逐步委托给此管线。
+    ///
+    /// 参见 `docs/uncode-technologies/UNCODE_DECISION_LAYER.md`
+    pub fn build_decision_adjudicator(
+        &self,
+        cancel_token: tokio_util::sync::CancellationToken,
+    ) -> crate::decision::adjudication::Adjudicator {
+        use crate::decision::adjudication::{
+            CancellationPolicy, ConcurrencyPolicy, PhaseGuardPolicy, TurnLimitPolicy,
+            build_default_adjudicator,
+        };
+        use std::sync::Arc;
+        use std::sync::atomic::AtomicBool;
+
+        let phase_policy = PhaseGuardPolicy::new(self.phase.clone());
+
+        build_default_adjudicator(
+            phase_policy,
+            cancel_token,
+            crate::loop_engine::MAX_TURNS as u32,
+            Arc::new(AtomicBool::new(true)),
+        )
+    }
+
+    /// 构建语义防火墙（包装现有 PermissionPolicy）
+    pub fn build_firewall(
+        &self,
+        cancel_token: tokio_util::sync::CancellationToken,
+        tool_registry: std::sync::Arc<crate::tools::ToolRegistry>,
+    ) -> crate::decision::firewall::SemanticFirewall {
+        use crate::decision::firewall::build_default_firewall;
+        use crate::tool_permission::PermissionPolicy;
+        use std::sync::Arc;
+
+        let policy = Arc::new(PermissionPolicy::default_policy());
+
+        build_default_firewall(
+            policy,
+            tool_registry,
+            std::env::current_dir().unwrap_or_default(),
+        )
+    }
+
     pub fn is_idle(&self) -> bool {
         self.phase == AgentHarnessPhase::Idle
+    }
+
+    // ── 决策反馈桥（认知显化与决策驱动设计 原则5）──
+
+    /// 将工具执行结果通过反馈桥回流到认知层
+    ///
+    /// 原则 5：事件流是双向通道。
+    /// 每次工具执行完成后调用此方法，将结果转化为
+    /// ActionObservation → AgentStep → WorkingMemory 反馈。
+    ///
+    /// 参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3
+    pub fn bridge_execution_to_cognition(
+        &self,
+        result: &crate::decision::execution::ExecutionResult,
+        turn_number: u32,
+        active_tools: &[String],
+        context_tokens: usize,
+    ) {
+        use crate::decision::feedback::FeedbackBridge;
+
+        // 生成 AgentStep（离线训练数据）
+        let step = FeedbackBridge::to_agent_step(
+            format!("turn-{turn_number}"),
+            turn_number,
+            active_tools,
+            context_tokens,
+            result,
+            FeedbackBridge::infer_feedback(result),
+        );
+
+        // AgentStep 已生成（面向离线训练）
+        // AgentEvent::EvaluationScore 将在 turn 结束时聚合发出
+        // TODO(#340): 接入 FeedbackBridge.emit(via agent.event_tx)
+        let _ = step;
     }
 
     // ── 核心方法 ──
