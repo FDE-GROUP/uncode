@@ -1,4 +1,4 @@
-# uncode 重构路线图：打造"认知与决策驱动设计"最佳实践
+# uncode 重构路线图：打造"认知显化与决策驱动设计"最佳实践
 
 > 目标：将 uncode 从"隐含地体现了范式"升级为"范式的最佳实践参考实现"  
 > 依据：`cognition-decision-driven-design.md`（范式定义） + `uncodenow-architecture-evaluation.md`（现状差距）  
@@ -392,7 +392,7 @@ pub struct PromptManager {
 }
 
 impl PromptManager {
-    /// 认知与决策驱动设计的原则 2：提示词是认知层的领域语言
+    /// 认知显化与决策驱动设计的原则 2：提示词是认知层的领域语言
     /// 它编码了"系统期望 LLM 理解什么"——但决策层不接触它
     pub fn build_system_prompt(&self, context: &CognitiveContext) -> String {
         // ...
@@ -426,7 +426,7 @@ impl PromptManager {
 **重构**——引入 `guardrails.yaml`（或 `.uncode/guardrails.yaml`）：
 
 ```yaml
-# .uncode/guardrails.yaml — 认知与决策驱动设计的可配置护栏
+# .uncode/guardrails.yaml — 认知显化与决策驱动设计的可配置护栏
 version: 1
 
 decision:
@@ -589,7 +589,7 @@ docs/ai-agent-archi/
 └── uncodenow-refactoring-roadmap.md     # 本文档
 ```
 
-**关键**：每个文档的引言段应明确引用"认知与决策驱动设计"范式，并标注本篇是该范式在 uncode 中的实现层说明。
+**关键**：每个文档的引言段应明确引用"认知显化与决策驱动设计"范式，并标注本篇是该范式在 uncode 中的实现层说明。
 
 ### 4.2 架构图
 

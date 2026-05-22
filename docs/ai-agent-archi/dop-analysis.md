@@ -2,7 +2,7 @@
 
 > 论文：*Decision-Oriented Programming with Aporia* (arXiv:2604.05203, 2026-04-06)
 > 作者：Kasibatla, Rothkopf, Peleg, Pierce, Lerner, Goldstein, Polikarpova
-> 分析目标：评估 DOP 与"认知与决策驱动设计"范式的关系，提取可整合的洞察
+> 分析目标：评估 DOP 与"认知显化与决策驱动设计"范式的关系，提取可整合的洞察
 
 ---
 
@@ -47,11 +47,11 @@
 
 ---
 
-## 二、与"认知与决策驱动设计"的对应关系
+## 二、与"认知显化与决策驱动设计"的对应关系
 
 ### 2.1 结构对比
 
-| 维度 | 认知与决策驱动设计 | DOP (Aporia) | 关系 |
+| 维度 | 认知显化与决策驱动设计 | DOP (Aporia) | 关系 |
 |:---|:---|:---|:---|
 | **"决策"的地位** | 决策 = 第一公民（决策层核心） | 决策 = 第一公民（Decision Bank 核心） | **完全一致** |
 | **决策的记录** | `DecisionRecord` + `AuditTrail`（系统内部） | Decision Bank（用户可见 UI） | **互补**：一个对内一个对外 |
@@ -81,7 +81,7 @@
 
 ---
 
-## 三、对"认知与决策驱动设计"的启示
+## 三、对"认知显化与决策驱动设计"的启示
 
 ### 3.1 可整合的洞察
 
@@ -118,7 +118,7 @@
 
 ## 四、总结
 
-DOP 与"认知与决策驱动设计"**内核一致，视角互补**：
+DOP 与"认知显化与决策驱动设计"**内核一致，视角互补**：
 
 - DOP 从 HCI 角度出发，关注**人类开发者**如何在 AI 辅助下保持决策权，用 Decision Bank + Questions + Tests 实现。
 - 我们从软件架构角度出发，关注**系统内部**如何组织认知与决策的分层，用 Cognition Layer + Firewall + Decision Layer + Governance Layer 实现。

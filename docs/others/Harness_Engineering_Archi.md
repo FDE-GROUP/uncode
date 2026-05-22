@@ -1,7 +1,7 @@
 # AI Harness Engineering — 内部工程架构
 
 > **定位说明**：本文描述 Agent **内部**的五模块工程架构——编排器怎么设计、工具怎么注册、
-> 记忆怎么分层、怎么观测、怎么进化。这是"认知与决策驱动设计"范式治理层的工程实践子层。
+> 记忆怎么分层、怎么观测、怎么进化。这是"认知显化与决策驱动设计"范式治理层的工程实践子层。
 > 范式总览见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §4。
 >
 > **注意**：Anthropic 在 Claude Code 博文（2026-05）中提出的 Harness 概念侧重**开发者界面层**

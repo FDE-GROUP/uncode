@@ -1,6 +1,6 @@
 //! AgentStep — 面向离线训练的决策步骤模型
 //!
-//! 认知与决策驱动设计 决策层 §3.3 中的 AgentStep 模型：
+//! 认知显化与决策驱动设计 决策层 §3.3 中的 AgentStep 模型：
 //! ```text
 //! { state_before, action, observation, feedback? }
 //! ```

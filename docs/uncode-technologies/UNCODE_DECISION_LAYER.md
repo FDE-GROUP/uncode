@@ -1,6 +1,6 @@
 # UNCODE_DECISION_LAYER — 决策层设计文档
 
-> **范式**：认知与决策驱动设计（`docs/ai-agent-archi/cognition-decision-driven-design.md`）
+> **范式**：认知显化与决策驱动设计（`docs/ai-agent-archi/cognition-decision-driven-design.md`）
 > **实现层定位**：uncode 的决策层实现——源文件 `crates/uncode-agent/src/decision/`
 
 ---

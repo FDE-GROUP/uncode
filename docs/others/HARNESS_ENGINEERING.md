@@ -419,7 +419,7 @@ LangChain 与 OpenAI 均指出：**模型与 Harness 协同训练**（post-train
 
 ---
 
-> **范式整合**：Harness Engineering 是"认知与决策驱动设计"范式**治理层的工程实践子层**。  
+> **范式整合**：Harness Engineering 是"认知显化与决策驱动设计"范式**治理层的工程实践子层**。  
 > 本综述中的 Harness 组件在范式中有精确的架构位置：  
 > - Orchestrator / State Machine → `decision/adjudication.rs`  
 > - Tool Registry / Sandbox → `decision/firewall.rs` + `tools/registry.rs`  

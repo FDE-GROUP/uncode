@@ -203,7 +203,7 @@ pub enum AgentEvent {
         partial_response: bool,
     },
 
-    // ── Uncertainty (认知层 — 认知与决策驱动设计) ──
+    // ── Uncertainty (认知层 — 认知显化与决策驱动设计) ──
     /// Emitted when an uncertainty is classified and resolved.
     /// Maps to UncertaintyClass in cognition/uncertainty.rs.
     /// Part of the Cognitive Layer in the Cognition & Decision-Driven Design paradigm.
@@ -217,7 +217,7 @@ pub enum AgentEvent {
         resolution_strategy: Option<String>,
     },
 
-    // ── Decision audit (认知与决策驱动设计) ──
+    // ── Decision audit (认知显化与决策驱动设计) ──
     /// Emitted when the adjudication pipeline rejects or approves an action.
     /// Part of the Decision Layer in the Cognition & Decision-Driven Design paradigm.
     /// See `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3
@@ -628,7 +628,7 @@ pub fn validate_pi_turn_lifecycle_order(events: &[AgentEvent]) -> Result<(), Str
 }
 
 // ═══════════════════════════════════════════════════════════════
-// Event detail level — 认知与决策驱动设计 治理层 §3.2
+// Event detail level — 认知显化与决策驱动设计 治理层 §3.2
 // ═══════════════════════════════════════════════════════════════
 
 /// 事件重要性分级（用于导出和保留策略）

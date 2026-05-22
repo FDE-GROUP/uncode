@@ -1,4 +1,4 @@
-//! GuardrailConfig — 认知与决策驱动设计的声明式护栏配置
+//! GuardrailConfig — 认知显化与决策驱动设计的声明式护栏配置
 //!
 //! 对应 `.uncode/guardrails.yaml`（或 `.uncode/guardrails.json`）的 Rust 类型定义。
 //! 参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §4.2 治理铁三角

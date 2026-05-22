@@ -61,9 +61,9 @@ uncode/
   - `ollama-native` — Ollama 原生 API
 - **Platform 前端**：TypeScript（React 19 + TanStack 全家桶）
 
-## 架构范式：认知与决策驱动设计
+## 架构范式：认知显化与决策驱动设计
 
-uncode 采用**认知与决策驱动设计**作为架构方法论。参见 [`docs/ai-agent-archi/cognition-decision-driven-design.md`](docs/ai-agent-archi/cognition-decision-driven-design.md)。
+uncode 采用**认知显化与决策驱动设计**作为架构方法论。参见 [`docs/ai-agent-archi/cognition-decision-driven-design.md`](docs/ai-agent-archi/cognition-decision-driven-design.md)。
 
 **四层架构**：
 
