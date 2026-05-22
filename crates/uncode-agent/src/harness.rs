@@ -1,6 +1,6 @@
 //! AgentHarness — 决策层编排器
 //!
-//! ## 认知与决策驱动设计中的定位
+//! ## 认知显化与决策驱动设计中的定位
 //!
 //! `AgentHarness` 是决策层的最高编排点，对应范式中的
 //! "Harness = 决策层编排器"（参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §附注）。
@@ -139,7 +139,7 @@ impl AgentHarness {
         &self.phase
     }
 
-    // ── 决策层集成（认知与决策驱动设计）──
+    // ── 决策层集成（认知显化与决策驱动设计）──
 
     /// 构建完整的决策管线：防火墙 → 裁决器 → 执行编排器
     ///
@@ -192,7 +192,7 @@ impl AgentHarness {
         self.phase == AgentHarnessPhase::Idle
     }
 
-    // ── 决策反馈桥（认知与决策驱动设计 原则5）──
+    // ── 决策反馈桥（认知显化与决策驱动设计 原则5）──
 
     /// 将工具执行结果通过反馈桥回流到认知层
     ///

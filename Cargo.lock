@@ -6106,6 +6106,7 @@ dependencies = [
  "tracing",
  "uncode-ai",
  "uncode-core",
+ "uncode-shared",
  "uuid",
  "walkdir",
  "wiremock",

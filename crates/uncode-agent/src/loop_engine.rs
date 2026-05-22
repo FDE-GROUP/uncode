@@ -172,11 +172,11 @@ pub struct AgentLoop {
     graph_cache: Option<Arc<crate::workspace_graph::WorkspaceGraphCache>>,
     compaction_config: CompactionConfig,
     skill_registry: Option<uncode_core::skill::SkillRegistry>,
-    /// 决策层提案累积器 — 认知与决策驱动设计 Phase 1 连线 (#339)
+    /// 决策层提案累积器 — 认知显化与决策驱动设计 Phase 1 连线 (#339)
     proposal_acc: std::sync::Mutex<crate::decision::proposal::ProposalAccumulator>,
-    /// 语义防火墙 — 认知与决策驱动设计 原则2 (#339 强制执行)
+    /// 语义防火墙 — 认知显化与决策驱动设计 原则2 (#339 强制执行)
     firewall: std::sync::Mutex<Option<crate::decision::firewall::SemanticFirewall>>,
-    /// 演化引擎 — 认知与决策驱动设计 自适应进化 (#342)
+    /// 演化引擎 — 认知显化与决策驱动设计 自适应进化 (#342)
     evolution: std::sync::Mutex<uncode_shared::evolution::EvolutionEngine>,
 }
 
