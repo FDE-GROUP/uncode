@@ -1392,6 +1392,46 @@ impl AgentLoop {
                                         }),
                                     });
 
+                                    // ── 决策层评估 + 反馈 (原则5: 事件流双向通道, #340) ──
+                                    {
+                                        use crate::decision::evaluator::Evaluator;
+                                        use crate::decision::feedback::FeedbackBridge;
+                                        let result = crate::decision::execution::ExecutionResult {
+                                            tool_id: id.clone(),
+                                            tool_name: name.clone(),
+                                            success: !is_error,
+                                            duration_ms,
+                                            output: Some(content_text.clone()),
+                                            error: if is_error { Some(content_text.clone()) } else { None },
+                                            terminate: tool_result.terminate,
+                                        };
+                                        let evaluator: &dyn Evaluator = if result.output.as_ref().map_or(false, |o| o.contains("test result:")) {
+                                            &crate::decision::evaluator::VerifiedEvaluator
+                                        } else {
+                                            &crate::decision::evaluator::BasicEvaluator
+                                        };
+                                        let ctx = crate::decision::evaluator::EvaluationContext {
+                                            turn_number: turn as u32,
+                                            tool_name: name.clone(),
+                                            test_output: if content_text.contains("test result:") { Some(content_text.clone()) } else { None },
+                                            lint_output: None,
+                                        };
+                                        let score = evaluator.evaluate(&result, &ctx);
+                                        let level_name = match score.level {
+                                            crate::decision::evaluator::AssessmentLevel::RawOutput => "H0",
+                                            crate::decision::evaluator::AssessmentLevel::Basic => "H1",
+                                            crate::decision::evaluator::AssessmentLevel::Verified => "H2",
+                                            crate::decision::evaluator::AssessmentLevel::Reproducible => "H3",
+                                        };
+                                        self.emit(AgentEvent::EvaluationScore {
+                                            turn_id: format!("turn-{turn}"),
+                                            level: level_name.to_string(),
+                                            quality_score: score.quality_score,
+                                            summary: Some(format!("{}: {:.0}%", name, score.quality_score * 100.0)),
+                                        });
+                                        let _feedback = FeedbackBridge::infer_feedback(&result);
+                                    }
+
                                     let args_short = summarize_tool_args(
                                         exec_args_by_id.get(id).map(|s| s.as_str()).unwrap_or(""),
                                     );
