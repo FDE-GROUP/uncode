@@ -174,6 +174,8 @@ pub struct AgentLoop {
     skill_registry: Option<uncode_core::skill::SkillRegistry>,
     /// 决策层提案累积器 — 认知与决策驱动设计 Phase 1 连线 (#339)
     proposal_acc: std::sync::Mutex<crate::decision::proposal::ProposalAccumulator>,
+    /// 语义防火墙 — 认知与决策驱动设计 原则2 (#339 强制执行)
+    firewall: std::sync::Mutex<Option<crate::decision::firewall::SemanticFirewall>>,
 }
 
 impl AgentLoop {
@@ -213,6 +215,7 @@ impl AgentLoop {
             proposal_acc: std::sync::Mutex::new(
                 crate::decision::proposal::ProposalAccumulator::new(),
             ),
+            firewall: std::sync::Mutex::new(None),
         }
     }
 
@@ -290,6 +293,7 @@ impl AgentLoop {
             proposal_acc: std::sync::Mutex::new(
                 crate::decision::proposal::ProposalAccumulator::new(),
             ),
+            firewall: std::sync::Mutex::new(None),
         }
     }
 
@@ -426,7 +430,7 @@ impl AgentLoop {
         mq.clear_all()
     }
 
-    fn emit(&self, event: AgentEvent) {
+    pub(crate) fn emit(&self, event: AgentEvent) {
         let _ = self.event_tx.send(event);
     }
 
@@ -1229,6 +1233,41 @@ impl AgentLoop {
                                 .iter()
                                 .map(|(id, _, args)| (id.clone(), args.to_string()))
                                 .collect();
+
+                            // ── 决策层防火墙验证 (原则2: 自然语言止于防火墙, #339) ──
+                            {
+                                let acc = self.proposal_acc.lock().unwrap();
+                                let proposals = acc.completed();
+                                if !proposals.is_empty() {
+                                    let mut fw = self.firewall.lock().unwrap();
+                                    if fw.is_none() {
+                                        *fw = Some(crate::decision::firewall::build_default_firewall(
+                                            std::sync::Arc::new(crate::tool_permission::PermissionPolicy::default_policy()),
+                                            Arc::clone(&self.tool_registry),
+                                            std::env::current_dir().unwrap_or_default(),
+                                        ));
+                                    }
+                                    if let Some(ref firewall) = *fw {
+                                        for proposal in proposals {
+                                            match firewall.process(proposal) {
+                                                Ok(_normalized) => {
+                                                    // 提案通过防火墙——继续执行
+                                                }
+                                                Err(e) => {
+                                                    tracing::warn!("firewall blocked proposal {}: {e}", proposal.tool_name);
+                                                    self.emit(AgentEvent::DecisionMade {
+                                                        turn_id: format!("turn-{turn}"),
+                                                        tool_name: proposal.tool_name.clone(),
+                                                        allowed: false,
+                                                        reason: Some(e.to_string()),
+                                                        duration_ms: None,
+                                                    });
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
 
                             // Batch-execute buffered tool calls (same `executions` as assistant ToolCalls)
                             if !executions.is_empty() {

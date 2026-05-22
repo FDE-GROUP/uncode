@@ -220,7 +220,9 @@ impl AgentHarness {
             FeedbackBridge::infer_feedback(result),
         );
 
-        // 后续接入事件总线时：self.agent.emit(AgentEvent::AgentStep(step));
+        // AgentStep 已生成（面向离线训练）
+        // AgentEvent::EvaluationScore 将在 turn 结束时聚合发出
+        // TODO(#340): 接入 FeedbackBridge.emit(via agent.event_tx)
         let _ = step;
     }
 
