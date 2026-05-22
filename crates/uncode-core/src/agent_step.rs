@@ -57,8 +57,18 @@ pub struct ActionObservation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Feedback {
-    HumanApproval { approved: bool, comment: Option<String> },
-    TestPassed { test_name: String },
-    TestFailed { test_name: String, error: String },
-    AutoRevert { reason: String },
+    HumanApproval {
+        approved: bool,
+        comment: Option<String>,
+    },
+    TestPassed {
+        test_name: String,
+    },
+    TestFailed {
+        test_name: String,
+        error: String,
+    },
+    AutoRevert {
+        reason: String,
+    },
 }

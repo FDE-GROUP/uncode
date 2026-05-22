@@ -64,11 +64,19 @@ pub struct DecisionVerdict {
 
 impl DecisionVerdict {
     pub fn approved() -> Self {
-        Self { allowed: true, reason: None, violations: vec![] }
+        Self {
+            allowed: true,
+            reason: None,
+            violations: vec![],
+        }
     }
 
     pub fn denied(reason: impl Into<String>) -> Self {
-        Self { allowed: false, reason: Some(reason.into()), violations: vec![] }
+        Self {
+            allowed: false,
+            reason: Some(reason.into()),
+            violations: vec![],
+        }
     }
 }
 
@@ -119,16 +127,24 @@ mod tests {
     #[test]
     fn test_approved_action_fields() {
         let action = NormalizedAction {
-            tool_name: "read".into(), arguments: serde_json::json!({"path": "a.rs"}),
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"path": "a.rs"}),
             normalized_fields: vec!["path".into()],
         };
-        let approved = ApprovedAction { action, adjudicated_at: chrono::Utc::now() };
+        let approved = ApprovedAction {
+            action,
+            adjudicated_at: chrono::Utc::now(),
+        };
         assert_eq!(approved.action.tool_name, "read");
     }
 
     #[test]
     fn test_decision_context() {
-        let ctx = DecisionContext { turn_number: 3, max_turns: 50, active_tools: vec!["read".into()] };
+        let ctx = DecisionContext {
+            turn_number: 3,
+            max_turns: 50,
+            active_tools: vec!["read".into()],
+        };
         assert_eq!(ctx.turn_number, 3);
     }
 
@@ -136,7 +152,12 @@ mod tests {
     fn test_denied_record_has_no_action() {
         let record = DecisionRecord {
             turn_id: "t1".into(),
-            proposal: ActionProposal { tool_name: "rm".into(), raw_arguments: serde_json::json!({}), rationale: None, confidence: None },
+            proposal: ActionProposal {
+                tool_name: "rm".into(),
+                raw_arguments: serde_json::json!({}),
+                rationale: None,
+                confidence: None,
+            },
             verdict: DecisionVerdict::denied("dangerous"),
             approved_action: None,
             timestamp: chrono::Utc::now(),

@@ -78,7 +78,10 @@ pub struct EvolutionEngine {
 
 impl EvolutionEngine {
     pub fn new(min_pattern_count: u32) -> Self {
-        Self { log: Vec::new(), min_pattern_count }
+        Self {
+            log: Vec::new(),
+            min_pattern_count,
+        }
     }
 
     /// 记录一次失败
@@ -118,20 +121,19 @@ impl EvolutionEngine {
         }
 
         // 模式 2: Turn 超限
-        if self.count_pattern(|e| matches!(e.failure_type, FailurePattern::TurnLimitExceeded { .. })) >= self.min_pattern_count {
-            mutations.push(HarnessMutation::TightenTurnLimit {
-                from: 50,
-                to: 40,
-            });
+        if self
+            .count_pattern(|e| matches!(e.failure_type, FailurePattern::TurnLimitExceeded { .. }))
+            >= self.min_pattern_count
+        {
+            mutations.push(HarnessMutation::TightenTurnLimit { from: 50, to: 40 });
         }
 
         // 模式 3: 上下文频繁溢出
-        if self.count_pattern(|e| matches!(e.failure_type, FailurePattern::ContextOverflow { .. })) >= self.min_pattern_count {
+        if self.count_pattern(|e| matches!(e.failure_type, FailurePattern::ContextOverflow { .. }))
+            >= self.min_pattern_count
+        {
             // 建议减少并发（更多并发 = 更快填满上下文）
-            mutations.push(HarnessMutation::ReduceConcurrency {
-                from: 8,
-                to: 4,
-            });
+            mutations.push(HarnessMutation::ReduceConcurrency { from: 8, to: 4 });
         }
 
         // 模式 4: 测试循环（重复失败同一测试）
@@ -139,7 +141,9 @@ impl EvolutionEngine {
         for (test_name, attempts) in test_loops {
             if attempts >= self.min_pattern_count {
                 mutations.push(HarnessMutation::Custom {
-                    description: format!("test '{test_name}' failed {attempts} times — consider adding to skip list"),
+                    description: format!(
+                        "test '{test_name}' failed {attempts} times — consider adding to skip list"
+                    ),
                 });
             }
         }
@@ -154,9 +158,16 @@ impl EvolutionEngine {
                 HarnessMutation::TightenTurnLimit { to, .. } => {
                     config.decision.turn_limit = *to;
                 }
-                HarnessMutation::BlockTool { tool_name, reason: _ } => {
+                HarnessMutation::BlockTool {
+                    tool_name,
+                    reason: _,
+                } => {
                     if !config.firewall.tool_whitelist.blocked.contains(tool_name) {
-                        config.firewall.tool_whitelist.blocked.push(tool_name.clone());
+                        config
+                            .firewall
+                            .tool_whitelist
+                            .blocked
+                            .push(tool_name.clone());
                     }
                 }
                 HarnessMutation::ReduceConcurrency { to, .. } => {
@@ -194,15 +205,29 @@ impl EvolutionEngine {
     fn classify_failure(tool_name: &str, error: &str, turn: u32) -> FailurePattern {
         let error_lower = error.to_lowercase();
         if error_lower.contains("context length") || error_lower.contains("too many tokens") {
-            FailurePattern::ContextOverflow { tokens: 0, max_tokens: 0 }
-        } else if error_lower.contains("permission") || error_lower.contains("denied") || error_lower.contains("blocked") {
-            FailurePattern::PermissionDenied { reason: error.to_string() }
+            FailurePattern::ContextOverflow {
+                tokens: 0,
+                max_tokens: 0,
+            }
+        } else if error_lower.contains("permission")
+            || error_lower.contains("denied")
+            || error_lower.contains("blocked")
+        {
+            FailurePattern::PermissionDenied {
+                reason: error.to_string(),
+            }
         } else if error_lower.contains("test") && error_lower.contains("fail") {
-            FailurePattern::TestLoopDetected { test_name: error.to_string(), attempts: 1 }
+            FailurePattern::TestLoopDetected {
+                test_name: error.to_string(),
+                attempts: 1,
+            }
         } else if turn >= 50 {
             FailurePattern::TurnLimitExceeded { max_turns: 50 }
         } else {
-            FailurePattern::RepeatedToolFailure { tool_name: tool_name.to_string(), count: 1 }
+            FailurePattern::RepeatedToolFailure {
+                tool_name: tool_name.to_string(),
+                count: 1,
+            }
         }
     }
 
@@ -210,7 +235,8 @@ impl EvolutionEngine {
         let mut results = Vec::new();
         let mut i = 0;
         while i < self.log.len() {
-            if let FailurePattern::RepeatedToolFailure { tool_name, .. } = &self.log[i].failure_type {
+            if let FailurePattern::RepeatedToolFailure { tool_name, .. } = &self.log[i].failure_type
+            {
                 let name = tool_name.clone();
                 let mut count = 1u32;
                 let mut j = i + 1;
@@ -233,7 +259,8 @@ impl EvolutionEngine {
 
     fn find_test_loops(&self) -> Vec<(String, u32)> {
         let mut results = Vec::new();
-        let mut test_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+        let mut test_counts: std::collections::HashMap<String, u32> =
+            std::collections::HashMap::new();
         for entry in &self.log {
             if let FailurePattern::TestLoopDetected { test_name, .. } = &entry.failure_type {
                 *test_counts.entry(test_name.clone()).or_insert(0) += 1;
@@ -258,8 +285,8 @@ impl EvolutionEngine {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::guardrails::GuardrailConfig;
+    use super::*;
 
     #[test]
     fn test_classify_context_overflow() {
@@ -280,9 +307,17 @@ mod tests {
         engine.record_failure(2, "bash", "command not found");
         engine.record_failure(3, "bash", "command not found");
         let mutations = engine.analyze();
-        assert!(!mutations.is_empty(), "should detect repeated bash failures");
-        let has_block = mutations.iter().any(|m| matches!(m, HarnessMutation::BlockTool { tool_name, .. } if tool_name == "bash"));
-        assert!(has_block, "should suggest blocking bash after 3 consecutive failures");
+        assert!(
+            !mutations.is_empty(),
+            "should detect repeated bash failures"
+        );
+        let has_block = mutations.iter().any(
+            |m| matches!(m, HarnessMutation::BlockTool { tool_name, .. } if tool_name == "bash"),
+        );
+        assert!(
+            has_block,
+            "should suggest blocking bash after 3 consecutive failures"
+        );
     }
 
     #[test]
@@ -292,7 +327,9 @@ mod tests {
         engine.record_failure(2, "bash", "error");
         // Only 2 failures, threshold is 3 → no mutation
         let mutations = engine.analyze();
-        let has_block = mutations.iter().any(|m| matches!(m, HarnessMutation::BlockTool { .. }));
+        let has_block = mutations
+            .iter()
+            .any(|m| matches!(m, HarnessMutation::BlockTool { .. }));
         assert!(!has_block, "should not suggest mutation below threshold");
     }
 
@@ -312,7 +349,13 @@ mod tests {
             reason: "dangerous".into(),
         }];
         EvolutionEngine::apply_to_config(&mutations, &mut config);
-        assert!(config.firewall.tool_whitelist.blocked.contains(&"rm".to_string()));
+        assert!(
+            config
+                .firewall
+                .tool_whitelist
+                .blocked
+                .contains(&"rm".to_string())
+        );
     }
 
     #[test]
@@ -321,7 +364,11 @@ mod tests {
         engine.record_failure(1, "bash", "context length exceeded: 100000 tokens");
         engine.record_failure(2, "bash", "too many tokens in context");
         let mutations = engine.analyze();
-        assert!(mutations.iter().any(|m| matches!(m, HarnessMutation::ReduceConcurrency { .. })),
-            "context overflow should trigger concurrency reduction");
+        assert!(
+            mutations
+                .iter()
+                .any(|m| matches!(m, HarnessMutation::ReduceConcurrency { .. })),
+            "context overflow should trigger concurrency reduction"
+        );
     }
 }

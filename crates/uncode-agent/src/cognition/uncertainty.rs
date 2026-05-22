@@ -162,8 +162,7 @@ mod tests {
 
     #[test]
     fn test_cognitive_uncertainty_from_context_overflow() {
-        let class =
-            UncertaintyClass::from_error_category("llm", "context length exceeded");
+        let class = UncertaintyClass::from_error_category("llm", "context length exceeded");
         assert!(matches!(class, UncertaintyClass::Cognitive(_)));
     }
 

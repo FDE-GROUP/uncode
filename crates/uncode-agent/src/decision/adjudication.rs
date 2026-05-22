@@ -16,8 +16,8 @@
 //!
 //! 参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3 决策层
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio_util::sync::CancellationToken;
 
@@ -91,7 +91,9 @@ pub struct PhaseGuardPolicy {
 
 impl PhaseGuardPolicy {
     pub fn new(initial: AgentHarnessPhase) -> Self {
-        Self { phase: std::sync::Mutex::new(initial) }
+        Self {
+            phase: std::sync::Mutex::new(initial),
+        }
     }
 
     /// 更新当前 Phase（由 AgentHarness 在状态转换时调用）
@@ -103,7 +105,10 @@ impl PhaseGuardPolicy {
 
     /// 读取当前 Phase
     pub fn current_phase(&self) -> AgentHarnessPhase {
-        self.phase.lock().map(|p| p.clone()).unwrap_or(AgentHarnessPhase::Idle)
+        self.phase
+            .lock()
+            .map(|p| p.clone())
+            .unwrap_or(AgentHarnessPhase::Idle)
     }
 }
 
@@ -115,15 +120,15 @@ impl DecisionPolicy for PhaseGuardPolicy {
     ) -> Result<DecisionVerdict, AdjudicationError> {
         let phase = self.current_phase();
         match phase {
-            AgentHarnessPhase::Idle | AgentHarnessPhase::Turn => {
-                Ok(DecisionVerdict::approved())
-            }
+            AgentHarnessPhase::Idle | AgentHarnessPhase::Turn => Ok(DecisionVerdict::approved()),
             _ => Ok(DecisionVerdict::denied(format!(
                 "agent is in {phase} phase, not accepting new actions"
             ))),
         }
     }
-    fn name(&self) -> &'static str { "phase_guard" }
+    fn name(&self) -> &'static str {
+        "phase_guard"
+    }
 }
 
 // ── TurnLimitPolicy ─────────────────────────────────────
@@ -153,7 +158,9 @@ impl DecisionPolicy for TurnLimitPolicy {
         }
         Ok(DecisionVerdict::approved())
     }
-    fn name(&self) -> &'static str { "turn_limit" }
+    fn name(&self) -> &'static str {
+        "turn_limit"
+    }
 }
 
 // ── CancellationPolicy ──────────────────────────────────
@@ -180,7 +187,9 @@ impl DecisionPolicy for CancellationPolicy {
         }
         Ok(DecisionVerdict::approved())
     }
-    fn name(&self) -> &'static str { "cancellation" }
+    fn name(&self) -> &'static str {
+        "cancellation"
+    }
 }
 
 // ── ConcurrencyPolicy ───────────────────────────────────
@@ -211,7 +220,9 @@ impl DecisionPolicy for ConcurrencyPolicy {
         }
         Ok(DecisionVerdict::denied("no active agent run"))
     }
-    fn name(&self) -> &'static str { "concurrency" }
+    fn name(&self) -> &'static str {
+        "concurrency"
+    }
 }
 
 // ── Builder ─────────────────────────────────────────────
@@ -337,7 +348,10 @@ mod tests {
         let result = adj.adjudicate(&make_action(), &make_context(1));
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("cancellation"), "expected cancellation error, got: {err}");
+        assert!(
+            err.contains("cancellation"),
+            "expected cancellation error, got: {err}"
+        );
     }
 
     #[test]

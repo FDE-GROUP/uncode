@@ -1,1 +1,3 @@
-fn main() { println!("export smoke test placeholder"); }
+fn main() {
+    println!("export smoke test placeholder");
+}
