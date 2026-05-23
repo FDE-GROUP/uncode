@@ -26,38 +26,53 @@ Pi 使用 jiti 在宿主进程内直接加载 TypeScript 扩展——零隔离�
 ## 2 架构总览
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  uncode-cli (main.rs)                                           │
-│                                                                 │
-│  ExtensionApi ─── ExtensionLoader ─── ~/.uncode/extensions/     │
-│       │                    │              ├── hello.wasm         │
-│       │                    │              └── hello.json         │
-│       │                    ▼                                    │
-│       │              ┌──────────┐                               │
-│       │              │WasmEngine│  单例 Engine + Linker          │
-│       │              └────┬─────┘                               │
-│       │                   │ instantiate()                        │
-│       │                   ▼                                      │
-│       │         ┌─────────────────┐                             │
-│       │         │  WasmInstance   │  实现 Extension trait        │
-│       │         │  ├ Store        │  独立 wasmtime Store         │
-│       │         │  ├ WasmExports  │  缓存的导出函数引用          │
-│       │         │  └ disabled     │  trap 后自动禁用             │
-│       │         └─────────────────┘                             │
-│       │                                                         │
-│  ExtensionLifecycleBridge ── HookRegistry.fire()                │
-│       │                   │                                     │
-│       │                   ▼                                     │
-│       │         WasmInstance::on_hook()                         │
-│       │            │                                            │
-│       │            ▼  spawn_blocking                            │
-│       │         call_on_hook()                                  │
-│       │            │                                            │
-│       │            ▼                                            │
-│       │   __uncode_on_hook(ctx_ptr, ctx_len, out_ptr)           │
-│       │   ← WASM 线性内存读写 →                                 │
-│       │   返回 HookResult (Continue / Block / Modify)            │
-└─────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  uncode-cli (main.rs)                                               │
+│                                                                     │
+│  ExtensionApi ─── ExtensionLoader ─── ~/.uncode/extensions/         │
+│       │                    │              ├── hello.wasm             │
+│       │                    │              └── hello.json             │
+│       │                    ▼                                        │
+│       │              ┌──────────┐                                   │
+│       │              │WasmEngine│  单例 Engine + Linker              │
+│       │              └────┬─────┘                                   │
+│       │                   │ instantiate()                            │
+│       │                   ▼                                          │
+│       │    ┌──────────────────────────────────────┐                 │
+│       │    │ (WasmInstance, Vec<WasmExtensionTool>) │                │
+│       │    │                                      │                 │
+│       │    │  WasmInstance                         │                 │
+│       │    │  ├ Store (独立 wasmtime Store)        │                 │
+│       │    │  ├ WasmExports (缓存导出函数引用)     │                 │
+│       │    │  └ disabled (trap 后自动禁用)         │                 │
+│       │    │                                      │                 │
+│       │    │  WasmExtensionTool[] (共享 inner Arc) │                 │
+│       │    │  └ ExtensionTool trait 实现          │                 │
+│       │    └──────────────────────────────────────┘                 │
+│       │                                                              │
+│       ├──── 钩子路径:                                                │
+│       │    ExtensionLifecycleBridge ── HookRegistry.fire()          │
+│       │         │                                                    │
+│       │         ▼                                                    │
+│       │    WasmInstance::on_hook()                                   │
+│       │         │ spawn_blocking                                     │
+│       │         ▼                                                    │
+│       │    __uncode_on_hook(ctx_ptr, ctx_len, out_ptr)               │
+│       │    返回 HookResult (Continue / Block / Modify)               │
+│       │                                                              │
+│       └──── 工具路径:                                                │
+│            ExtensionApi.register_tool()                              │
+│                 │                                                    │
+│                 ▼                                                    │
+│            ToolRegistry → ExtensionToolExecutor                      │
+│                 │                                                    │
+│                 ▼                                                    │
+│            WasmExtensionTool::execute()                              │
+│                 │ spawn_blocking                                     │
+│                 ▼                                                    │
+│            __uncode_tool_execute(name, args, out)                    │
+│            返回 JSON 结果字符串                                      │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 模块结构
@@ -65,8 +80,9 @@ Pi 使用 jiti 在宿主进程内直接加载 TypeScript 扩展——零隔离�
 ```
 crates/uncode-extensions/src/wasm/
 ├── mod.rs             # WasmError 错误类型 + 常量默认值
-├── engine.rs          # WasmEngine — Engine + Linker 单例
+├── engine.rs          # WasmEngine — Engine/Linker/工具收集
 ├── instance.rs        # WasmInstance — Extension trait 适配器
+├── tool.rs            # WasmExtensionTool — ExtensionTool trait 适配器
 ├── host_imports.rs    # 宿主导入函数（WASM 模块可调用的宿主能力）
 ├── memory.rs          # HostState + WasmExports + 线性内存辅助
 └── manifest.rs        # ExtensionManifest — JSON 伴生文件解析
@@ -230,11 +246,19 @@ ExtensionLoader::load_from_dir()
   │   │   │   └─ 缺少任何导出 → WasmError::MissingExport
   │   │   │
   │   │   ├─ __uncode_init(1)             ← 调用扩展初始化
-  │   │   │   └─ 扩展通过宿主导入注册钩子/工具
+  │   │   │   ├─ 扩展调用 host_register_hook
+  │   │   │   └─ 扩展调用 host_register_tool
   │   │   │
-  │   │   └─ 收集 registered_hooks        ← 从 HostState 取出
+  │   │   ├─ 收集 registered_hooks        ← 从 HostState 取出
+  │   │   ├─ 收集 registered_tools        ← 从 HostState 取出
+  │   │   │
+  │   │   └─ 返回 (WasmInstance, Vec<WasmExtensionTool>)
+  │   │       └─ 工具共享 instance 的 inner Arc<Mutex>
   │   │
   │   ├─ HookRegistry::register()         ← 注册到全局钩子表
+  │   │
+  │   ├─ ExtensionApi::register_tool()    ← 注册每个 WASM 工具
+  │   │   └─ ToolRegistrationCallback     ← CLI 注入的回调
   │   │
   │   └─ 失败 → tracing::warn! + 继续下一个
   │
@@ -402,9 +426,240 @@ exports.allocate.call(&mut *store, (size,))?;
 
 ---
 
-## 7 依赖与构建配置
+## 7 工具执行调用路径
 
-### 7.1 Feature Gate
+WASM 扩展注册的工具被 LLM 调用时，完整链路：
+
+```
+LLM 返回 tool_call: "hello_greet"
+  │
+  └─ AgentLoop → ToolRegistry::execute("hello_greet", args)
+       │
+       └─ ExtensionToolExecutor::execute()
+            │  ← 适配器：ExtensionTool → ToolExecutor trait
+            │
+            └─ WasmExtensionTool::execute(args)
+                 │
+                 ├─ serde_json::to_vec(&arguments)    ← 序列化参数
+                 │
+                 ├─ spawn_blocking(move || { ... })
+                 │    │
+                 │    ├─ Mutex lock                    ← 与 hook 共享同一把锁
+                 │    ├─ 检查 disabled 标志
+                 │    │
+                 │    ├─ __uncode_allocate(name_len)   ← 分配工具名空间
+                 │    ├─ 拷贝 name → WASM 线性内存
+                 │    ├─ __uncode_allocate(args_len)   ← 分配参数空间
+                 │    ├─ 拷贝 args → WASM 线性内存
+                 │    ├─ __uncode_allocate(4096)        ← 分配输出缓冲区
+                 │    ├─ 重置 fuel = 10,000,000
+                 │    │
+                 │    ├─ __uncode_tool_execute(
+                 │    │    name_ptr, name_len,
+                 │    │    args_ptr, args_len,
+                 │    │    out_ptr)
+                 │    │  └─ [WASM 内部执行]
+                 │    │
+                 │    ├─ __uncode_deallocate(name_ptr)  ← 回收输入缓冲区
+                 │    ├─ __uncode_deallocate(args_ptr)
+                 │    │
+                 │    └─ 读取 memory[out_ptr..out_ptr+n]
+                 │         └─ UTF-8 → String
+                 │
+                 └─ 返回 String 给 LLM
+```
+
+### 关键设计：Arc<Mutex> 共享
+
+`WasmInstance` 和 `WasmExtensionTool` 共享同一个 `Arc<Mutex<WasmInstanceInner>>`：
+
+```rust
+// engine.rs — 实例化后共享 inner
+let instance = WasmInstance::new(name, store, exports, hooks, timeout);
+let inner = instance.inner_clone();  // Arc clone
+let tools: Vec<WasmExtensionTool> = tool_metas
+    .into_iter()
+    .map(|meta| WasmExtensionTool::new(meta, inner.clone()))
+    .collect();
+```
+
+这保证同一扩展的 hook 调用和 tool 调用互斥——不会并发访问 wasmtime Store。代价是 hook 和 tool 不能并行执行，但对扩展场景足够（hook 是瞬时的，tool 是按需的）。
+
+---
+
+## 8 Hello-World 示例端到端分析
+
+> **源码**：`examples/extension-hello/src/lib.rs`
+> **构建**：`cargo build --release --target wasm32-unknown-unknown`
+> **产物**：7.8KB WASM 二进制（`uncode_ext_hello.wasm`）
+
+### 8.1 扩展做了什么
+
+hello-world 是一个完整的端到端示例，演示 WASM 扩展能做的两件事：
+
+1. **注册生命周期钩子** — `session_start` 时打日志
+2. **注册 LLM 可调用工具** — `hello_greet` 工具，接受 `{"name": "Alice"}`，返回问候语
+
+### 8.2 初始化阶段
+
+```rust
+#[unsafe(no_mangle)]
+pub extern "C" fn __uncode_init(api_handle: i32) {
+    // 1. 注册钩子
+    __uncode_host_register_hook(api_handle, "session_start", 13);
+
+    // 2. 注册工具（JSON 元数据）
+    __uncode_host_register_tool(api_handle, TOOL_META_JSON, len);
+}
+```
+
+工具元数据 JSON 常量：
+
+```json
+{
+  "name": "hello_greet",
+  "description": "Generate a greeting from the hello-world WASM extension. ...",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "The name to greet" }
+    },
+    "required": ["name"]
+  },
+  "sequential": false
+}
+```
+
+这段 JSON 被传递给宿主的 `__uncode_host_register_tool`，宿主解析为 `ExtensionToolMetadata`，校验后存入 `HostState.registered_tools`。引擎实例化完成后从中取出，创建 `WasmExtensionTool`。
+
+### 8.3 钩子回调
+
+```rust
+#[unsafe(no_mangle)]
+pub extern "C" fn __uncode_on_hook(
+    _ctx_ptr: i32, _ctx_len: i32, _out_ptr: i32,
+) -> i32 {
+    host_log(2, "hello-world: session_start 钩子已触发");
+    0  // Continue — 不拦截
+}
+```
+
+每次新会话启动时，`AgentLoop` → `HookRegistry::fire(SessionStart)` → `WasmInstance::on_hook()` → `__uncode_on_hook`。返回 0 表示放行。
+
+### 8.4 工具执行回调
+
+这是端到端链路的核心。当 LLM 决定调用 `hello_greet` 工具时：
+
+```rust
+#[unsafe(no_mangle)]
+pub extern "C" fn __uncode_tool_execute(
+    name_ptr: i32, name_len: i32,
+    args_ptr: i32, args_len: i32,
+    out_ptr: i32,
+) -> i32 {
+    // 1. 从 WASM 线性内存读取工具名和参数
+    let name = slice_from_raw(name_ptr, name_len);  // "hello_greet"
+    let args = slice_from_raw(args_ptr, args_len);  // {"name":"Alice"}
+
+    // 2. 校验工具名
+    if name != b"hello_greet" { return 0; }
+
+    // 3. 从 JSON 参数中提取 name 字段
+    let greet_name = extract_json_string(args, b"name")
+        .unwrap_or(b"world");                        // "Alice"
+
+    // 4. 拼接结果写入 out_ptr
+    // {"result":"Hello, Alice! Greetings from uncode WASM extension."}
+    write_to(out_ptr, prefix);
+    write_to(out_ptr + offset, greet_name);
+    write_to(out_ptr + offset, suffix);
+
+    // 5. 返回结果字节长度
+    total_len
+}
+```
+
+### 8.5 no_std JSON 解析
+
+hello-world 在 `#![no_std]` 环境下无法使用 `serde_json`。它实现了一个极简的 JSON 字符串提取器：
+
+```rust
+/// 从 JSON 字节中提取 "key":"value" 的 value 部分
+fn extract_json_string<'a>(json: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
+    // 扫描 "key" 模式 → 跳过 : 和空白 → 提取引号内的值
+    // 纯字节级操作，无堆分配
+}
+```
+
+这仅用于演示。生产扩展可以选择：
+- 编译时链接 `serde_json`（需要 `alloc`）
+- 使用 `uncode-ext-sdk`（未来方向）
+
+### 8.6 内存管理
+
+```
+┌─────────────────────────────────────────────┐
+│  WASM 线性内存 (64KB)                       │
+│                                             │
+│  ┌─────────┐  BumpAlloc: 只增不减           │
+│  │ 数据段  │  OFFSET ↑                      │
+│  ├─────────┤                                │
+│  │ 堆      │  ← __uncode_allocate 从此分配  │
+│  │  ↑      │  每次分配 OFFSET += aligned    │
+│  │ ...     │  不支持释放（bump allocator）   │
+│  │         │                                │
+│  │ 空闲    │  ~60KB 可用                     │
+│  └─────────┘                                │
+└─────────────────────────────────────────────┘
+```
+
+bump allocator 对于 init 阶段的有限分配足够。每次 hook/tool 调用中分配的内存不会被复用，但 WASM 线性内存的上限（默认 64MB）远超单次调用所需。
+
+### 8.7 完整端到端流程图
+
+```
+用户启动 uncode CLI
+  │
+  ├─ ExtensionLoader::load_from_dir(~/.uncode/extensions/)
+  │    │
+  │    ├─ 发现 hello.wasm → WasmEngine::instantiate()
+  │    │    │
+  │    │    ├─ 编译 + 创建 Store + 设置 fuel
+  │    │    │
+  │    │    ├─ __uncode_init(1)
+  │    │    │    ├─ host_register_hook("session_start")  → HostState.hooks
+  │    │    │    └─ host_register_tool(metadata_json)    → HostState.tools
+  │    │    │
+  │    │    ├─ drain HostState → (WasmInstance, [WasmExtensionTool])
+  │    │    │
+  │    │    └─ 返回 (instance, [tool])
+  │    │
+  │    ├─ HookRegistry.register(instance, [SessionStart])
+  │    └─ ExtensionApi.register_tool(tool)
+  │         └─ ToolRegistrationCallback → ToolRegistry
+  │
+  ├─ 用户输入: "跟 Alice 打个招呼"
+  │    │
+  │    ├─ LLM 流式响应 → tool_call: hello_greet({"name":"Alice"})
+  │    │
+  │    ├─ AgentLoop → ToolRegistry → ExtensionToolExecutor
+  │    │    │
+  │    │    └─ WasmExtensionTool::execute({"name":"Alice"})
+  │    │         │
+  │    │         └─ spawn_blocking → __uncode_tool_execute(...)
+  │    │              └─ extract "Alice" → 拼接问候语
+  │    │                   → {"result":"Hello, Alice! Greetings from ..."}
+  │    │
+  │    └─ LLM 收到工具结果 → 生成回复
+  │
+  └─ 用户看到: "我已经通过扩展向 Alice 打了招呼！..."
+```
+
+---
+
+## 9 依赖与构建配置
+
+### 9.1 Feature Gate
 
 wasmtime 编译时间较长（含 Cranelift JIT 编译器）。通过 feature gate 允许下游 crate 按需启用：
 
@@ -420,7 +675,7 @@ wasm = ["wasmtime"]
 
 不依赖 WASM 运行时的 crate（如 `uncode-tui`）只需使用类型定义，无需编译 wasmtime。
 
-### 7.2 wasmtime 配置
+### 9.2 wasmtime 配置
 
 ```rust
 // engine.rs
@@ -436,9 +691,9 @@ config.strategy(wasmtime::Strategy::Cranelift); // JIT 编译器
 
 ---
 
-## 8 扩展开发指南
+## 10 扩展开发指南
 
-### 8.1 最小扩展模板
+### 10.1 最小扩展模板
 
 ```rust
 // lib.rs — 编译目标: wasm32-unknown-unknown
@@ -477,7 +732,7 @@ pub extern "C" fn __uncode_allocate(size: i32) -> i32 { /* ... */ }
 pub extern "C" fn __uncode_deallocate(_: i32, _: i32) {}
 ```
 
-### 8.2 构建与部署
+### 10.2 构建与部署
 
 ```bash
 # 构建
@@ -501,7 +756,7 @@ EOF
 
 ---
 
-## 9 生命周期钩子一览
+## 11 生命周期钩子一览
 
 | 钩子名称 | LifecycleHook 枚举 | 触发时机 |
 |:---|:---|:---|
@@ -524,13 +779,12 @@ EOF
 
 ---
 
-## 10 未来方向
+## 12 未来方向
 
 | 方向 | 说明 | 优先级 |
 |:---|:---|:---|
 | WASI 支持 | 允许扩展在沙箱内访问受限文件系统 | 中 |
 | Component Model | 用 WIT 定义类型化接口，替代扁平 ABI | 低 |
-| 工具执行桥接 | 将 WASM `__uncode_tool_execute` 结果接入 LLM 工具调用循环 | 高 |
 | 扩展发现与热重载 | 监听 `~/.uncode/extensions/` 目录变化，运行时加载/卸载 | 中 |
 | 扩展 SDK | 提供 `uncode-ext-sdk` crate，封装 ABI 细节 | 中 |
 | 内存池化 | wasmtime `pooling-allocator`，支持大量扩展实例 | 低 |
@@ -541,11 +795,12 @@ EOF
 
 | 文件 | 职责 |
 |:---|:---|
-| `crates/uncode-extensions/src/wasm/engine.rs` | WasmEngine — Engine/Linker/沙箱配置 |
+| `crates/uncode-extensions/src/wasm/engine.rs` | WasmEngine — Engine/Linker/工具收集 |
 | `crates/uncode-extensions/src/wasm/instance.rs` | WasmInstance — Extension trait 适配器 |
+| `crates/uncode-extensions/src/wasm/tool.rs` | WasmExtensionTool — ExtensionTool trait 适配器 |
 | `crates/uncode-extensions/src/wasm/host_imports.rs` | 宿主导入函数定义 |
 | `crates/uncode-extensions/src/wasm/memory.rs` | HostState + WasmExports + 内存操作 |
 | `crates/uncode-extensions/src/wasm/manifest.rs` | ExtensionManifest JSON 解析 |
-| `crates/uncode-extensions/src/loader.rs` | ExtensionLoader — 目录扫描与加载 |
+| `crates/uncode-extensions/src/loader.rs` | ExtensionLoader — 目录扫描、加载、工具注册 |
 | `crates/uncode-cli/src/main.rs` | CLI 入口 — 启动时加载扩展 |
-| `examples/extension-hello/` | Hello-world 示例扩展 |
+| `examples/extension-hello/` | Hello-world 端到端示例扩展（含工具注册） |
