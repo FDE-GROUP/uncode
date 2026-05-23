@@ -11,6 +11,7 @@ pub const RESERVED_COMMAND_NAMES: &[&str] = &[
 ];
 
 /// Metadata for a slash command registered by an extension.
+#[derive(serde::Deserialize)]
 pub struct CommandRegistration {
     pub name: String,
     pub description: String,
@@ -44,7 +45,7 @@ impl CommandRegistration {
 }
 
 /// Key code — crossterm-independent representation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize)]
 pub enum ExtKey {
     Char(char),
     F(u8),
@@ -65,7 +66,7 @@ pub enum ExtKey {
 }
 
 /// Modifier keys — crossterm-independent representation.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, serde::Deserialize)]
 pub struct ExtModifiers {
     pub ctrl: bool,
     pub alt: bool,
@@ -73,7 +74,7 @@ pub struct ExtModifiers {
 }
 
 /// A key event — crossterm-independent representation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize)]
 pub struct ExtKeyEvent {
     pub key: ExtKey,
     pub modifiers: ExtModifiers,
@@ -148,6 +149,7 @@ pub const RESERVED_SHORTCUTS: &[ExtKeyEvent] = &[
 ];
 
 /// Metadata for a keyboard shortcut registered by an extension.
+#[derive(serde::Deserialize)]
 pub struct ShortcutRegistration {
     pub key: ExtKeyEvent,
     pub description: String,
