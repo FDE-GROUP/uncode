@@ -8,6 +8,8 @@
 
 pub mod chat;
 pub mod complete;
+pub mod dialog;
+pub mod dialog_channel;
 pub mod diff_viewer;
 pub mod highlight;
 pub mod input;
@@ -22,6 +24,8 @@ pub mod welcome;
 
 use crate::chat::ChatState;
 use crate::complete::CompletionEngine;
+use crate::dialog::DialogOverlay;
+use crate::dialog_channel::{DialogBridge, PendingDialog};
 use crate::input::{InputAction, InputEditor};
 use crate::message_queue::{MessageQueue, QueueType, SubmitIntent};
 use crate::permission::PermissionManager;
@@ -268,6 +272,9 @@ pub struct TuiEngine {
     welcome: WelcomeScreen,
     quit_requested: bool,
     tick: usize,
+    dialog: DialogOverlay,
+    dialog_bridge: Option<DialogBridge>,
+    pending_dialog_response: Option<std::sync::mpsc::Sender<uncode_core::dialog::DialogResponse>>,
 }
 
 impl TuiEngine {
@@ -315,6 +322,9 @@ impl TuiEngine {
             welcome: WelcomeScreen::new(),
             quit_requested: false,
             tick: 0,
+            dialog: DialogOverlay::new(Theme::default()),
+            dialog_bridge: None,
+            pending_dialog_response: None,
         }
     }
 
@@ -382,6 +392,42 @@ impl TuiEngine {
         mgr: Arc<parking_lot::Mutex<uncode_extensions::manager::ExtensionManager>>,
     ) {
         self.extension_manager = Some(mgr);
+    }
+
+    /// Set the dialog bridge for extension-initiated dialogs.
+    pub fn set_dialog_bridge(&mut self, bridge: DialogBridge) {
+        self.dialog_bridge = Some(bridge);
+    }
+
+    /// Register a custom tool renderer from an extension.
+    pub fn register_custom_renderer(
+        &mut self,
+        tool_name: String,
+        config: uncode_extensions::renderer::ToolRenderConfig,
+    ) {
+        use crate::tool_renderer::{ResultStyle, TemplateToolRenderer};
+        let style = match config.result_style {
+            uncode_extensions::renderer::ResultStyle::Plain => ResultStyle::Plain,
+            uncode_extensions::renderer::ResultStyle::Code => ResultStyle::Code,
+            uncode_extensions::renderer::ResultStyle::Diff => ResultStyle::Diff,
+            uncode_extensions::renderer::ResultStyle::Bash => ResultStyle::Bash,
+        };
+        let renderer = TemplateToolRenderer::new(
+            config.call_template,
+            config.call_template_fields,
+            style,
+            config.result_max_lines,
+        );
+        self.renderers.register(tool_name, Box::new(renderer));
+    }
+
+    /// Poll the dialog bridge for pending dialog requests.
+    async fn poll_dialog(&mut self) -> Option<PendingDialog> {
+        if let Some(ref mut bridge) = self.dialog_bridge {
+            bridge.recv().await
+        } else {
+            std::future::pending().await
+        }
     }
 
     /// Try to dispatch a key event to extension shortcuts.
@@ -494,6 +540,7 @@ impl TuiEngine {
         self.render_footer(f, chunks[3], chunks[4]);
 
         self.selector.render(f, f.area());
+        self.dialog.render(f, f.area());
         self.welcome.render(f, f.area());
     }
 
@@ -714,6 +761,16 @@ impl TuiEngine {
                             if self.welcome.is_visible() {
                                 if key_event.code == KeyCode::Enter {
                                     self.welcome.hide();
+                                }
+                                continue;
+                            }
+
+                            // Dialog overlay takes priority when visible
+                            if self.dialog.is_visible() {
+                                if let Some(response) = self.dialog.handle_key(key_event) {
+                                    if let Some(tx) = self.pending_dialog_response.take() {
+                                        let _ = tx.send(response);
+                                    }
                                 }
                                 continue;
                             }
@@ -1004,6 +1061,11 @@ impl TuiEngine {
                     if is_run_finished {
                         self.flush_queue(&on_submit);
                     }
+                }
+                // Poll dialog bridge for extension-initiated dialogs
+                Some(pending) = self.poll_dialog() => {
+                    self.pending_dialog_response = Some(pending.response_tx);
+                    self.dialog.show(pending.request);
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
                     // Idle tick: re-render for status animation
