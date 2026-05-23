@@ -465,6 +465,9 @@ async fn main() -> anyhow::Result<()> {
     // Dialog channel — bridges WASM blocking thread to TUI async event loop.
     let (dialog_sender, dialog_bridge) = uncode_tui::dialog_channel::dialog_channel(16);
 
+    // Overlay channel — same pattern for extension overlays.
+    let (overlay_sender, overlay_bridge) = uncode_tui::overlay_channel::overlay_channel(16);
+
     // Agent control state for extension callbacks (abort/compact/is_idle)
     let active_run_handle = agent.active_run_handle();
     let abort_token: Arc<std::sync::Mutex<tokio_util::sync::CancellationToken>> = Arc::new(
@@ -579,6 +582,21 @@ async fn main() -> anyhow::Result<()> {
         Some(Arc::new(move || -> bool {
             !active_run_handle.load(std::sync::atomic::Ordering::Acquire)
         })),
+        // Overlay callback — bridges to TUI via blocking channel
+        Some(Arc::new(
+            move |action: uncode_core::overlay::OverlayAction| -> Result<(), String> {
+                let (response_tx, response_rx) = std::sync::mpsc::channel();
+                overlay_sender
+                    .blocking_send(uncode_tui::overlay_channel::PendingOverlayAction {
+                        action,
+                        response_tx,
+                    })
+                    .map_err(|e| format!("overlay channel error: {e}"))?;
+                response_rx
+                    .recv()
+                    .map_err(|e| format!("overlay response error: {e}"))?
+            },
+        )),
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)
@@ -647,6 +665,7 @@ async fn main() -> anyhow::Result<()> {
 
         // Set dialog bridge for extension-initiated dialogs
         tui.set_dialog_bridge(dialog_bridge);
+        tui.set_overlay_bridge(overlay_bridge);
 
         tui.set_extension_manager(ext_manager);
 

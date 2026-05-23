@@ -7,6 +7,7 @@ use crate::renderer::ToolRenderConfig;
 use crate::tool::ExtensionTool;
 
 use uncode_core::dialog::{DialogRequest, DialogResponse};
+use uncode_core::overlay::{OverlayAction, OverlayConfig, OverlayContent};
 
 /// Callback type for tool registration. Injected by `uncode-agent`.
 ///
@@ -53,6 +54,10 @@ pub type CompactCallback = Arc<dyn Fn() + Send + Sync>;
 /// Callback type for checking if the agent is idle. Injected by `uncode-cli`.
 pub type IdleCheckCallback = Arc<dyn Fn() -> bool + Send + Sync>;
 
+/// Callback type for overlay actions. Injected by `uncode-cli`.
+/// Blocks until the TUI processes the action.
+pub type OverlayCallback = Arc<dyn Fn(OverlayAction) -> Result<(), String> + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -70,6 +75,7 @@ pub struct ExtensionApi {
     abort_callback: Option<AbortCallback>,
     compact_callback: Option<CompactCallback>,
     idle_check_callback: Option<IdleCheckCallback>,
+    overlay_callback: Option<OverlayCallback>,
 }
 
 impl ExtensionApi {
@@ -88,6 +94,7 @@ impl ExtensionApi {
             abort_callback: None,
             compact_callback: None,
             idle_check_callback: None,
+            overlay_callback: None,
         }
     }
 
@@ -107,6 +114,7 @@ impl ExtensionApi {
         abort_callback: Option<AbortCallback>,
         compact_callback: Option<CompactCallback>,
         idle_check_callback: Option<IdleCheckCallback>,
+        overlay_callback: Option<OverlayCallback>,
     ) -> Self {
         Self {
             registry,
@@ -122,6 +130,7 @@ impl ExtensionApi {
             abort_callback,
             compact_callback,
             idle_check_callback,
+            overlay_callback,
         }
     }
 
@@ -249,5 +258,40 @@ impl ExtensionApi {
         } else {
             true
         }
+    }
+
+    /// Show an overlay in the TUI. Blocks until the TUI processes the action.
+    pub fn show_overlay(
+        &self,
+        config: OverlayConfig,
+        content: OverlayContent,
+    ) -> Result<(), String> {
+        config.validate()?;
+        let callback = self
+            .overlay_callback
+            .as_ref()
+            .ok_or("overlay not available: no callback configured")?;
+        callback(OverlayAction::Show { config, content })
+    }
+
+    /// Hide an overlay by key. Blocks until the TUI processes the action.
+    pub fn hide_overlay(&self, key: &str) -> Result<(), String> {
+        let callback = self
+            .overlay_callback
+            .as_ref()
+            .ok_or("overlay not available: no callback configured")?;
+        callback(OverlayAction::Hide { key: key.into() })
+    }
+
+    /// Update an overlay's content by key. Blocks until the TUI processes the action.
+    pub fn update_overlay(&self, key: &str, content: OverlayContent) -> Result<(), String> {
+        let callback = self
+            .overlay_callback
+            .as_ref()
+            .ok_or("overlay not available: no callback configured")?;
+        callback(OverlayAction::Update {
+            key: key.into(),
+            content,
+        })
     }
 }

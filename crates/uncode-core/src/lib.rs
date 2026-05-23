@@ -18,6 +18,7 @@ pub mod error;
 pub mod event;
 pub mod message;
 pub mod model;
+pub mod overlay;
 pub mod session;
 pub mod skill;
 pub mod template;
