@@ -496,7 +496,7 @@ fn test_register_tool_with_callback_delegates() {
         },
     );
 
-    let api = ExtensionApi::with_callbacks(registry, Some(callback), None, None);
+    let api = ExtensionApi::with_callbacks(registry, Some(callback), None, None, None, None);
     api.register_tool(Arc::new(HelloTool)).unwrap();
     assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
@@ -510,7 +510,7 @@ fn test_register_tool_callback_error_propagates() {
         },
     );
 
-    let api = ExtensionApi::with_callbacks(registry, Some(callback), None, None);
+    let api = ExtensionApi::with_callbacks(registry, Some(callback), None, None, None, None);
     let result = api.register_tool(Arc::new(HelloTool));
     assert!(result.unwrap_err().contains("rejected"));
 }
@@ -586,7 +586,7 @@ fn test_register_command_with_callback() {
         called_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     });
-    let api = ExtensionApi::with_callbacks(registry, None, Some(callback), None);
+    let api = ExtensionApi::with_callbacks(registry, None, None, Some(callback), None, None);
     api.register_command(CommandRegistration {
         name: "ext-cmd".into(),
         description: "Extension command".into(),
@@ -653,7 +653,7 @@ fn test_register_shortcut_with_callback() {
             Ok(())
         },
     );
-    let api = ExtensionApi::with_callbacks(registry, None, None, Some(callback));
+    let api = ExtensionApi::with_callbacks(registry, None, None, None, None, Some(callback));
     api.register_shortcut(ShortcutRegistration {
         key: ExtKeyEvent {
             key: ExtKey::F(5),

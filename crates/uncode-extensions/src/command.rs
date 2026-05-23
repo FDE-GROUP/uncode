@@ -6,8 +6,22 @@
 
 /// Reserved command names that extensions cannot override.
 pub const RESERVED_COMMAND_NAMES: &[&str] = &[
-    "help", "clear", "compact", "model", "new", "fork", "export", "sessions", "branch", "name",
-    "copy", "usage", "reload", "diff", "quit",
+    "help",
+    "clear",
+    "compact",
+    "model",
+    "new",
+    "fork",
+    "export",
+    "sessions",
+    "branch",
+    "name",
+    "copy",
+    "usage",
+    "reload",
+    "diff",
+    "extensions",
+    "quit",
 ];
 
 /// Metadata for a slash command registered by an extension.
