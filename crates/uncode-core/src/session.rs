@@ -97,6 +97,8 @@ pub enum SessionEntry {
     Label(Box<LabelEntry>),
     #[serde(rename = "session_info")]
     SessionInfo(Box<SessionInfoEntry>),
+    #[serde(rename = "decision_audit")]
+    DecisionAudit(Box<DecisionAuditEntry>),
 }
 
 impl SessionEntry {
@@ -114,6 +116,7 @@ impl SessionEntry {
             SessionEntry::CustomMessage(e) => &e.id,
             SessionEntry::Label(e) => &e.id,
             SessionEntry::SessionInfo(e) => &e.id,
+            SessionEntry::DecisionAudit(e) => &e.id,
         }
     }
 
@@ -131,6 +134,7 @@ impl SessionEntry {
             SessionEntry::CustomMessage(e) => e.parent_id.as_deref(),
             SessionEntry::Label(e) => e.parent_id.as_deref(),
             SessionEntry::SessionInfo(e) => e.parent_id.as_deref(),
+            SessionEntry::DecisionAudit(e) => e.parent_id.as_deref(),
         }
     }
 
@@ -148,6 +152,7 @@ impl SessionEntry {
             SessionEntry::CustomMessage(e) => e.parent_id = Some(new_parent),
             SessionEntry::Label(e) => e.parent_id = Some(new_parent),
             SessionEntry::SessionInfo(e) => e.parent_id = Some(new_parent),
+            SessionEntry::DecisionAudit(e) => e.parent_id = Some(new_parent),
         }
     }
 }
@@ -340,6 +345,22 @@ pub struct SessionInfoEntry {
     pub parent_id: Option<String>,
     pub timestamp: DateTime<Utc>,
     pub name: Option<String>,
+}
+
+/// 决策审计条目 — 记录每次裁决/拒绝的决策轨迹 (#387)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionAuditEntry {
+    #[serde(default = "generate_entry_id")]
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub turn_id: String,
+    pub tool_name: String,
+    pub allowed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    pub adjudication_duration_ms: u64,
 }
 
 // ── SessionMetadata ──
