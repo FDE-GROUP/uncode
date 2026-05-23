@@ -1,3 +1,4 @@
+use crate::message_renderer::MessageRendererRegistry;
 use crate::theme::Theme;
 use crate::tool_renderer::ToolRendererRegistry;
 use ratatui::layout::Rect;
@@ -61,6 +62,12 @@ pub enum ChatMessage {
     },
     QueuedMessage {
         text: String,
+    },
+    /// Extension custom message with type-specific rendering.
+    Custom {
+        message_type: String,
+        content: String,
+        expanded: bool,
     },
     /// Turn 边界（微观规划多轮决策）
     TurnDivider {
@@ -317,6 +324,7 @@ impl ChatState {
                         | ChatMessage::ToolTurnGroup { .. }
                         | ChatMessage::Thinking { .. }
                         | ChatMessage::TodoList { .. }
+                        | ChatMessage::Custom { .. }
                 )
             })
             .map(|(i, _)| i)
@@ -365,7 +373,8 @@ impl ChatState {
             | ChatMessage::BashExecution { expanded, .. }
             | ChatMessage::ToolTurnGroup { expanded, .. }
             | ChatMessage::Thinking { expanded, .. }
-            | ChatMessage::TodoList { expanded, .. } => {
+            | ChatMessage::TodoList { expanded, .. }
+            | ChatMessage::Custom { expanded, .. } => {
                 *expanded = !*expanded;
             }
             _ => return false,
@@ -389,6 +398,7 @@ impl ChatState {
                 | ChatMessage::ToolTurnGroup { expanded: e, .. }
                 | ChatMessage::Thinking { expanded: e, .. }
                 | ChatMessage::TodoList { expanded: e, .. }
+                | ChatMessage::Custom { expanded: e, .. }
                     if *e != expanded =>
                 {
                     *e = expanded;
@@ -465,6 +475,7 @@ impl ChatState {
         agent_busy: bool,
         tool_output_visible: bool,
         workdir: &str,
+        message_renderers: &MessageRendererRegistry,
     ) {
         let width_changed = width != self.cached_width;
         if width_changed {
@@ -506,6 +517,7 @@ impl ChatState {
                     tick,
                     focused,
                     tool_output_visible,
+                    message_renderers,
                 )
             } else {
                 render_message(
@@ -517,6 +529,7 @@ impl ChatState {
                     focused,
                     tool_output_visible,
                     workdir,
+                    message_renderers,
                 )
             };
 
@@ -565,6 +578,7 @@ impl ChatState {
         tick: usize,
         focused: bool,
         tool_output_visible: bool,
+        message_renderers: &MessageRendererRegistry,
     ) -> Vec<Line<'static>> {
         // Take ownership of old cached lines instead of cloning
         let old_lines = self.line_counts[idx]
@@ -583,6 +597,7 @@ impl ChatState {
             focused,
             tool_output_visible,
             &self.workdir,
+            message_renderers,
         );
 
         if old_count > 2 && new_lines.len() >= old_count {
@@ -1122,6 +1137,7 @@ impl ChatState {
         tick: usize,
         agent_busy: bool,
         tool_output_visible: bool,
+        message_renderers: &MessageRendererRegistry,
     ) -> Vec<Line<'static>> {
         let mut all_lines: Vec<Line<'static>> = Vec::with_capacity(self.messages.len() * 3);
 
@@ -1143,6 +1159,7 @@ impl ChatState {
                 focused,
                 tool_output_visible,
                 &self.workdir,
+                message_renderers,
             );
 
             // Streaming cursor: if last message is an active Assistant text, blink cursor
@@ -1194,6 +1211,7 @@ fn message_text_len(msg: &ChatMessage) -> usize {
         ChatMessage::Error { message, .. } => message.len(),
         ChatMessage::CompactionSummary { summary_text, .. } => summary_text.len(),
         ChatMessage::QueuedMessage { text } => text.len(),
+        ChatMessage::Custom { content, .. } => content.len(),
         ChatMessage::Summary {
             completed,
             next_steps,
@@ -1298,6 +1316,22 @@ fn render_todo_list(
         }
     }
     lines
+}
+
+/// Extract (message_type, content) for custom renderer lookup.
+fn message_type_and_content(msg: &ChatMessage) -> Option<(&str, &str)> {
+    match msg {
+        ChatMessage::User { text, .. } => Some(("user", text.as_str())),
+        ChatMessage::Assistant { text } => Some(("assistant", text.as_str())),
+        ChatMessage::Thinking { text, .. } => Some(("thinking", text.as_str())),
+        ChatMessage::Error { message, .. } => Some(("error", message.as_str())),
+        ChatMessage::Custom {
+            message_type,
+            content,
+            ..
+        } => Some((message_type.as_str(), content.as_str())),
+        _ => None,
+    }
 }
 
 /// 渲染单条消息
@@ -1497,7 +1531,14 @@ fn render_message(
     focused: bool,
     tool_output_visible: bool,
     workdir: &str,
+    message_renderers: &MessageRendererRegistry,
 ) -> Vec<Line<'static>> {
+    // Check for custom message renderer
+    if let Some((msg_type, content)) = message_type_and_content(msg) {
+        if let Some(renderer) = message_renderers.get(msg_type) {
+            return renderer.render(content, width, theme);
+        }
+    }
     let w = width.saturating_sub(2) as usize; // account for padding
     match msg {
         ChatMessage::User { text, file_refs } => render_user_message(text, file_refs, w, theme),
@@ -1740,6 +1781,42 @@ fn render_message(
                 Style::default().fg(theme.ui.footer_text),
             ),
         ])],
+        ChatMessage::Custom {
+            message_type,
+            content,
+            expanded,
+        } => {
+            let (prefix, prefix_color) = if focused {
+                if *expanded {
+                    ("▾ ", theme.tool_status.running)
+                } else {
+                    ("▸ ", theme.tool_status.running)
+                }
+            } else {
+                ("  ", theme.ui.footer_text)
+            };
+            let mut lines = vec![Line::from(vec![
+                Span::styled(prefix, Style::default().fg(prefix_color)),
+                Span::styled(
+                    format!("[{message_type}]"),
+                    Style::default()
+                        .fg(theme.ui.summary_card)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ])];
+            if *expanded && !content.is_empty() {
+                let content_lines =
+                    crate::markdown::render_markdown_with_theme(content, theme, Some(w));
+                lines.extend(content_lines);
+            } else if !content.is_empty() {
+                let preview = truncate_preview(content, 96);
+                lines.push(Line::from(Span::styled(
+                    format!("   {preview}"),
+                    Style::default().fg(theme.ui.footer_text),
+                )));
+            }
+            lines
+        }
     }
 }
 
@@ -2525,7 +2602,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         assert_eq!(lines.len(), 0);
     }
 
@@ -2535,7 +2620,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::light();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         assert_eq!(lines.len(), 0);
     }
 
@@ -2554,7 +2647,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         // 验证自定义渲染器输出包含路径信息
         assert!(combined.contains("src/main.rs"));
@@ -2574,7 +2675,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("编译失败"));
         assert!(combined.contains("!"));
@@ -2590,7 +2699,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("Summary"));
         assert!(combined.contains("重构完成"));
@@ -2615,7 +2732,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(
             combined.contains("# Run tests"),
@@ -2640,7 +2765,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("排队中"));
         assert!(combined.contains("帮我修复那个 bug"));
@@ -2653,7 +2786,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("分析 @Cargo.toml"));
     }
@@ -2671,17 +2812,41 @@ mod tests {
         let area = Rect::new(0, 0, 80, 24);
 
         // tick 0 — cursor visible (tick % 4 < 2)
-        let lines = state.render_lines(area, &renderers, &theme, 0, true, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            true,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("█"), "cursor should be visible at tick 0");
 
         // tick 2 — cursor hidden (tick % 4 >= 2)
-        let lines = state.render_lines(area, &renderers, &theme, 2, true, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            2,
+            true,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(!combined.contains("█"), "cursor should be hidden at tick 2");
 
         // Not busy — no cursor
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(!combined.contains("█"), "no cursor when agent not busy");
     }
@@ -2842,7 +3007,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(
             combined.contains("Read → src/main.rs"),
@@ -2870,7 +3043,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(
             combined.contains("fn main()"),
@@ -2894,7 +3075,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains('▸'), "focused collapsed should show ▸");
     }
@@ -2917,7 +3106,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(combined.contains("ls"), "should show command");
         assert!(
@@ -2942,7 +3139,15 @@ mod tests {
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
         // tool_output_visible = false should hide even expanded cards
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, false);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            false,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(
             !combined.contains("secret content"),
@@ -2963,7 +3168,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(
             combined.contains("Thought · 1.5s"),
@@ -2986,7 +3199,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(
             combined.contains("▾"),
@@ -3009,7 +3230,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(
             combined.contains("▸"),
@@ -3040,7 +3269,15 @@ mod tests {
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
         let area = Rect::new(0, 0, 80, 24);
-        let lines = state.render_lines(area, &renderers, &theme, 0, false, true);
+        let lines = state.render_lines(
+            area,
+            &renderers,
+            &theme,
+            0,
+            false,
+            true,
+            &MessageRendererRegistry::new(),
+        );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(
             combined.contains("# List files in src"),
