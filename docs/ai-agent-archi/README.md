@@ -17,6 +17,8 @@
 | ⑨ | [DOP 论文分析](./dop-analysis.md) | **研究篇** | ~180行 | **外部验证**：Decision-Oriented Programming 论文 (arXiv 2604.05203) 与范式的对照分析 |
 | ⑩ | [Cognitive Architecture 分析](./cognitive-architecture-analysis.md) | **研究篇** | ~120行 | **理论基础**：Autodesk 认知架构蓝图与范式的映射，独立验证范式正确性 |
 | ⑪ | [uncode 开发心路历程](./uncode-development-retrospective.md) | **回顾篇** | ~250行 | **思想演进**：从 Pi 复刻到认知显化与决策驱动设计的完整历程 |
+| ⑫ | [认知显化与本体映射](./cognition-ontology-mapping.md) | **语义基础篇** | ~200行 | **本体即目标模式**：认知显化管道"怎么转"与"转成什么"的关系；本体四层在语义防火墙中的对应位置；动态本体与决策第一公民的共鸣 |
+| ⑬ | [本体论基础](./ontology-foundations.md) | **语义基础篇** | ~300行 | **本体完整知识体系**：哲学本源、Ground Truth vs Operational Truth、四层分类、AI-本体双螺旋进化史、Palantir 三层架构与动态本体工程、世界模型五系统、与认知显化范式的关系 |
 
 ## 阅读路径
 

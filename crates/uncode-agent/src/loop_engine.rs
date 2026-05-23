@@ -482,6 +482,32 @@ impl AgentLoop {
         let _ = self.event_tx.send(event);
     }
 
+    /// 持久化决策审计记录到 SessionStore (#387)
+    async fn persist_decision_audit(
+        &self,
+        session_id: &str,
+        turn_id: String,
+        tool_name: &str,
+        allowed: bool,
+        reason: Option<&str>,
+        adjudication_duration_ms: u64,
+    ) {
+        let entry =
+            SessionEntry::DecisionAudit(Box::new(uncode_core::session::DecisionAuditEntry {
+                id: generate_entry_id(),
+                parent_id: None,
+                timestamp: chrono::Utc::now(),
+                turn_id,
+                tool_name: tool_name.to_string(),
+                allowed,
+                reason: reason.map(|s| s.to_string()),
+                adjudication_duration_ms,
+            }));
+        if let Err(e) = self.session_store.append_entry(session_id, &entry).await {
+            debug!("decision audit persist skipped: {e}");
+        }
+    }
+
     /// Pi parallel batch: prepare → validate → before (serial per tool).
     async fn prepare_tool_call(
         &self,
@@ -1439,6 +1465,14 @@ impl AgentLoop {
 
                             // ── 决策层防火墙验证 + 裁决器 + 审计 (#339, #385, #387) ──
                             let mut denied_results: Vec<(String, String, ToolResult)> = Vec::new();
+                            struct PendingAudit {
+                                turn_id: String,
+                                tool_name: String,
+                                allowed: bool,
+                                reason: Option<String>,
+                                duration_ms: u64,
+                            }
+                            let mut pending_audits: Vec<PendingAudit> = Vec::new();
                             let denied_tool_names: HashSet<String> = {
                                 let acc = self.proposal_acc.lock().unwrap();
                                 let proposals = acc.completed();
@@ -1494,34 +1528,46 @@ impl AgentLoop {
                                                             (true, None)
                                                         };
 
+                                                    let duration_ms =
+                                                        started_at.elapsed().as_millis() as u64;
                                                     self.emit(AgentEvent::DecisionMade {
                                                         turn_id: format!("turn-{turn}"),
                                                         tool_name: normalized.tool_name.clone(),
                                                         allowed,
                                                         reason: reason.clone(),
-                                                        duration_ms: Some(
-                                                            started_at.elapsed().as_millis() as u64,
-                                                        ),
+                                                        duration_ms: Some(duration_ms),
+                                                    });
+                                                    pending_audits.push(PendingAudit {
+                                                        turn_id: format!("turn-{turn}"),
+                                                        tool_name: normalized.tool_name.clone(),
+                                                        allowed,
+                                                        reason,
+                                                        duration_ms,
                                                     });
                                                     if !allowed {
                                                         denied.insert(tool_name);
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    // 防火墙拒绝仅记录审计事件，不阻止执行
-                                                    // 实际的安全控制在 prepare_tool_call 和 PermissionGate 中
                                                     tracing::debug!(
                                                         "firewall flagged proposal {}: {e}",
                                                         tool_name
                                                     );
+                                                    let duration_ms =
+                                                        started_at.elapsed().as_millis() as u64;
                                                     self.emit(AgentEvent::DecisionMade {
                                                         turn_id: format!("turn-{turn}"),
                                                         tool_name: tool_name.clone(),
                                                         allowed: false,
                                                         reason: Some(e.to_string()),
-                                                        duration_ms: Some(
-                                                            started_at.elapsed().as_millis() as u64,
-                                                        ),
+                                                        duration_ms: Some(duration_ms),
+                                                    });
+                                                    pending_audits.push(PendingAudit {
+                                                        turn_id: format!("turn-{turn}"),
+                                                        tool_name: tool_name.clone(),
+                                                        allowed: false,
+                                                        reason: Some(e.to_string()),
+                                                        duration_ms,
                                                     });
                                                 }
                                             }
@@ -1530,6 +1576,19 @@ impl AgentLoop {
                                     denied
                                 }
                             };
+
+                            // 持久化审计记录（锁已释放，可安全 await）
+                            for audit in pending_audits {
+                                self.persist_decision_audit(
+                                    &session_id,
+                                    audit.turn_id,
+                                    &audit.tool_name,
+                                    audit.allowed,
+                                    audit.reason.as_deref(),
+                                    audit.duration_ms,
+                                )
+                                .await;
+                            }
 
                             // 从执行列表中移除被拒绝的工具，并生成错误 tool result
                             if !denied_tool_names.is_empty() {
