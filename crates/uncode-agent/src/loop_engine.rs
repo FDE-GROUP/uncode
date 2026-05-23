@@ -184,6 +184,8 @@ pub struct AgentLoop {
     working_memory: std::sync::Mutex<crate::cognition::working_memory::WorkingMemory>,
     /// 情景记忆 — 认知层按重要性评分的事件记忆 (#385)
     episode_memory: std::sync::Mutex<crate::cognition::episode::EpisodeMemory>,
+    /// 认知记忆管理器 — 压缩决策 + 摘要注入 (#386)
+    memory_manager: crate::cognition::memory::MemoryManager,
     /// 裁决器 — 决策层合法性判定 (#385)
     adjudicator: std::sync::Mutex<Option<crate::decision::adjudication::Adjudicator>>,
     /// 扩展生命周期桥接 — Extension Runtime Phase 1 (#344)
@@ -235,6 +237,9 @@ impl AgentLoop {
             episode_memory: std::sync::Mutex::new(crate::cognition::episode::EpisodeMemory::new(
                 100,
             )),
+            memory_manager: crate::cognition::memory::MemoryManager::new(
+                crate::cognition::memory::MemoryConfig::default(),
+            ),
             adjudicator: std::sync::Mutex::new(None),
             extension_bridge: None,
         }
@@ -322,6 +327,9 @@ impl AgentLoop {
             episode_memory: std::sync::Mutex::new(crate::cognition::episode::EpisodeMemory::new(
                 100,
             )),
+            memory_manager: crate::cognition::memory::MemoryManager::new(
+                crate::cognition::memory::MemoryConfig::default(),
+            ),
             adjudicator: std::sync::Mutex::new(None),
             extension_bridge: None,
         }
@@ -505,6 +513,29 @@ impl AgentLoop {
             }));
         if let Err(e) = self.session_store.append_entry(session_id, &entry).await {
             debug!("decision audit persist skipped: {e}");
+        }
+    }
+
+    /// 构建认知层上下文摘要 (#386)
+    ///
+    /// 使用 PromptManager.with_cognition_context() 将 WorkingMemory 和
+    /// EpisodeMemory 的摘要合并为结构化文本。
+    fn build_cognition_context(&self) -> Option<String> {
+        let (wm_hint, ep_summary) = {
+            let wm = self.working_memory.lock().unwrap();
+            let ep = self.episode_memory.lock().unwrap();
+            (wm.to_context_hint(), ep.build_context_summary())
+        };
+        if wm_hint.is_none() && ep_summary.is_none() {
+            return None;
+        }
+        let prompt = crate::cognition::prompt_manager::PromptManager::new()
+            .with_cognition_context(wm_hint, ep_summary)
+            .build();
+        if prompt.is_empty() {
+            None
+        } else {
+            Some(prompt)
         }
     }
 
@@ -757,22 +788,8 @@ impl AgentLoop {
         messages.insert(0, Message::system(self.system_prompt.clone()));
 
         // ── 认知层上下文注入 (#386): WorkingMemory + EpisodeMemory → system prompt ──
-        {
-            let cognition_ctx = {
-                let wm = self.working_memory.lock().unwrap();
-                let ep = self.episode_memory.lock().unwrap();
-                let wm_hint = wm.to_context_hint();
-                let ep_summary = ep.build_context_summary();
-                match (wm_hint, ep_summary) {
-                    (Some(wm), Some(ep)) => Some(format!("{wm}\n\n{ep}")),
-                    (Some(wm), None) => Some(wm),
-                    (None, Some(ep)) => Some(ep),
-                    (None, None) => None,
-                }
-            };
-            if let Some(ctx) = cognition_ctx {
-                messages.insert(1, Message::system(ctx));
-            }
+        if let Some(ctx) = self.build_cognition_context() {
+            messages.insert(1, Message::system(ctx));
         }
 
         let tools = self.tool_registry.definitions();
@@ -859,8 +876,8 @@ impl AgentLoop {
                     }
                 }
 
-                // Session-aware compaction check
-                if crate::compaction::should_compact_session(
+                // Session-aware compaction check (MemoryManager + should_compact_session)
+                let should_compact = if crate::compaction::should_compact_session(
                     &self.session_store,
                     &session_id,
                     model.context_window as u64,
@@ -868,6 +885,19 @@ impl AgentLoop {
                 )
                 .await
                 {
+                    true
+                } else if let Ok(entries) = self.session_store.load_entries(&session_id).await {
+                    let estimated = crate::compaction::estimate_entry_tokens(&entries);
+                    matches!(
+                        self.memory_manager.evaluate(estimated, model.context_window as u64),
+                        crate::cognition::memory::CompactionDecision::ShouldCompact { .. }
+                            | crate::cognition::memory::CompactionDecision::ForceCompact { .. }
+                    )
+                } else {
+                    false
+                };
+
+                if should_compact {
                     if let Some(ref bridge) = self.extension_bridge {
                         bridge.fire_session_before_compact(&session_id).await;
                     }
@@ -931,22 +961,8 @@ impl AgentLoop {
 
                             messages.insert(0, Message::system(self.system_prompt.clone()));
                             // 认知层上下文注入（压缩后重建）
-                            {
-                                let cognition_ctx = {
-                                    let wm = self.working_memory.lock().unwrap();
-                                    let ep = self.episode_memory.lock().unwrap();
-                                    let wm_hint = wm.to_context_hint();
-                                    let ep_summary = ep.build_context_summary();
-                                    match (wm_hint, ep_summary) {
-                                        (Some(wm), Some(ep)) => Some(format!("{wm}\n\n{ep}")),
-                                        (Some(wm), None) => Some(wm),
-                                        (None, Some(ep)) => Some(ep),
-                                        (None, None) => None,
-                                    }
-                                };
-                                if let Some(ctx) = cognition_ctx {
-                                    messages.insert(1, Message::system(ctx));
-                                }
+                            if let Some(ctx) = self.build_cognition_context() {
+                                messages.insert(1, Message::system(ctx));
                             }
                             self.emit(AgentEvent::CompactionComplete {
                                 messages_replaced: entries_before,
