@@ -13,6 +13,7 @@ use uncode_core::error::UncodeError;
 use uncode_core::tool::{ToolContent, ToolProgress, ToolResult};
 
 use super::local_env::{clean_binary_output, truncate_output};
+use super::sandbox::SandboxContext;
 
 fn bash_timeout_result() -> ToolResult {
     ToolResult::err_with_details("timeout", serde_json::json!({ "reason": "timeout" }))
@@ -74,6 +75,7 @@ pub struct BashExecArgs {
     pub workdir: PathBuf,
     pub timeout_secs: u64,
     pub max_output_bytes: usize,
+    pub sandbox: Option<SandboxContext>,
 }
 
 pub struct BashStreamContext {
@@ -81,9 +83,18 @@ pub struct BashStreamContext {
     pub on_progress: Option<Box<dyn Fn(ToolProgress) + Send + Sync>>,
 }
 
+/// Build command with optional sandbox wrapping.
+fn build_command(args: &BashExecArgs) -> Command {
+    if let Some(ref sandbox) = args.sandbox {
+        sandbox.build_command(&args.command, &args.workdir)
+    } else {
+        build_bash_command(&args.command, &args.workdir)
+    }
+}
+
 /// 一次性等待输出（`BashTool::execute` / 测试路径）。
 pub async fn exec_bash_simple(args: BashExecArgs) -> Result<String, UncodeError> {
-    let mut cmd = build_bash_command(&args.command, &args.workdir);
+    let mut cmd = build_command(&args);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let child = cmd
@@ -118,7 +129,7 @@ pub async fn exec_bash_simple(args: BashExecArgs) -> Result<String, UncodeError>
 
 /// Agent 主路径：流式 stdout、取消、输出上限。
 pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> ToolResult {
-    let mut cmd = build_bash_command(&args.command, &args.workdir);
+    let mut cmd = build_command(&args);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = match cmd.spawn() {

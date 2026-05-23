@@ -6,19 +6,34 @@ use uncode_core::error::{UncodeError, UncodeResult};
 use uncode_core::tool::{ExecutionMode, ToolContext, ToolDefinition, ToolExecutor, ToolResult};
 
 use super::bash_exec::{BashExecArgs, BashStreamContext, exec_bash_streaming};
+use super::sandbox::SandboxContext;
 
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 50 * 1024;
 const DEFAULT_TIMEOUT_SECS: u64 = 120;
 
 pub struct BashTool {
     max_output_bytes: usize,
+    sandbox_enabled: bool,
+    sandbox_profile: uncode_shared::config::SandboxProfile,
 }
 
 impl BashTool {
     pub fn new() -> Self {
         Self {
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
+            sandbox_enabled: false,
+            sandbox_profile: uncode_shared::config::SandboxProfile::Strict,
         }
+    }
+
+    pub fn with_sandbox(
+        mut self,
+        enabled: bool,
+        profile: uncode_shared::config::SandboxProfile,
+    ) -> Self {
+        self.sandbox_enabled = enabled;
+        self.sandbox_profile = profile;
+        self
     }
 }
 
@@ -54,12 +69,27 @@ fn parse_args(
     })
 }
 
-fn to_exec_args(parsed: ParsedArgs, max_output_bytes: usize) -> BashExecArgs {
+fn to_exec_args(
+    parsed: ParsedArgs,
+    max_output_bytes: usize,
+    sandbox: Option<SandboxContext>,
+) -> BashExecArgs {
     BashExecArgs {
         command: parsed.command,
         workdir: parsed.workdir,
         timeout_secs: parsed.timeout_secs,
         max_output_bytes,
+        sandbox,
+    }
+}
+
+impl BashTool {
+    fn make_sandbox(&self) -> Option<SandboxContext> {
+        if self.sandbox_enabled {
+            Some(SandboxContext::new(true, self.sandbox_profile))
+        } else {
+            None
+        }
     }
 }
 
@@ -132,7 +162,7 @@ impl ToolExecutor for BashTool {
         let _env = super::ctx_execution_env(&ctx);
         let parsed = parse_args(&arguments)?;
         Ok(exec_bash_streaming(
-            to_exec_args(parsed, self.max_output_bytes),
+            to_exec_args(parsed, self.max_output_bytes, self.make_sandbox()),
             BashStreamContext {
                 cancel_token: ctx.cancel_token,
                 on_progress: ctx.on_progress,
