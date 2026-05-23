@@ -248,6 +248,10 @@ pub struct TuiEngine {
     editor: InputEditor,
     selector: OverlaySelector,
     slash: SlashCommands,
+    extension_shortcuts: Vec<(
+        uncode_extensions::command::ExtKeyEvent,
+        Box<dyn Fn() + Send + Sync>,
+    )>,
     completion: CompletionEngine,
     leader_pending: bool,
     queue: MessageQueue,
@@ -293,6 +297,7 @@ impl TuiEngine {
             editor: InputEditor::new(),
             selector: OverlaySelector::new(),
             slash: SlashCommands::new(),
+            extension_shortcuts: Vec::new(),
             completion: CompletionEngine::new(slash_commands()),
             leader_pending: false,
             queue: MessageQueue::new(),
@@ -332,6 +337,65 @@ impl TuiEngine {
         policy: Arc<uncode_agent::tool_permission::PermissionPolicy>,
     ) {
         self.permission.set_policy(policy);
+    }
+
+    /// Register a slash command from an extension.
+    pub fn register_slash_command(
+        &mut self,
+        name: &str,
+        description: &str,
+        handler: crate::slash::CommandFn,
+    ) {
+        self.slash.register(name, description, handler);
+    }
+
+    /// Register a keyboard shortcut from an extension.
+    pub fn register_extension_shortcut(
+        &mut self,
+        key: uncode_extensions::command::ExtKeyEvent,
+        handler: Box<dyn Fn() + Send + Sync>,
+    ) {
+        self.extension_shortcuts.push((key, handler));
+    }
+
+    /// Try to dispatch a key event to extension shortcuts.
+    fn try_extension_shortcut(&self, key_event: crossterm::event::KeyEvent) -> bool {
+        use uncode_extensions::command::{ExtKey, ExtKeyEvent, ExtModifiers};
+        let ext_key = match key_event.code {
+            crossterm::event::KeyCode::Char(c) => ExtKey::Char(c),
+            crossterm::event::KeyCode::F(n) => ExtKey::F(n),
+            crossterm::event::KeyCode::Enter => ExtKey::Enter,
+            crossterm::event::KeyCode::Esc => ExtKey::Escape,
+            crossterm::event::KeyCode::Backspace => ExtKey::Backspace,
+            crossterm::event::KeyCode::Tab => ExtKey::Tab,
+            crossterm::event::KeyCode::Up => ExtKey::Up,
+            crossterm::event::KeyCode::Down => ExtKey::Down,
+            crossterm::event::KeyCode::Left => ExtKey::Left,
+            crossterm::event::KeyCode::Right => ExtKey::Right,
+            crossterm::event::KeyCode::Home => ExtKey::Home,
+            crossterm::event::KeyCode::End => ExtKey::End,
+            crossterm::event::KeyCode::PageUp => ExtKey::PageUp,
+            crossterm::event::KeyCode::PageDown => ExtKey::PageDown,
+            crossterm::event::KeyCode::Delete => ExtKey::Delete,
+            crossterm::event::KeyCode::Insert => ExtKey::Insert,
+            _ => return false,
+        };
+        let mods = key_event.modifiers;
+        let lookup = ExtKeyEvent {
+            key: ext_key,
+            modifiers: ExtModifiers {
+                ctrl: mods.contains(crossterm::event::KeyModifiers::CONTROL),
+                alt: mods.contains(crossterm::event::KeyModifiers::ALT),
+                shift: mods.contains(crossterm::event::KeyModifiers::SHIFT),
+            },
+        };
+        for (key, handler) in &self.extension_shortcuts {
+            if *key == lookup {
+                handler();
+                return true;
+            }
+        }
+        false
     }
 
     fn resolve_permission(&self, tool_id: &str, approval: Approval) {
@@ -858,7 +922,11 @@ impl TuiEngine {
                                         break;
                                     }
                                 }
+                                // Extension shortcuts
                                 _ => {
+                                    if self.try_extension_shortcut(key_event) {
+                                        continue;
+                                    }
                                     let action = self.editor.handle_key(key_event);
                                     match action {
                                         InputAction::Submit(text) => {
