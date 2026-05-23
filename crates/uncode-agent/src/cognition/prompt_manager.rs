@@ -55,6 +55,26 @@ impl PromptManager {
         self
     }
 
+    /// 注入认知层上下文（WorkingMemory hint + EpisodeMemory summary）
+    ///
+    /// 将 turn 内关键发现和会话事件摘要作为追加章节注入系统提示词，
+    /// 而非通过 inline 消息插入 messages。
+    pub fn with_cognition_context(
+        mut self,
+        wm_hint: Option<String>,
+        ep_summary: Option<String>,
+    ) -> Self {
+        let parts: Vec<String> = [wm_hint, ep_summary]
+            .into_iter()
+            .flatten()
+            .collect();
+        if !parts.is_empty() {
+            let cognition_section = format!("\n\n{}", parts.join("\n\n"));
+            self.builder = self.builder.append(&cognition_section);
+        }
+        self
+    }
+
     /// 构建最终的系统提示词字符串
     pub fn build(self) -> String {
         self.builder.build()
@@ -111,5 +131,36 @@ mod tests {
         assert!(prompt.contains("## 可用工具"));
         assert!(prompt.contains("read"));
         assert!(prompt.contains("write"));
+    }
+
+    #[test]
+    fn test_cognition_context_both() {
+        let prompt = PromptManager::new()
+            .with_base("Base prompt.")
+            .with_cognition_context(
+                Some("## 当前 turn 关键发现\n\n- finding A".into()),
+                Some("## 重要事件摘要\n\n- event B".into()),
+            )
+            .build();
+        assert!(prompt.contains("Base prompt"));
+        assert!(prompt.contains("finding A"));
+        assert!(prompt.contains("event B"));
+    }
+
+    #[test]
+    fn test_cognition_context_wm_only() {
+        let prompt = PromptManager::new()
+            .with_cognition_context(Some("hint".into()), None)
+            .build();
+        assert!(prompt.contains("hint"));
+    }
+
+    #[test]
+    fn test_cognition_context_none() {
+        let prompt = PromptManager::new()
+            .with_base("Base.")
+            .with_cognition_context(None, None)
+            .build();
+        assert_eq!(prompt, "Base.");
     }
 }
