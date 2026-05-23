@@ -4,6 +4,7 @@ use crate::api::ExtensionApi;
 use crate::hooks::{
     Extension, HookContext, HookEvent, HookModification, HookRegistry, HookResult, LifecycleHook,
 };
+use crate::tool::{ExtensionTool, ExtensionToolMetadata};
 
 // ── Test extension implementations ──
 
@@ -358,4 +359,154 @@ async fn test_load_from_dir_returns_zero() {
 #[test]
 fn test_hook_result_default_is_continue() {
     assert!(matches!(HookResult::default(), HookResult::Continue));
+}
+
+// ── ExtensionToolMetadata tests ──
+
+#[test]
+fn test_metadata_validate_ok() {
+    let meta = ExtensionToolMetadata {
+        name: "hello".into(),
+        description: "Says hello".into(),
+        parameters: serde_json::json!({"type": "object"}),
+        label: None,
+        sequential: false,
+    };
+    assert!(meta.validate().is_ok());
+}
+
+#[test]
+fn test_metadata_validate_empty_name() {
+    let meta = ExtensionToolMetadata {
+        name: "".into(),
+        description: "desc".into(),
+        parameters: serde_json::json!({}),
+        label: None,
+        sequential: false,
+    };
+    assert!(meta.validate().unwrap_err().contains("empty"));
+}
+
+#[test]
+fn test_metadata_validate_name_starts_with_digit() {
+    let meta = ExtensionToolMetadata {
+        name: "123tool".into(),
+        description: "desc".into(),
+        parameters: serde_json::json!({}),
+        label: None,
+        sequential: false,
+    };
+    assert!(
+        meta.validate()
+            .unwrap_err()
+            .contains("letter or underscore")
+    );
+}
+
+#[test]
+fn test_metadata_validate_name_with_whitespace() {
+    let meta = ExtensionToolMetadata {
+        name: "hello world".into(),
+        description: "desc".into(),
+        parameters: serde_json::json!({}),
+        label: None,
+        sequential: false,
+    };
+    assert!(meta.validate().unwrap_err().contains("whitespace"));
+}
+
+#[test]
+fn test_metadata_validate_empty_description() {
+    let meta = ExtensionToolMetadata {
+        name: "hello".into(),
+        description: "".into(),
+        parameters: serde_json::json!({}),
+        label: None,
+        sequential: false,
+    };
+    assert!(meta.validate().unwrap_err().contains("description"));
+}
+
+#[test]
+fn test_metadata_validate_underscore_start() {
+    let meta = ExtensionToolMetadata {
+        name: "_private".into(),
+        description: "desc".into(),
+        parameters: serde_json::json!({}),
+        label: None,
+        sequential: false,
+    };
+    assert!(meta.validate().is_ok());
+}
+
+// ── ExtensionTool test helper ──
+
+struct HelloTool;
+
+#[async_trait::async_trait]
+impl ExtensionTool for HelloTool {
+    fn metadata(&self) -> ExtensionToolMetadata {
+        ExtensionToolMetadata {
+            name: "hello".into(),
+            description: "Says hello".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": { "name": {"type": "string"} }
+            }),
+            label: Some("Hello".into()),
+            sequential: false,
+        }
+    }
+
+    async fn execute(&self, arguments: serde_json::Value) -> anyhow::Result<String> {
+        let name = arguments
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("world");
+        Ok(format!("Hello, {name}!"))
+    }
+}
+
+// ── register_tool tests ──
+
+#[test]
+fn test_register_tool_no_callback_returns_error() {
+    let registry = Arc::new(HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    let result = api.register_tool(Arc::new(HelloTool));
+    assert!(result.unwrap_err().contains("no callback"));
+}
+
+#[test]
+fn test_register_tool_with_callback_delegates() {
+    let registry = Arc::new(HookRegistry::new());
+    use std::sync::atomic::AtomicUsize;
+    let called = Arc::new(AtomicUsize::new(0));
+    let called_clone = called.clone();
+
+    let callback = Arc::new(
+        move |name: String, _tool: Arc<dyn ExtensionTool>| -> Result<(), String> {
+            assert_eq!(name, "hello");
+            called_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        },
+    );
+
+    let api = ExtensionApi::with_tool_callback(registry, callback);
+    api.register_tool(Arc::new(HelloTool)).unwrap();
+    assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+#[test]
+fn test_register_tool_callback_error_propagates() {
+    let registry = Arc::new(HookRegistry::new());
+    let callback = Arc::new(
+        |_name: String, _tool: Arc<dyn ExtensionTool>| -> Result<(), String> {
+            Err("rejected".into())
+        },
+    );
+
+    let api = ExtensionApi::with_tool_callback(registry, callback);
+    let result = api.register_tool(Arc::new(HelloTool));
+    assert!(result.unwrap_err().contains("rejected"));
 }

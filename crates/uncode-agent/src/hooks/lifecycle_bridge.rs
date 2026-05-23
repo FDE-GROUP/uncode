@@ -1,21 +1,29 @@
 use std::sync::Arc;
 
 use uncode_core::message::Message;
-use uncode_extensions::hooks::{HookContext, HookEvent, HookRegistry, HookResult, LifecycleHook};
+use uncode_extensions::api::ExtensionApi;
+use uncode_extensions::hooks::{HookContext, HookEvent, HookResult, LifecycleHook};
 
 /// Fires extension lifecycle hooks at session/turn/message boundaries.
 ///
 /// Held by `AgentLoop` and called at the appropriate lifecycle points.
 pub struct ExtensionLifecycleBridge {
-    registry: Arc<HookRegistry>,
+    registry: Arc<uncode_extensions::hooks::HookRegistry>,
+    api: ExtensionApi,
 }
 
 impl ExtensionLifecycleBridge {
-    pub fn new(registry: Arc<HookRegistry>) -> Self {
-        Self { registry }
+    pub fn new(api: ExtensionApi) -> Self {
+        let registry = api.registry().clone();
+        Self { registry, api }
     }
 
-    pub fn registry(&self) -> &Arc<HookRegistry> {
+    /// Access the ExtensionApi for loading extensions.
+    pub fn api(&self) -> &ExtensionApi {
+        &self.api
+    }
+
+    pub fn registry(&self) -> &Arc<uncode_extensions::hooks::HookRegistry> {
         &self.registry
     }
 

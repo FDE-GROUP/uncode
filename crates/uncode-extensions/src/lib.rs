@@ -8,6 +8,7 @@
 pub mod api;
 pub mod hooks;
 pub mod loader;
+pub mod tool;
 
 #[cfg(test)]
 mod tests;
