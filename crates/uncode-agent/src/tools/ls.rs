@@ -29,7 +29,7 @@ impl ToolExecutor for LsTool {
         &self,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, uncode_core::error::UncodeError> {
-        super::prepare_arguments_path(arguments, "path", Some("."))
+        super::prepare_arguments_path(arguments, "path", Some("."), &[])
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
@@ -41,6 +41,7 @@ impl ToolExecutor for LsTool {
                     on_progress: None,
                     tool_call_id: String::new(),
                     execution_env: None,
+                    allowed_paths: Vec::new(),
                 },
             )
             .await?;
@@ -53,7 +54,8 @@ impl ToolExecutor for LsTool {
         ctx: ToolContext,
     ) -> UncodeResult<ToolResult> {
         let raw = arguments["path"].as_str().unwrap_or(".").to_string();
-        let resolved = super::resolve_path(&raw).map_err(|e| UncodeError::Tool(e))?;
+        let resolved =
+            super::resolve_path(&raw, &ctx.allowed_paths).map_err(|e| UncodeError::Tool(e))?;
         let display = resolved.display().to_string();
 
         let env = super::ctx_execution_env(&ctx);

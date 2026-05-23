@@ -33,7 +33,7 @@ impl ToolExecutor for FindTool {
         &self,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, uncode_core::error::UncodeError> {
-        super::prepare_arguments_path(arguments, "path", Some("."))
+        super::prepare_arguments_path(arguments, "path", Some("."), &[])
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
@@ -45,6 +45,7 @@ impl ToolExecutor for FindTool {
                     on_progress: None,
                     tool_call_id: String::new(),
                     execution_env: None,
+                    allowed_paths: Vec::new(),
                 },
             )
             .await?;
@@ -61,7 +62,8 @@ impl ToolExecutor for FindTool {
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("pattern required".into()))?
             .to_string();
         let root_raw = arguments["path"].as_str().unwrap_or(".").to_string();
-        let root = super::resolve_path(&root_raw).map_err(uncode_core::error::UncodeError::Tool)?;
+        let root = super::resolve_path(&root_raw, &_ctx.allowed_paths)
+            .map_err(uncode_core::error::UncodeError::Tool)?;
 
         let job = FindJob { root, pattern };
 

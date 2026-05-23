@@ -171,6 +171,7 @@ impl ExecutionOrchestrator {
                     on_progress: None,
                     tool_call_id: id.to_string(),
                     execution_env: Some(crate::tools::default_execution_env()),
+                    allowed_paths: Vec::new(),
                 },
             )
             .await
