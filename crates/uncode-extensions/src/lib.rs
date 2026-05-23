@@ -6,6 +6,7 @@
 //! **OpenCode:** 对照插件生态；uncode 不以 MCP 为主路径。
 
 pub mod api;
+pub mod command;
 pub mod hooks;
 pub mod loader;
 pub mod tool;

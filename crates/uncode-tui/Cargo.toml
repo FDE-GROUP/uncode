@@ -12,6 +12,7 @@ authors.workspace = true
 [dependencies]
 uncode-core.workspace = true
 uncode-agent.workspace = true
+uncode-extensions.workspace = true
 
 tokio.workspace = true
 tokio-util.workspace = true
