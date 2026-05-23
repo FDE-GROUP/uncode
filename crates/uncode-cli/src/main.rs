@@ -456,6 +456,15 @@ async fn main() -> anyhow::Result<()> {
     let model_reg_for_provider = model_registry.clone();
     let model_reg_for_unregister = model_registry.clone();
 
+    // Renderer registration — stored as pending, flushed after TUI engine creation.
+    let pending_renderers: Arc<
+        parking_lot::Mutex<Vec<uncode_extensions::renderer::ToolRenderConfig>>,
+    > = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let renderer_cb_pending = pending_renderers.clone();
+
+    // Dialog channel — bridges WASM blocking thread to TUI async event loop.
+    let (dialog_sender, dialog_bridge) = uncode_tui::dialog_channel::dialog_channel(16);
+
     let ext_api = uncode_extensions::api::ExtensionApi::with_callbacks(
         ext_registry.clone(),
         // Tool registration callback
@@ -528,6 +537,28 @@ async fn main() -> anyhow::Result<()> {
             }
             removed > 0
         })),
+        // Renderer registration callback
+        Some(Arc::new(
+            move |config: uncode_extensions::renderer::ToolRenderConfig| -> Result<(), String> {
+                renderer_cb_pending.lock().push(config);
+                Ok(())
+            },
+        )),
+        // Dialog callback — bridges to TUI via blocking channel
+        Some(Arc::new(
+            move |request: uncode_core::dialog::DialogRequest| -> Result<uncode_core::dialog::DialogResponse, String> {
+                let (response_tx, response_rx) = std::sync::mpsc::channel();
+                dialog_sender
+                    .blocking_send(uncode_tui::dialog_channel::PendingDialog {
+                        request,
+                        response_tx,
+                    })
+                    .map_err(|e| format!("dialog channel error: {e}"))?;
+                response_rx
+                    .recv()
+                    .map_err(|e| format!("dialog response error: {e}"))
+            },
+        )),
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)
@@ -588,6 +619,14 @@ async fn main() -> anyhow::Result<()> {
         for (key, handler) in pending_shortcuts.lock().drain(..) {
             tui.register_extension_shortcut(key, handler);
         }
+
+        // Flush pending renderer registrations
+        for config in pending_renderers.lock().drain(..) {
+            tui.register_custom_renderer(config.tool_name.clone(), config);
+        }
+
+        // Set dialog bridge for extension-initiated dialogs
+        tui.set_dialog_bridge(dialog_bridge);
 
         tui.set_extension_manager(ext_manager);
 

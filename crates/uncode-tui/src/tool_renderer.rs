@@ -2,6 +2,8 @@
 ///
 /// 每个工具有独立的 render_call() 和 render_result() 函数，
 /// render_call 返回内联显示文字（嵌入 header 行），render_result 返回展开结果行。
+use std::collections::HashMap;
+
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use syntect::easy::HighlightLines;
@@ -57,18 +59,31 @@ pub trait ToolRenderer: Send + Sync {
     ) -> Vec<Line<'static>>;
 }
 
-/// 内置工具渲染注册表 — 按工具名静态分发。
+/// 工具渲染注册表 — 扩展自定义渲染器优先，内置静态分发回退。
 ///
 /// **Pi:** 无同名类型。
 /// **OpenCode:** 对照多工具 scrollback 渲染器集合。
-pub struct ToolRendererRegistry;
+pub struct ToolRendererRegistry {
+    custom: HashMap<String, Box<dyn ToolRenderer>>,
+}
 
 impl ToolRendererRegistry {
     pub fn new() -> Self {
-        Self
+        Self {
+            custom: HashMap::new(),
+        }
     }
 
+    /// Register a custom renderer for a tool name (overrides built-in if same name).
+    pub fn register(&mut self, tool_name: String, renderer: Box<dyn ToolRenderer>) {
+        self.custom.insert(tool_name, renderer);
+    }
+
+    /// Look up renderer: custom first, then built-in, then fallback.
     pub fn get(&self, tool_name: &str) -> &dyn ToolRenderer {
+        if let Some(renderer) = self.custom.get(tool_name) {
+            return renderer.as_ref();
+        }
         match ToolKind::from_name(tool_name) {
             Some(ToolKind::Read) => &STATIC_READ,
             Some(ToolKind::Write) => &STATIC_WRITE,
@@ -590,6 +605,159 @@ impl ToolRenderer for FallbackRenderer {
     }
 }
 
+// --- 扩展注册的模板渲染器 ---
+
+/// 渲染结果样式，从 `ToolRenderConfig.result_style` 映射。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ResultStyle {
+    Plain,
+    Code,
+    Diff,
+    Bash,
+}
+
+/// 由扩展 `ToolRenderConfig` 构建的模板渲染器。
+pub struct TemplateToolRenderer {
+    call_template: String,
+    call_template_fields: Vec<String>,
+    result_style: ResultStyle,
+    result_max_lines: usize,
+}
+
+impl TemplateToolRenderer {
+    pub fn new(
+        call_template: String,
+        call_template_fields: Vec<String>,
+        result_style: ResultStyle,
+        result_max_lines: usize,
+    ) -> Self {
+        Self {
+            call_template,
+            call_template_fields,
+            result_style,
+            result_max_lines,
+        }
+    }
+}
+
+impl ToolRenderer for TemplateToolRenderer {
+    fn render_call(&self, args: &str, _workdir: &str) -> String {
+        let values = extract_fields_from_args(args, &self.call_template_fields);
+        substitute_template(&self.call_template, &values)
+    }
+
+    fn render_result(
+        &self,
+        _args: &str,
+        result: &str,
+        _width: u16,
+        theme: &Theme,
+    ) -> Vec<Line<'static>> {
+        let lines: Vec<&str> = result.lines().collect();
+        match self.result_style {
+            ResultStyle::Plain => lines
+                .iter()
+                .take(self.result_max_lines)
+                .map(|l| {
+                    Line::from(Span::styled(
+                        l.to_string(),
+                        Style::default().fg(theme.markdown.code_text),
+                    ))
+                })
+                .collect(),
+            ResultStyle::Code => {
+                let highlighted = highlight_code(result, "", theme);
+                if highlighted.is_empty() {
+                    lines
+                        .iter()
+                        .take(self.result_max_lines)
+                        .map(|l| {
+                            Line::from(Span::styled(
+                                l.to_string(),
+                                Style::default().fg(theme.markdown.code_text),
+                            ))
+                        })
+                        .collect()
+                } else {
+                    highlighted
+                        .into_iter()
+                        .take(self.result_max_lines)
+                        .collect()
+                }
+            }
+            ResultStyle::Diff => render_diff_lines(lines, theme, self.result_max_lines),
+            ResultStyle::Bash => lines
+                .iter()
+                .take(self.result_max_lines)
+                .map(|l| {
+                    Line::from(Span::styled(
+                        l.to_string(),
+                        Style::default().fg(theme.bash.stdout),
+                    ))
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Shared diff rendering for EditRenderer and TemplateToolRenderer.
+fn render_diff_lines(lines: Vec<&str>, theme: &Theme, max_lines: usize) -> Vec<Line<'static>> {
+    lines
+        .iter()
+        .take(max_lines)
+        .map(|line| {
+            let style = if line.starts_with('+') && !line.starts_with("++") {
+                theme.diff.added_text
+            } else if line.starts_with('-') && !line.starts_with("--") {
+                theme.diff.removed_text
+            } else if line.starts_with('@') {
+                theme.diff.header
+            } else {
+                theme.diff.context
+            };
+            Line::from(Span::styled(line.to_string(), Style::default().fg(style)))
+        })
+        .collect()
+}
+
+/// Extract specified fields from args JSON.
+fn extract_fields_from_args(args: &str, fields: &[String]) -> HashMap<String, String> {
+    let mut result = HashMap::new();
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(args) {
+        let wrappers: [Option<&serde_json::Value>; 3] = [
+            Some(&val),
+            val.get("arguments"),
+            val.get("function").and_then(|f| f.get("arguments")),
+        ];
+        for field in fields {
+            for wrapper in wrappers.iter().flatten() {
+                if let Some(obj) = wrapper.as_object() {
+                    if let Some(v) = obj.get(field) {
+                        let s = match v {
+                            serde_json::Value::String(s) => s.clone(),
+                            serde_json::Value::Number(n) => n.to_string(),
+                            serde_json::Value::Bool(b) => b.to_string(),
+                            _ => continue,
+                        };
+                        result.insert(field.clone(), s);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Substitute `{field}` placeholders in template with extracted values.
+fn substitute_template(template: &str, values: &HashMap<String, String>) -> String {
+    let mut result = template.to_string();
+    for (key, value) in values {
+        result = result.replace(&format!("{{{key}}}"), value);
+    }
+    result
+}
+
 // --- 语法高亮 ---
 
 /// 从文件路径提取扩展名，用于确定语法
@@ -1101,5 +1269,118 @@ mod tests {
             "/other/path/file.rs"
         );
         assert_eq!(relative_path("", "/home/u/proj"), "");
+    }
+
+    // --- Custom renderer tests ---
+
+    #[test]
+    fn test_registry_custom_overrides_builtin() {
+        let mut reg = ToolRendererRegistry::new();
+        let custom = TemplateToolRenderer::new(
+            "CUSTOM {path}".into(),
+            vec!["path".into()],
+            ResultStyle::Plain,
+            10,
+        );
+        reg.register("read".into(), Box::new(custom));
+        let call = reg.get("read").render_call(r#"{"path":"foo.rs"}"#, "");
+        assert_eq!(call, "CUSTOM foo.rs");
+    }
+
+    #[test]
+    fn test_registry_custom_unknown_tool() {
+        let mut reg = ToolRendererRegistry::new();
+        let custom = TemplateToolRenderer::new(
+            "→ {file}".into(),
+            vec!["file".into()],
+            ResultStyle::Plain,
+            10,
+        );
+        reg.register("my_tool".into(), Box::new(custom));
+        let call = reg.get("my_tool").render_call(r#"{"file":"data.csv"}"#, "");
+        assert_eq!(call, "→ data.csv");
+    }
+
+    #[test]
+    fn test_registry_builtin_unchanged() {
+        let reg = ToolRendererRegistry::new();
+        let call = reg.get("read").render_call(
+            r#"{"filePath":"src/main.rs","limit":50}"#,
+            "/home/user/project",
+        );
+        assert!(call.contains("src/main.rs"));
+    }
+
+    #[test]
+    fn test_template_render_call() {
+        let r = TemplateToolRenderer::new(
+            "Run {command} in {dir}".into(),
+            vec!["command".into(), "dir".into()],
+            ResultStyle::Plain,
+            20,
+        );
+        let call = r.render_call(r#"{"command":"cargo test","dir":"src"}"#, "");
+        assert_eq!(call, "Run cargo test in src");
+    }
+
+    #[test]
+    fn test_template_render_call_missing_field() {
+        let r = TemplateToolRenderer::new(
+            "→ {path}".into(),
+            vec!["path".into()],
+            ResultStyle::Plain,
+            20,
+        );
+        // Missing field → placeholder left as-is
+        let call = r.render_call(r#"{"other":"val"}"#, "");
+        assert_eq!(call, "→ {path}");
+    }
+
+    #[test]
+    fn test_template_render_result_plain() {
+        let r = TemplateToolRenderer::new(String::new(), vec![], ResultStyle::Plain, 5);
+        let theme = Theme::default();
+        let result = r.render_result("{}", "line1\nline2\nline3", 80, &theme);
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_template_render_result_bash() {
+        let r = TemplateToolRenderer::new(String::new(), vec![], ResultStyle::Bash, 20);
+        let theme = Theme::default();
+        let result = r.render_result("{}", "hello\nworld", 80, &theme);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_template_render_result_diff() {
+        let r = TemplateToolRenderer::new(String::new(), vec![], ResultStyle::Diff, 20);
+        let theme = Theme::default();
+        let result = r.render_result("{}", "+added\n-removed\n context", 80, &theme);
+        assert_eq!(result.len(), 3);
+    }
+
+    #[test]
+    fn test_template_render_result_max_lines() {
+        let r = TemplateToolRenderer::new(String::new(), vec![], ResultStyle::Plain, 2);
+        let theme = Theme::default();
+        let result = r.render_result("{}", "a\nb\nc\nd", 80, &theme);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_fields_from_args() {
+        let fields = vec!["path".into(), "count".into()];
+        let map = extract_fields_from_args(r#"{"path":"src/main.rs","count":42}"#, &fields);
+        assert_eq!(map.get("path").unwrap(), "src/main.rs");
+        assert_eq!(map.get("count").unwrap(), "42");
+    }
+
+    #[test]
+    fn test_substitute_template() {
+        let mut map = HashMap::new();
+        map.insert("path".into(), "foo.rs".into());
+        map.insert("line".into(), "42".into());
+        assert_eq!(substitute_template("→ {path}:{line}", &map), "→ foo.rs:42");
     }
 }
