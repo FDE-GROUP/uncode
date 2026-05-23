@@ -581,6 +581,11 @@ impl AgentLoop {
         self.active_run.load(Ordering::Acquire)
     }
 
+    /// Get a shared handle to the active-run flag (for extension idle-check callbacks).
+    pub fn active_run_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.active_run)
+    }
+
     /// Wait until no run is active (for external synchronization)
     pub async fn wait_for_idle(&self) {
         while self.is_run_active() {
