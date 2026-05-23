@@ -56,6 +56,11 @@ pub fn setup_linker(linker: &mut Linker<HostState>) -> anyhow::Result<()> {
     linker.func_wrap("uncode", "__uncode_host_remove_widget", host_remove_widget)?;
     linker.func_wrap("uncode", "__uncode_host_set_status", host_set_status)?;
     linker.func_wrap("uncode", "__uncode_host_notify", host_notify)?;
+    linker.func_wrap(
+        "uncode",
+        "__uncode_host_register_message_renderer",
+        host_register_message_renderer,
+    )?;
 
     Ok(())
 }
@@ -579,6 +584,34 @@ fn host_notify(
         Ok(()) => 0,
         Err(e) => {
             tracing::warn!("extension {ext_name} notify failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_register_message_renderer(
+    mut caller: Caller<'_, HostState>,
+    _handle: i32,
+    ptr: i32,
+    len: i32,
+) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let config: crate::message_renderer::MessageRenderConfig = match serde_json::from_slice(&bytes)
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} sent invalid message renderer config JSON: {e}");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.register_message_renderer(config) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} register_message_renderer failed: {e}");
             -1
         }
     }

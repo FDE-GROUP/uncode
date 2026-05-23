@@ -462,6 +462,12 @@ async fn main() -> anyhow::Result<()> {
     > = Arc::new(parking_lot::Mutex::new(Vec::new()));
     let renderer_cb_pending = pending_renderers.clone();
 
+    // Message renderer registration — same pending pattern.
+    let pending_message_renderers: Arc<
+        parking_lot::Mutex<Vec<uncode_extensions::message_renderer::MessageRenderConfig>>,
+    > = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let msg_renderer_cb_pending = pending_message_renderers.clone();
+
     // Dialog channel — bridges WASM blocking thread to TUI async event loop.
     let (dialog_sender, dialog_bridge) = uncode_tui::dialog_channel::dialog_channel(16);
 
@@ -632,6 +638,13 @@ async fn main() -> anyhow::Result<()> {
                 Ok(())
             },
         )),
+        // Message renderer registration callback
+        Some(Arc::new(
+            move |config: uncode_extensions::message_renderer::MessageRenderConfig| -> Result<(), String> {
+                msg_renderer_cb_pending.lock().push(config);
+                Ok(())
+            },
+        )),
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)
@@ -696,6 +709,11 @@ async fn main() -> anyhow::Result<()> {
         // Flush pending renderer registrations
         for config in pending_renderers.lock().drain(..) {
             tui.register_custom_renderer(config.tool_name.clone(), config);
+        }
+
+        // Flush pending message renderer registrations
+        for config in pending_message_renderers.lock().drain(..) {
+            tui.register_custom_message_renderer(config.message_type.clone(), config);
         }
 
         // Set dialog bridge for extension-initiated dialogs

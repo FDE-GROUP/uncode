@@ -31,9 +31,20 @@ pub enum NotifyType {
 /// Actions an extension can perform on the TUI UI.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum UiAction {
-    SetWidget { config: WidgetConfig },
-    RemoveWidget { key: String },
-    SetStatus { key: String, text: Option<String> },
+    SetWidget {
+        config: WidgetConfig,
+    },
+    RemoveWidget {
+        key: String,
+    },
+    SetStatus {
+        key: String,
+        text: Option<String>,
+    },
+    CustomMessage {
+        message_type: String,
+        content: String,
+    },
 }
 
 impl WidgetConfig {
@@ -101,6 +112,17 @@ mod tests {
         let action = UiAction::SetStatus {
             key: "ext1".into(),
             text: None,
+        };
+        let json = serde_json::to_string(&action).unwrap();
+        let back: UiAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(action, back);
+    }
+
+    #[test]
+    fn custom_message_roundtrip() {
+        let action = UiAction::CustomMessage {
+            message_type: "data_table".into(),
+            content: "row1\nrow2".into(),
         };
         let json = serde_json::to_string(&action).unwrap();
         let back: UiAction = serde_json::from_str(&json).unwrap();
