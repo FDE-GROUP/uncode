@@ -51,7 +51,7 @@ impl ToolExecutor for GrepTool {
         &self,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, uncode_core::error::UncodeError> {
-        super::prepare_arguments_path(arguments, "path", Some("."))
+        super::prepare_arguments_path(arguments, "path", Some("."), &[])
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
@@ -63,6 +63,7 @@ impl ToolExecutor for GrepTool {
                     on_progress: None,
                     tool_call_id: String::new(),
                     execution_env: None,
+                    allowed_paths: Vec::new(),
                 },
             )
             .await?;
@@ -79,8 +80,11 @@ impl ToolExecutor for GrepTool {
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("pattern required".into()))?
             .to_string();
 
-        let search_path = super::resolve_path(arguments["path"].as_str().unwrap_or("."))
-            .map_err(uncode_core::error::UncodeError::Tool)?;
+        let search_path = super::resolve_path(
+            arguments["path"].as_str().unwrap_or("."),
+            &ctx.allowed_paths,
+        )
+        .map_err(uncode_core::error::UncodeError::Tool)?;
 
         let include = arguments["include"].as_str().map(str::to_string);
         let max_results = self.max_results;

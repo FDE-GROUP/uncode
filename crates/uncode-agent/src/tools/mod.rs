@@ -124,8 +124,12 @@ pub(crate) fn atomic_write(path: &std::path::Path, content: &str) -> Result<(), 
 ///
 /// - Relative paths are resolved against the current working directory.
 /// - The result is canonicalized to eliminate `..` traversal.
-/// - Paths that escape the current working directory via `..` are rejected.
-fn resolve_path(raw: &str) -> Result<std::path::PathBuf, String> {
+/// - Paths that escape the current working directory via `..` are rejected
+///   unless they fall under one of the `extra_allowed` prefixes.
+fn resolve_path(
+    raw: &str,
+    extra_allowed: &[std::path::PathBuf],
+) -> Result<std::path::PathBuf, String> {
     let cwd = std::env::current_dir().map_err(|e| format!("cannot get cwd: {e}"))?;
     let p = std::path::Path::new(raw);
     let full = if p.is_absolute() {
@@ -136,9 +140,13 @@ fn resolve_path(raw: &str) -> Result<std::path::PathBuf, String> {
 
     let canonical = normalize_path(&full)?;
 
-    // Verify the resolved path is within cwd (prevents .. traversal)
+    // Verify the resolved path is within cwd or an extra-allowed prefix
     let canonical_cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
-    if !canonical.starts_with(&canonical_cwd) {
+    let in_cwd = canonical.starts_with(&canonical_cwd);
+    let in_extra = extra_allowed
+        .iter()
+        .any(|prefix| canonical.starts_with(prefix));
+    if !in_cwd && !in_extra {
         return Err(format!(
             "path '{}' resolves outside the project directory",
             raw
@@ -166,6 +174,7 @@ pub fn prepare_arguments_path(
     mut arguments: serde_json::Value,
     field: &str,
     default_if_missing: Option<&str>,
+    extra_allowed: &[std::path::PathBuf],
 ) -> Result<serde_json::Value, uncode_core::error::UncodeError> {
     let obj = arguments.as_object_mut().ok_or_else(|| {
         uncode_core::error::UncodeError::Tool("arguments must be a JSON object".into())
@@ -175,7 +184,8 @@ pub fn prepare_arguments_path(
             .or_insert_with(|| serde_json::Value::String(default.into()));
     }
     if let Some(raw) = obj.get(field).and_then(|v| v.as_str()) {
-        let resolved = resolve_path(raw).map_err(uncode_core::error::UncodeError::Tool)?;
+        let resolved =
+            resolve_path(raw, extra_allowed).map_err(uncode_core::error::UncodeError::Tool)?;
         obj.insert(
             field.to_string(),
             serde_json::Value::String(display_path_within_project(&resolved)),

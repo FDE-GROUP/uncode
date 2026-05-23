@@ -77,6 +77,12 @@ pub fn setup_linker(linker: &mut Linker<HostState>) -> anyhow::Result<()> {
         host_set_thinking_labels,
     )?;
 
+    linker.func_wrap(
+        "uncode",
+        "__uncode_host_register_resource_path",
+        host_register_resource_path,
+    )?;
+
     Ok(())
 }
 
@@ -750,6 +756,33 @@ fn host_set_thinking_labels(
         Ok(()) => 0,
         Err(e) => {
             tracing::warn!("extension {ext_name} set_thinking_labels failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_register_resource_path(
+    mut caller: Caller<'_, HostState>,
+    _handle: i32,
+    ptr: i32,
+    len: i32,
+) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let config: crate::resource::ResourcePathConfig = match serde_json::from_slice(&bytes) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} sent invalid resource path config JSON: {e}");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.register_resource_path(config) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} register_resource_path failed: {e}");
             -1
         }
     }

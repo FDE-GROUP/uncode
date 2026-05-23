@@ -45,7 +45,7 @@ impl ToolExecutor for WriteTool {
         &self,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, uncode_core::error::UncodeError> {
-        super::prepare_arguments_path(arguments, "path", None)
+        super::prepare_arguments_path(arguments, "path", None, &[])
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
@@ -57,6 +57,7 @@ impl ToolExecutor for WriteTool {
                     on_progress: None,
                     tool_call_id: String::new(),
                     execution_env: None,
+                    allowed_paths: Vec::new(),
                 },
             )
             .await?;
@@ -78,7 +79,8 @@ impl ToolExecutor for WriteTool {
             .to_string();
         let bytes_written = content.len();
 
-        let resolved = super::resolve_path(raw).map_err(uncode_core::error::UncodeError::Tool)?;
+        let resolved = super::resolve_path(raw, &ctx.allowed_paths)
+            .map_err(uncode_core::error::UncodeError::Tool)?;
         let display = resolved.display().to_string();
 
         let env = super::ctx_execution_env(&ctx);

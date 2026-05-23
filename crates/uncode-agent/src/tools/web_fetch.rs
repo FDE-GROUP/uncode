@@ -251,6 +251,7 @@ mod tests {
             on_progress: None,
             tool_call_id: "test".into(),
             execution_env: None,
+            allowed_paths: Vec::new(),
         }
     }
 
