@@ -143,7 +143,7 @@ mod tests {
     ) {
         let mut api_registry = ApiRegistry::new();
         api_registry.register(Arc::new(MockApi::new(responses)));
-        let mut model_registry = ModelRegistry::new();
+        let model_registry = ModelRegistry::new();
         model_registry.register(Model {
             id: "mock".into(),
             api: "mock".into(),
@@ -1650,7 +1650,7 @@ mod tests {
             error_kind,
             success_events,
         )));
-        let mut model_registry = ModelRegistry::new();
+        let model_registry = ModelRegistry::new();
         model_registry.register(Model {
             id: "mock".into(),
             api: "retry-mock".into(),

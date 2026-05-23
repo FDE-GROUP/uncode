@@ -26,6 +26,12 @@ pub fn setup_linker(linker: &mut Linker<HostState>) -> anyhow::Result<()> {
 
     linker.func_wrap("uncode", "__uncode_host_get_cwd", host_get_cwd)?;
 
+    linker.func_wrap(
+        "uncode",
+        "__uncode_host_register_provider",
+        host_register_provider,
+    )?;
+
     Ok(())
 }
 
@@ -170,4 +176,52 @@ fn host_log(mut caller: Caller<'_, HostState>, level: i32, ptr: i32, len: i32) {
 fn host_get_cwd(_caller: Caller<'_, HostState>, _out_ptr: i32) -> i32 {
     // Phase 4: return empty — extensions don't need CWD without WASI.
     0
+}
+
+fn host_register_provider(
+    mut caller: Caller<'_, HostState>,
+    _handle: i32,
+    ptr: i32,
+    len: i32,
+) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+
+    let ext_name = caller.data().extension_name.clone();
+    match std::str::from_utf8(&bytes) {
+        Ok(json_str) => {
+            match serde_json::from_str::<crate::provider::ProviderRegistration>(json_str) {
+                Ok(reg) => {
+                    if let Err(e) = reg.validate() {
+                        tracing::warn!("extension {ext_name} provider registration invalid: {e}");
+                        return -1;
+                    }
+                    tracing::debug!(
+                        "extension {ext_name} registers provider '{}' with {} model(s)",
+                        reg.name,
+                        reg.models.len()
+                    );
+                    match caller.data().ext_api.register_provider(reg) {
+                        Ok(()) => 0,
+                        Err(e) => {
+                            tracing::warn!(
+                                "extension {ext_name} provider registration failed: {e}"
+                            );
+                            -1
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("extension {ext_name} sent invalid provider JSON: {e}");
+                    -1
+                }
+            }
+        }
+        Err(_) => {
+            tracing::warn!("extension {ext_name} sent invalid utf-8 provider data");
+            -1
+        }
+    }
 }

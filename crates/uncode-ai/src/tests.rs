@@ -124,7 +124,7 @@ mod suite {
     #[test]
     fn test_model_registry_merge_user_models() {
         use crate::model_registry::ModelRegistry;
-        let mut reg = ModelRegistry::from_builtin();
+        let reg = ModelRegistry::from_builtin();
         let custom = Model {
             id: "my-custom".into(),
             name: "Custom".into(),

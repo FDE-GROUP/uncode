@@ -788,7 +788,7 @@ impl AgentLoop {
                         &self.session_store,
                         &session_id,
                         &self.api_registry,
-                        model,
+                        &model,
                         &self.api_keys,
                         &self.compaction_config,
                     )
@@ -921,7 +921,7 @@ impl AgentLoop {
                         self.emit(AgentEvent::AgentInterrupted { turn, partial_response: false });
                         break 'outer;
                     }
-                    result = self.stream_with_retry(model, &context, &options) => {
+                    result = self.stream_with_retry(&model, &context, &options) => {
                         match result {
                             Ok(s) => s,
                             Err(e) if e.is_context_overflow() => {
@@ -942,7 +942,7 @@ impl AgentLoop {
                                     &self.session_store,
                                     &session_id,
                                     &self.api_registry,
-                                    model,
+                                    &model,
                                     self.api_keys.as_ref(),
                                     &self.compaction_config,
                                 )
@@ -973,7 +973,7 @@ impl AgentLoop {
                                                     _ = self.cancel_token.cancelled() => {
                                                         break 'outer;
                                                     }
-                                                    r = self.stream_with_retry(model, &compacted_ctx, &options) => r?,
+                                                    r = self.stream_with_retry(&model, &compacted_ctx, &options) => r?,
                                                 }
                                             }
                                             Err(e) => return Err(UncodeError::Harness(
@@ -1603,7 +1603,7 @@ impl AgentLoop {
                                 has_more_tool_calls,
                                 token_usage: turn_usage,
                                 api_registry: &self.api_registry,
-                                model,
+                                model: &model,
                                 api_keys: self.api_keys.as_ref(),
                                 cancel_token: self.cancel_token.clone(),
                             })
