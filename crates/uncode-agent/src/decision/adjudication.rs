@@ -89,6 +89,14 @@ pub struct PhaseGuardPolicy {
     phase: std::sync::Mutex<AgentHarnessPhase>,
 }
 
+impl Clone for PhaseGuardPolicy {
+    fn clone(&self) -> Self {
+        Self {
+            phase: std::sync::Mutex::new(self.current_phase()),
+        }
+    }
+}
+
 impl PhaseGuardPolicy {
     pub fn new(initial: AgentHarnessPhase) -> Self {
         Self {

@@ -64,14 +64,19 @@ pub fn expand_file_refs(text: &str, working_dir: &Path) -> String {
         }
 
         // 安全检查：路径必须在 working_dir 内
-        let canonical_working = working_dir
-            .canonicalize()
-            .unwrap_or_else(|_| working_dir.to_path_buf());
-        let is_safe = full_path
-            .canonicalize()
-            .as_ref()
-            .map(|p| p.starts_with(&canonical_working))
-            .unwrap_or(false);
+        let canonical_working = match working_dir.canonicalize() {
+            Ok(p) => p,
+            Err(_) => {
+                let pattern = format!("@{path_str}");
+                result =
+                    result.replace(&pattern, &format!("[错误: @{} 无法解析工作目录]", path_str));
+                continue;
+            }
+        };
+        let is_safe = match full_path.canonicalize() {
+            Ok(p) => p.starts_with(&canonical_working),
+            Err(_) => false,
+        };
 
         let replacement = if !is_safe {
             format!("[错误: @{} 路径在工作目录外]", path_str)
