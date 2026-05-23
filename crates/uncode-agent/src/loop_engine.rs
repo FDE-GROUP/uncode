@@ -730,6 +730,25 @@ impl AgentLoop {
 
         messages.insert(0, Message::system(self.system_prompt.clone()));
 
+        // ── 认知层上下文注入 (#386): WorkingMemory + EpisodeMemory → system prompt ──
+        {
+            let cognition_ctx = {
+                let wm = self.working_memory.lock().unwrap();
+                let ep = self.episode_memory.lock().unwrap();
+                let wm_hint = wm.to_context_hint();
+                let ep_summary = ep.build_context_summary();
+                match (wm_hint, ep_summary) {
+                    (Some(wm), Some(ep)) => Some(format!("{wm}\n\n{ep}")),
+                    (Some(wm), None) => Some(wm),
+                    (None, Some(ep)) => Some(ep),
+                    (None, None) => None,
+                }
+            };
+            if let Some(ctx) = cognition_ctx {
+                messages.insert(1, Message::system(ctx));
+            }
+        }
+
         let tools = self.tool_registry.definitions();
 
         // Unified pending messages: nextTurn / steering / followUp all flow through here
@@ -885,6 +904,24 @@ impl AgentLoop {
                             }
 
                             messages.insert(0, Message::system(self.system_prompt.clone()));
+                            // 认知层上下文注入（压缩后重建）
+                            {
+                                let cognition_ctx = {
+                                    let wm = self.working_memory.lock().unwrap();
+                                    let ep = self.episode_memory.lock().unwrap();
+                                    let wm_hint = wm.to_context_hint();
+                                    let ep_summary = ep.build_context_summary();
+                                    match (wm_hint, ep_summary) {
+                                        (Some(wm), Some(ep)) => Some(format!("{wm}\n\n{ep}")),
+                                        (Some(wm), None) => Some(wm),
+                                        (None, Some(ep)) => Some(ep),
+                                        (None, None) => None,
+                                    }
+                                };
+                                if let Some(ctx) = cognition_ctx {
+                                    messages.insert(1, Message::system(ctx));
+                                }
+                            }
                             self.emit(AgentEvent::CompactionComplete {
                                 messages_replaced: entries_before,
                                 tokens_before,
@@ -1401,6 +1438,7 @@ impl AgentLoop {
                                 .collect();
 
                             // ── 决策层防火墙验证 (原则2: 自然语言止于防火墙, #339) ──
+                            // ── + 裁决器 + 审计记录 (#385, #387) ──
                             {
                                 let acc = self.proposal_acc.lock().unwrap();
                                 let proposals = acc.completed();
@@ -1414,10 +1452,54 @@ impl AgentLoop {
                                         ));
                                     }
                                     if let Some(ref firewall) = *fw {
+                                        let adj = self.adjudicator.lock().unwrap();
+                                        let decision_ctx =
+                                            crate::decision::types::DecisionContext {
+                                                turn_number: turn as u32,
+                                                max_turns: crate::loop_engine::MAX_TURNS as u32,
+                                                active_tools: self
+                                                    .tool_registry
+                                                    .active_tool_names()
+                                                    .unwrap_or_default(),
+                                            };
                                         for proposal in proposals {
+                                            let started_at = std::time::Instant::now();
                                             match firewall.process(proposal) {
-                                                Ok(_normalized) => {
-                                                    // 提案通过防火墙——继续执行
+                                                Ok(normalized) => {
+                                                    // 防火墙通过 → 裁决器裁决
+                                                    let (allowed, reason) =
+                                                        if let Some(ref adjudicator) = *adj {
+                                                            match adjudicator.adjudicate(
+                                                                &normalized,
+                                                                &decision_ctx,
+                                                            ) {
+                                                                Ok(_approved) => {
+                                                                    debug!(
+                                                                        "adjudicator approved: {}",
+                                                                        normalized.tool_name
+                                                                    );
+                                                                    (true, None)
+                                                                }
+                                                                Err(e) => {
+                                                                    warn!(
+                                                                        "adjudicator denied: {e}"
+                                                                    );
+                                                                    (false, Some(e.to_string()))
+                                                                }
+                                                            }
+                                                        } else {
+                                                            (true, None)
+                                                        };
+
+                                                    self.emit(AgentEvent::DecisionMade {
+                                                        turn_id: format!("turn-{turn}"),
+                                                        tool_name: normalized.tool_name.clone(),
+                                                        allowed,
+                                                        reason: reason.clone(),
+                                                        duration_ms: Some(
+                                                            started_at.elapsed().as_millis() as u64,
+                                                        ),
+                                                    });
                                                 }
                                                 Err(e) => {
                                                     tracing::warn!(
@@ -1429,7 +1511,9 @@ impl AgentLoop {
                                                         tool_name: proposal.tool_name.clone(),
                                                         allowed: false,
                                                         reason: Some(e.to_string()),
-                                                        duration_ms: None,
+                                                        duration_ms: Some(
+                                                            started_at.elapsed().as_millis() as u64,
+                                                        ),
                                                     });
                                                 }
                                             }
@@ -1633,6 +1717,19 @@ impl AgentLoop {
                                             name.clone(),
                                             content_text.clone(),
                                         );
+                                        // ── 认知层: 不确定性分类 (#386) ──
+                                        let uc = crate::cognition::uncertainty::UncertaintyClass::from_error_category("tool", &content_text);
+                                        let uc_summary = match &uc {
+                                            crate::cognition::uncertainty::UncertaintyClass::Generative(_) => "generative_uncertainty",
+                                            crate::cognition::uncertainty::UncertaintyClass::Cognitive(_) => "cognitive_gap",
+                                            crate::cognition::uncertainty::UncertaintyClass::Executional(e) => {
+                                                self.working_memory.lock().unwrap().observe_important(
+                                                    format!("[uncertainty] executional: {} — strategy: {:?}", e.error, e.strategy),
+                                                );
+                                                "executional_uncertainty"
+                                            }
+                                        };
+                                        debug!("tool failure classified as {uc_summary}: {name}");
                                     } else {
                                         turn_phase_completed.push(label);
                                     }
