@@ -18,6 +18,7 @@ pub mod ls;
 mod mock_env;
 pub mod read;
 pub mod registry;
+pub mod sandbox;
 pub mod url_safety;
 pub mod web_fetch;
 pub mod web_search;

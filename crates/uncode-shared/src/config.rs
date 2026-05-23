@@ -90,6 +90,9 @@ pub struct ToolsConfig {
     /// `grep` 全局最多匹配条数。
     #[serde(default = "default_tools_max_grep_results")]
     pub max_grep_results: usize,
+    /// Bash tool configuration (sandbox, etc.).
+    #[serde(default)]
+    pub bash: BashToolConfig,
 }
 
 impl Default for ToolsConfig {
@@ -97,8 +100,50 @@ impl Default for ToolsConfig {
         Self {
             max_file_bytes: default_tools_max_file_bytes(),
             max_grep_results: default_tools_max_grep_results(),
+            bash: BashToolConfig::default(),
         }
     }
+}
+
+/// Bash tool configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BashToolConfig {
+    /// Enable OS-level sandbox for bash command execution.
+    #[serde(default)]
+    pub sandbox: bool,
+    /// Sandbox profile: "strict" (read-only FS + no network) or "permissive" (writable /tmp + network).
+    #[serde(default = "default_sandbox_profile")]
+    pub sandbox_profile: SandboxProfile,
+}
+
+impl Default for BashToolConfig {
+    fn default() -> Self {
+        Self {
+            sandbox: false,
+            sandbox_profile: default_sandbox_profile(),
+        }
+    }
+}
+
+/// Sandbox isolation profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SandboxProfile {
+    /// Read-only system directories, writable CWD only, no network.
+    #[serde(rename = "strict")]
+    Strict,
+    /// Read-only system + writable CWD and /tmp, network allowed.
+    #[serde(rename = "permissive")]
+    Permissive,
+}
+
+impl Default for SandboxProfile {
+    fn default() -> Self {
+        Self::Strict
+    }
+}
+
+fn default_sandbox_profile() -> SandboxProfile {
+    SandboxProfile::Strict
 }
 
 fn default_tools_max_file_bytes() -> usize {
