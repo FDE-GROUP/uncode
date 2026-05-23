@@ -12,6 +12,7 @@ pub mod agent_step; // ★ AgentStep — 认知显化与决策驱动设计 决�
 pub mod api_types;
 pub mod config;
 pub mod context;
+pub mod dialog;
 pub mod diff;
 pub mod error;
 pub mod event;

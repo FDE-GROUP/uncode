@@ -3,7 +3,10 @@ use std::sync::Arc;
 use crate::command::{CommandRegistration, ShortcutRegistration};
 use crate::hooks::{Extension, HookRegistry, LifecycleHook};
 use crate::provider::ProviderRegistration;
+use crate::renderer::ToolRenderConfig;
 use crate::tool::ExtensionTool;
+
+use uncode_core::dialog::{DialogRequest, DialogResponse};
 
 /// Callback type for tool registration. Injected by `uncode-agent`.
 ///
@@ -32,6 +35,15 @@ pub type ProviderRegistrationCallback =
 /// Callback type for dynamic provider unregistration. Injected by `uncode-cli`.
 pub type ProviderUnregisterCallback = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
+/// Callback type for tool renderer registration. Injected by `uncode-cli`.
+pub type RendererRegistrationCallback =
+    Arc<dyn Fn(ToolRenderConfig) -> Result<(), String> + Send + Sync>;
+
+/// Callback type for dialog interaction. Injected by `uncode-cli`.
+/// Blocks until the user responds.
+pub type DialogCallback =
+    Arc<dyn Fn(DialogRequest) -> Result<DialogResponse, String> + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -44,6 +56,8 @@ pub struct ExtensionApi {
     shortcut_callback: Option<ShortcutRegistrationCallback>,
     provider_callback: Option<ProviderRegistrationCallback>,
     provider_unregister_callback: Option<ProviderUnregisterCallback>,
+    renderer_callback: Option<RendererRegistrationCallback>,
+    dialog_callback: Option<DialogCallback>,
 }
 
 impl ExtensionApi {
@@ -57,6 +71,8 @@ impl ExtensionApi {
             shortcut_callback: None,
             provider_callback: None,
             provider_unregister_callback: None,
+            renderer_callback: None,
+            dialog_callback: None,
         }
     }
 
@@ -71,6 +87,8 @@ impl ExtensionApi {
         shortcut_callback: Option<ShortcutRegistrationCallback>,
         provider_callback: Option<ProviderRegistrationCallback>,
         provider_unregister_callback: Option<ProviderUnregisterCallback>,
+        renderer_callback: Option<RendererRegistrationCallback>,
+        dialog_callback: Option<DialogCallback>,
     ) -> Self {
         Self {
             registry,
@@ -81,6 +99,8 @@ impl ExtensionApi {
             shortcut_callback,
             provider_callback,
             provider_unregister_callback,
+            renderer_callback,
+            dialog_callback,
         }
     }
 
@@ -160,5 +180,24 @@ impl ExtensionApi {
         } else {
             false
         }
+    }
+
+    /// Register a custom tool renderer from an extension.
+    pub fn register_renderer(&self, config: ToolRenderConfig) -> Result<(), String> {
+        config.validate()?;
+        let callback = self
+            .renderer_callback
+            .as_ref()
+            .ok_or("renderer registration not available: no callback configured")?;
+        callback(config)
+    }
+
+    /// Show an interactive dialog and block until the user responds.
+    pub fn show_dialog(&self, request: DialogRequest) -> Result<DialogResponse, String> {
+        let callback = self
+            .dialog_callback
+            .as_ref()
+            .ok_or("dialog not available: no callback configured")?;
+        callback(request)
     }
 }
