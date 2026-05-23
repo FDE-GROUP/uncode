@@ -308,8 +308,8 @@ impl Api for AnthropicMessagesApi {
         context: &Context,
         options: &StreamOptions,
     ) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
-        let body = build_anthropic_body(model, context, options);
-        crate::notify_request_payload(options, &body);
+        let mut body = build_anthropic_body(model, context, options);
+        crate::notify_request_payload(options, &mut body);
         let url = format!("{}/messages", model.base_url);
 
         let mut req = self.client.post(&url).json(&body);

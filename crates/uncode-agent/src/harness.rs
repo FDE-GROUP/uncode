@@ -252,6 +252,7 @@ impl AgentHarness {
 
     /// 中断 + 清空队列
     pub async fn abort(&mut self) {
+        self.agent.fire_session_shutdown().await;
         self.agent.cancel();
         let _ = self.agent.cancel_and_clear().await;
         self.pending_writes.clear();

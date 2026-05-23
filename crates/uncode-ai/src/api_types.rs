@@ -8,8 +8,8 @@ use crate::tool_def::ToolDefinition;
 
 // ── Type aliases for complex callback types ──
 
-/// 流式 payload 回调
-pub type PayloadCallback = Arc<dyn Fn(&serde_json::Value) + Send + Sync>;
+/// 流式 payload 回调 — 接收 `&mut` 以允许扩展修改非核心字段。
+pub type PayloadCallback = Arc<dyn Fn(&mut serde_json::Value) + Send + Sync>;
 /// HTTP 响应回调
 pub type ResponseCallback = Arc<dyn Fn(u16, &HashMap<String, String>) + Send + Sync>;
 /// 上下文变换回调

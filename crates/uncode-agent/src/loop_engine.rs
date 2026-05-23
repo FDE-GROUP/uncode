@@ -48,6 +48,7 @@ use uncode_core::tool::{
 pub const MAX_TURNS: u64 = 50;
 const MAX_LLM_RETRIES: u32 = 3;
 const BASE_RETRY_DELAY_MS: u64 = 1000;
+const MAX_INJECTED_MESSAGES: usize = 10;
 
 /// Turn 边界回调可返回的模型变更决策。
 ///
@@ -341,6 +342,15 @@ impl AgentLoop {
         self.extension_bridge = Some(bridge);
     }
 
+    /// Fire `SessionShutdown` lifecycle hook (called from harness abort).
+    pub async fn fire_session_shutdown(&self) {
+        if let Some(ref bridge) = self.extension_bridge {
+            if let Some(ref sid) = self.session_id {
+                bridge.fire_session_shutdown(sid).await;
+            }
+        }
+    }
+
     /// Restrict tools visible to the LLM and executable in this loop.
     ///
     /// **Pi:** `setActiveTools`.
@@ -571,6 +581,11 @@ impl AgentLoop {
         self.active_run.load(Ordering::Acquire)
     }
 
+    /// Get a shared handle to the active-run flag (for extension idle-check callbacks).
+    pub fn active_run_handle(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.active_run)
+    }
+
     /// Wait until no run is active (for external synchronization)
     pub async fn wait_for_idle(&self) {
         while self.is_run_active() {
@@ -645,6 +660,10 @@ impl AgentLoop {
             message_id: user_message.id.clone(),
         });
 
+        if let Some(ref bridge) = self.extension_bridge {
+            bridge.fire_before_agent_start(&session_id).await;
+        }
+
         self.emit(AgentEvent::SessionStart {
             session_id: session_id.clone(),
             timestamp: chrono::Utc::now(),
@@ -652,6 +671,7 @@ impl AgentLoop {
 
         if let Some(ref bridge) = self.extension_bridge {
             bridge.fire_session_start(&session_id).await;
+            bridge.fire_resources_discover(&session_id).await;
         }
 
         // Build context from session store (picks up all previous messages for resume)
@@ -777,6 +797,9 @@ impl AgentLoop {
                 )
                 .await
                 {
+                    if let Some(ref bridge) = self.extension_bridge {
+                        bridge.fire_session_before_compact(&session_id).await;
+                    }
                     self.emit(AgentEvent::CompactionStart {
                         data: Box::new(CompactionStartData {
                             session_id: session_id.clone(),
@@ -843,6 +866,9 @@ impl AgentLoop {
                                 summary_text,
                                 reason: CompactionReason::Threshold,
                             });
+                            if let Some(ref bridge) = self.extension_bridge {
+                                bridge.fire_session_compact(&session_id).await;
+                            }
                         }
                         Ok(None) => {}
                         Err(e) => tracing::warn!("compaction failed: {e}"),
@@ -883,22 +909,6 @@ impl AgentLoop {
                     transform(&mut messages);
                 }
 
-                let context = Context {
-                    system_prompt: Some(self.system_prompt.clone()),
-                    messages: messages.clone(),
-                    tools: tools.clone(),
-                };
-                let options = StreamOptions {
-                    api_key,
-                    temperature: Some(0.7),
-                    max_tokens: Some(8192),
-                    thinking_level,
-                    session_id: self.session_id.clone(),
-                    on_payload: self.on_payload.clone(),
-                    on_response: self.on_response.clone(),
-                    ..StreamOptions::default()
-                };
-
                 self.emit(AgentEvent::TurnStart { turn });
 
                 if let Some(ref bridge) = self.extension_bridge {
@@ -906,6 +916,78 @@ impl AgentLoop {
                         bridge.fire_turn_start(sid, turn).await;
                     }
                 }
+
+                if let Some(ref bridge) = self.extension_bridge {
+                    if let Some(ref sid) = self.session_id {
+                        bridge.fire_agent_start(sid).await;
+                        let ctx_result = bridge.fire_context(sid, &messages).await;
+                        match ctx_result {
+                            uncode_extensions::hooks::HookResult::Modify(modification) => {
+                                if let Some(additional) = modification.additional_messages {
+                                    let count = additional.len().min(MAX_INJECTED_MESSAGES);
+                                    for msg in additional.into_iter().take(MAX_INJECTED_MESSAGES) {
+                                        messages.push(msg);
+                                    }
+                                    self.emit(AgentEvent::ContextInjected {
+                                        extension_name: "extension".into(),
+                                        count,
+                                    });
+                                }
+                            }
+                            uncode_extensions::hooks::HookResult::Block { reason } => {
+                                tracing::warn!("extension blocked context hook: {reason}");
+                            }
+                            uncode_extensions::hooks::HookResult::Continue => {}
+                        }
+                    }
+                }
+
+                let context = Context {
+                    system_prompt: Some(self.system_prompt.clone()),
+                    messages: messages.clone(),
+                    tools: tools.clone(),
+                };
+
+                // Build on_payload callback that bridges to extension hooks.
+                let ext_registry = self.extension_bridge.as_ref().map(|b| b.registry().clone());
+                let session_id_for_payload = self.session_id.clone();
+                let existing_on_payload = self.on_payload.clone();
+                let on_payload_cb: Option<PayloadCallback> =
+                    if ext_registry.is_some() && session_id_for_payload.is_some() {
+                        Some(Arc::new(move |body: &mut serde_json::Value| {
+                            if let Some(ref cb) = existing_on_payload {
+                                cb(body);
+                            }
+                            if let Some(ref registry) = ext_registry {
+                                if let Some(ref sid) = session_id_for_payload {
+                                    let ctx = uncode_extensions::hooks::HookContext {
+                                        session_id: Some(sid.clone()),
+                                        event: uncode_extensions::hooks::HookEvent::ProviderRequest(
+                                            body.clone(),
+                                        ),
+                                    };
+                                    let handle = tokio::runtime::Handle::current();
+                                    let _ = handle.block_on(registry.fire(
+                                    uncode_extensions::hooks::LifecycleHook::BeforeProviderRequest,
+                                    &ctx,
+                                ));
+                                }
+                            }
+                        }))
+                    } else {
+                        existing_on_payload
+                    };
+
+                let options = StreamOptions {
+                    api_key,
+                    temperature: Some(0.7),
+                    max_tokens: Some(8192),
+                    thinking_level,
+                    session_id: self.session_id.clone(),
+                    on_payload: on_payload_cb,
+                    on_response: self.on_response.clone(),
+                    ..StreamOptions::default()
+                };
 
                 self.emit(AgentEvent::LlmRequestStart {
                     data: Box::new(LlmRequestStartData {
@@ -1087,6 +1169,11 @@ impl AgentLoop {
                                 content: text,
                                 content_index: None,
                             });
+                            if let Some(ref bridge) = self.extension_bridge {
+                                if let Some(ref sid) = self.session_id {
+                                    bridge.fire_message_update(sid).await;
+                                }
+                            }
                         }
                         StreamEvent::ToolCallStart { id, name } => {
                             info!("tool call start: {name} ({id})");
@@ -1095,6 +1182,11 @@ impl AgentLoop {
                                 tool_name: name.clone(),
                                 arguments_summary: String::new(),
                             });
+                            if let Some(ref bridge) = self.extension_bridge {
+                                if let Some(ref sid) = self.session_id {
+                                    bridge.fire_tool_execution_start(sid).await;
+                                }
+                            }
                             tool_start_times.insert(id.clone(), std::time::Instant::now());
                             pending_tool_calls.push((id, name, String::new()));
                         }
@@ -1112,6 +1204,11 @@ impl AgentLoop {
                                         detail: tc.2.clone(),
                                     });
                                     args_pushed.insert(id.clone());
+                                }
+                            }
+                            if let Some(ref bridge) = self.extension_bridge {
+                                if let Some(ref sid) = self.session_id {
+                                    bridge.fire_tool_execution_update(sid).await;
                                 }
                             }
                         }
@@ -1416,6 +1513,11 @@ impl AgentLoop {
                                             is_error,
                                         }),
                                     });
+                                    if let Some(ref bridge) = self.extension_bridge {
+                                        if let Some(ref sid) = self.session_id {
+                                            bridge.fire_tool_execution_end(sid).await;
+                                        }
+                                    }
 
                                     // ── 决策层评估 + 反馈 (原则5: 事件流双向通道, #340) ──
                                     {
@@ -1553,6 +1655,12 @@ impl AgentLoop {
                     }),
                 });
 
+                if let Some(ref bridge) = self.extension_bridge {
+                    if let Some(ref sid) = self.session_id {
+                        bridge.fire_after_provider_response(sid).await;
+                    }
+                }
+
                 // TurnEnd
                 if !self.cancel_token.is_cancelled() {
                     let turn_usage = UsageInfo {
@@ -1582,6 +1690,7 @@ impl AgentLoop {
                     if let Some(ref bridge) = self.extension_bridge {
                         if let Some(ref sid) = self.session_id {
                             bridge.fire_turn_end(sid, turn).await;
+                            bridge.fire_agent_end(sid).await;
                         }
                     }
                     if !turn_phase_completed.is_empty() || !turn_phase_issues.is_empty() {
@@ -1628,6 +1737,11 @@ impl AgentLoop {
                                         source: ModelChangeSource::Auto,
                                     }),
                                 });
+                                if let Some(ref bridge) = self.extension_bridge {
+                                    if let Some(ref sid) = self.session_id {
+                                        bridge.fire_model_select(sid).await;
+                                    }
+                                }
                             }
                         }
                         if let Some(new_tl) = &decision.thinking_level {
