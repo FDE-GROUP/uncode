@@ -100,6 +100,14 @@ struct Cli {
     #[arg(long = "no-builtin-tools", conflicts_with_all = ["tools", "no_tools"])]
     no_builtin_tools: bool,
 
+    /// TUI 主题名称（dark, light, monokai, solarized）
+    #[arg(long, value_name = "THEME")]
+    theme: Option<String>,
+
+    /// 思考级别（off, minimal, low, medium, high, xhigh）
+    #[arg(long, value_name = "LEVEL")]
+    thinking: Option<String>,
+
     prompt: Option<String>,
 }
 
@@ -484,6 +492,16 @@ async fn main() -> anyhow::Result<()> {
     > = Arc::new(parking_lot::Mutex::new(None));
     let indicator_cb_pending = pending_indicator.clone();
 
+    // Theme + thinking labels — pending pattern.
+    let pending_theme: Arc<parking_lot::Mutex<Option<String>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+    let theme_cb_pending = pending_theme.clone();
+
+    let pending_thinking_labels: Arc<
+        parking_lot::Mutex<Option<uncode_extensions::theme_control::ThinkingLabelConfig>>,
+    > = Arc::new(parking_lot::Mutex::new(None));
+    let thinking_labels_cb_pending = pending_thinking_labels.clone();
+
     // Dialog channel — bridges WASM blocking thread to TUI async event loop.
     let (dialog_sender, dialog_bridge) = uncode_tui::dialog_channel::dialog_channel(16);
 
@@ -682,6 +700,20 @@ async fn main() -> anyhow::Result<()> {
                 Ok(())
             },
         )),
+        // Theme callback — store as pending theme name
+        Some(Arc::new(
+            move |config: uncode_extensions::theme_control::ThemeControlConfig| -> Result<(), String> {
+                *theme_cb_pending.lock() = Some(config.theme_name);
+                Ok(())
+            },
+        )),
+        // Thinking labels callback — store as pending
+        Some(Arc::new(
+            move |config: uncode_extensions::theme_control::ThinkingLabelConfig| -> Result<(), String> {
+                *thinking_labels_cb_pending.lock() = Some(config);
+                Ok(())
+            },
+        )),
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)
@@ -762,6 +794,24 @@ async fn main() -> anyhow::Result<()> {
         }
         if let Some(config) = pending_indicator.lock().take() {
             tui.set_custom_indicator(Some(config));
+        }
+
+        // Flush pending theme / thinking labels
+        if let Some(theme_name) = pending_theme.lock().take() {
+            tui.set_theme_by_name(&theme_name);
+        }
+        if let Some(config) = pending_thinking_labels.lock().take() {
+            tui.set_thinking_labels(config.labels);
+        }
+
+        // CLI flag overrides (--theme, --thinking)
+        if let Some(ref theme_name) = cli.theme {
+            tui.set_theme_by_name(theme_name);
+        }
+        if let Some(ref level_str) = cli.thinking
+            && let Some(level) = uncode_tui::chat::ThinkingLevel::from_str(level_str)
+        {
+            tui.set_thinking_level(level);
         }
 
         // Set dialog bridge for extension-initiated dialogs

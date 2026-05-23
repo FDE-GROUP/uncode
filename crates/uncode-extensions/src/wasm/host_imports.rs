@@ -70,6 +70,13 @@ pub fn setup_linker(linker: &mut Linker<HostState>) -> anyhow::Result<()> {
         host_set_working_indicator,
     )?;
 
+    linker.func_wrap("uncode", "__uncode_host_set_theme", host_set_theme)?;
+    linker.func_wrap(
+        "uncode",
+        "__uncode_host_set_thinking_labels",
+        host_set_thinking_labels,
+    )?;
+
     Ok(())
 }
 
@@ -694,6 +701,55 @@ fn host_set_working_indicator(
         Ok(()) => 0,
         Err(e) => {
             tracing::warn!("extension {ext_name} set_working_indicator failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_set_theme(mut caller: Caller<'_, HostState>, _handle: i32, ptr: i32, len: i32) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let config: crate::theme_control::ThemeControlConfig = match serde_json::from_slice(&bytes) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} sent invalid theme config JSON: {e}");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.set_theme(config) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} set_theme failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_set_thinking_labels(
+    mut caller: Caller<'_, HostState>,
+    _handle: i32,
+    ptr: i32,
+    len: i32,
+) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let config: crate::theme_control::ThinkingLabelConfig = match serde_json::from_slice(&bytes) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} sent invalid thinking labels JSON: {e}");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.set_thinking_labels(config) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} set_thinking_labels failed: {e}");
             -1
         }
     }
