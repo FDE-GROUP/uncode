@@ -517,6 +517,8 @@ fn test_register_tool_with_callback_delegates() {
         None,
         None,
         None,
+        None,
+        None,
     );
     api.register_tool(Arc::new(HelloTool)).unwrap();
     assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -534,6 +536,8 @@ fn test_register_tool_callback_error_propagates() {
     let api = ExtensionApi::with_callbacks(
         registry,
         Some(callback),
+        None,
+        None,
         None,
         None,
         None,
@@ -649,6 +653,8 @@ fn test_register_command_with_callback() {
         None,
         None,
         None,
+        None,
+        None,
     );
     api.register_command(CommandRegistration {
         name: "ext-cmd".into(),
@@ -737,6 +743,8 @@ fn test_register_shortcut_with_callback() {
         None,
         None,
         None,
+        None,
+        None,
     );
     api.register_shortcut(ShortcutRegistration {
         key: ExtKeyEvent {
@@ -808,6 +816,8 @@ fn test_set_header_with_callback() {
         Some(callback),
         None,
         None,
+        None,
+        None,
     );
     api.set_header(None).unwrap();
     assert!(called.load(std::sync::atomic::Ordering::SeqCst));
@@ -845,6 +855,8 @@ fn test_set_footer_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
         None,
     );
     api.set_footer(None).unwrap();
@@ -884,7 +896,117 @@ fn test_set_indicator_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
     );
     api.set_working_indicator(None).unwrap();
+    assert!(called.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[test]
+fn test_set_theme_no_callback() {
+    let registry = Arc::new(HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    let config = crate::theme_control::ThemeControlConfig {
+        theme_name: "dark".into(),
+    };
+    let result = api.set_theme(config);
+    assert!(result.unwrap_err().contains("no callback"));
+}
+
+#[test]
+fn test_set_thinking_labels_no_callback() {
+    let registry = Arc::new(HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    let mut labels = std::collections::HashMap::new();
+    labels.insert("high".into(), "深度".into());
+    let config = crate::theme_control::ThinkingLabelConfig { labels };
+    let result = api.set_thinking_labels(config);
+    assert!(result.unwrap_err().contains("no callback"));
+}
+
+#[test]
+fn test_set_theme_with_callback() {
+    use std::sync::atomic::AtomicBool;
+    let registry = Arc::new(HookRegistry::new());
+    let called = Arc::new(AtomicBool::new(false));
+    let called_clone = called.clone();
+    let callback = Arc::new(
+        move |_config: crate::theme_control::ThemeControlConfig| -> Result<(), String> {
+            called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        },
+    );
+    let api = ExtensionApi::with_callbacks(
+        registry,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(callback),
+        None,
+    );
+    api.set_theme(crate::theme_control::ThemeControlConfig {
+        theme_name: "monokai".into(),
+    })
+    .unwrap();
+    assert!(called.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[test]
+fn test_set_thinking_labels_with_callback() {
+    use std::sync::atomic::AtomicBool;
+    let registry = Arc::new(HookRegistry::new());
+    let called = Arc::new(AtomicBool::new(false));
+    let called_clone = called.clone();
+    let callback = Arc::new(
+        move |_config: crate::theme_control::ThinkingLabelConfig| -> Result<(), String> {
+            called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        },
+    );
+    let mut labels = std::collections::HashMap::new();
+    labels.insert("high".into(), "deep".into());
+    let api = ExtensionApi::with_callbacks(
+        registry,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(callback),
+    );
+    api.set_thinking_labels(crate::theme_control::ThinkingLabelConfig { labels })
+        .unwrap();
     assert!(called.load(std::sync::atomic::Ordering::SeqCst));
 }

@@ -158,7 +158,13 @@ impl FooterState {
         format!("{} {}{}", self.workdir, self.git_branch, sid)
     }
 
-    fn render_line2(&self, model: &str, level_icon: &str, theme: &Theme) -> Line<'static> {
+    fn render_line2(
+        &self,
+        model: &str,
+        level_icon: &str,
+        level_label: &str,
+        theme: &Theme,
+    ) -> Line<'static> {
         let in_str = format_tokens(self.input_tokens);
         let out_str = format_tokens(self.output_tokens);
         let cost_str = format!("${:.4}", self.cost);
@@ -207,7 +213,7 @@ impl FooterState {
                     .fg(theme.ui.footer_bg)
                     .bg(theme.tool_status.running),
             ),
-            Span::styled(format!(" {level_icon}"), dim),
+            Span::styled(format!(" {level_icon} {level_label}"), dim),
         ]);
         Line::from(spans)
     }
@@ -498,6 +504,23 @@ impl TuiEngine {
     ) {
         self.custom_indicator =
             config.map(|c| crate::custom_layout::CustomIndicator::from_config(&c));
+    }
+
+    /// Switch the active TUI theme by name.
+    pub fn set_theme_by_name(&mut self, name: &str) {
+        if let Some(theme) = Theme::load_by_name(name) {
+            self.theme = theme;
+        }
+    }
+
+    /// Set custom thinking level labels.
+    pub fn set_thinking_labels(&mut self, labels: std::collections::HashMap<String, String>) {
+        self.chat.custom_thinking_labels = labels;
+    }
+
+    /// Set the thinking level directly.
+    pub fn set_thinking_level(&mut self, level: crate::chat::ThinkingLevel) {
+        self.chat.thinking_level = level;
     }
 
     /// Try to dispatch a key event to extension shortcuts.
@@ -824,9 +847,12 @@ impl TuiEngine {
         } else {
             &self.model
         };
-        let line2 = self
-            .footer
-            .render_line2(model_display, level.icon(), &self.theme);
+        let line2 = self.footer.render_line2(
+            model_display,
+            level.icon(),
+            self.chat.thinking_label(),
+            &self.theme,
+        );
         f.render_widget(Paragraph::new(line2), line2_area);
     }
 
@@ -2740,7 +2766,7 @@ mod tests {
         footer.output_tokens = 1_200;
         footer.cost = 0.05;
         footer.context_percent = 30;
-        let line = footer.render_line2("deepseek-v3", "◕", &Theme::default());
+        let line = footer.render_line2("deepseek-v3", "◕", "medium", &Theme::default());
         let line_str = line.to_string();
         assert!(line_str.contains("5.0k"));
         assert!(line_str.contains("1.2k"));
@@ -2755,7 +2781,7 @@ mod tests {
     fn test_footer_context_high_percent_shows_red() {
         let mut footer = FooterState::new();
         footer.context_percent = 90;
-        let line = footer.render_line2("model", "○", &Theme::default());
+        let line = footer.render_line2("model", "○", "off", &Theme::default());
         // Line 包含 spans，检查渲染不 panic
         assert!(!line.to_string().is_empty());
     }

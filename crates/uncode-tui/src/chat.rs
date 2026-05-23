@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::message_renderer::MessageRendererRegistry;
 use crate::theme::Theme;
 use crate::tool_renderer::ToolRendererRegistry;
@@ -212,6 +214,18 @@ impl ThinkingLevel {
             Self::XHigh => "xhigh",
         }
     }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "off" => Some(Self::Off),
+            "minimal" => Some(Self::Minimal),
+            "low" => Some(Self::Low),
+            "medium" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "xhigh" => Some(Self::XHigh),
+            _ => None,
+        }
+    }
 }
 
 #[allow(clippy::derivable_impls)]
@@ -251,6 +265,9 @@ pub struct ChatState {
 
     /// Inner-loop turn from last `TurnStart` (0 before first turn).
     current_turn: u64,
+
+    /// Custom thinking level labels from extensions.
+    pub custom_thinking_labels: HashMap<String, String>,
 }
 
 impl ChatState {
@@ -269,7 +286,17 @@ impl ChatState {
             prefix_dirty: false,
             cached_width: 0,
             current_turn: 0,
+            custom_thinking_labels: HashMap::new(),
         }
+    }
+
+    /// Get thinking label for current level, using custom labels if set.
+    pub fn thinking_label(&self) -> &str {
+        let key = self.thinking_level.label();
+        self.custom_thinking_labels
+            .get(key)
+            .map(|s| s.as_str())
+            .unwrap_or(key)
     }
 
     /// Deactivate the last Thinking block (stop spinner)
