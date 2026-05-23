@@ -20,9 +20,12 @@ pub mod overlay_channel;
 pub mod permission;
 pub mod selector;
 pub mod slash;
+pub mod status;
 pub mod theme;
 pub mod tool_renderer;
+pub mod ui_channel;
 pub mod welcome;
+pub mod widget;
 
 use crate::chat::ChatState;
 use crate::complete::CompletionEngine;
@@ -35,9 +38,12 @@ use crate::overlay_channel::OverlayBridge;
 use crate::permission::PermissionManager;
 use crate::selector::OverlaySelector;
 use crate::slash::SlashCommands;
+use crate::status::StatusManager;
 use crate::theme::Theme;
 use crate::tool_renderer::ToolRendererRegistry;
+use crate::ui_channel::UiBridge;
 use crate::welcome::WelcomeScreen;
+use crate::widget::WidgetManager;
 use crossterm::event::{
     self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind,
 };
@@ -281,6 +287,9 @@ pub struct TuiEngine {
     pending_dialog_response: Option<std::sync::mpsc::Sender<uncode_core::dialog::DialogResponse>>,
     overlay_manager: OverlayManager,
     overlay_bridge: Option<OverlayBridge>,
+    widget_manager: WidgetManager,
+    status_manager: StatusManager,
+    ui_bridge: Option<UiBridge>,
 }
 
 impl TuiEngine {
@@ -333,6 +342,9 @@ impl TuiEngine {
             pending_dialog_response: None,
             overlay_manager: OverlayManager::new(),
             overlay_bridge: None,
+            widget_manager: WidgetManager::new(),
+            status_manager: StatusManager::new(),
+            ui_bridge: None,
         }
     }
 
@@ -410,6 +422,11 @@ impl TuiEngine {
     /// Set the overlay bridge for extension-initiated overlays.
     pub fn set_overlay_bridge(&mut self, bridge: OverlayBridge) {
         self.overlay_bridge = Some(bridge);
+    }
+
+    /// Set the UI bridge for extension-initiated widget/status actions.
+    pub fn set_ui_bridge(&mut self, bridge: UiBridge) {
+        self.ui_bridge = Some(bridge);
     }
 
     /// Register a custom tool renderer from an extension.
@@ -530,22 +547,49 @@ impl TuiEngine {
 
     pub fn render(&mut self, f: &mut Frame) {
         self.tick = self.tick.wrapping_add(1);
+        use uncode_core::ui_action::WidgetPlacement;
+        let above_lines = self.widget_manager.lines_for(WidgetPlacement::AboveEditor);
+        let below_lines = self.widget_manager.lines_for(WidgetPlacement::BelowEditor);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(0),    // 对话区
-                Constraint::Length(1), // 状态行
-                Constraint::Length(3), // 输入栏
-                Constraint::Length(1), // 页脚第 1 行
-                Constraint::Length(1), // 页脚第 2 行
-            ])
+            .constraints({
+                let mut c = Vec::with_capacity(7);
+                c.push(Constraint::Min(0)); // 对话区
+                c.push(Constraint::Length(1)); // 状态行
+                if above_lines > 0 {
+                    c.push(Constraint::Length(above_lines)); // AboveEditor widgets
+                }
+                c.push(Constraint::Length(3)); // 输入栏
+                if below_lines > 0 {
+                    c.push(Constraint::Length(below_lines)); // BelowEditor widgets
+                }
+                c.push(Constraint::Length(1)); // 页脚第 1 行
+                c.push(Constraint::Length(1)); // 页脚第 2 行
+                c
+            })
             .split(f.area());
 
-        self.render_chat(f, chunks[0]);
-        self.render_status(f, chunks[1]);
-        self.editor.render(f, chunks[2], self.theme.ui.footer_text);
-
-        self.render_footer(f, chunks[3], chunks[4]);
+        let mut idx = 0;
+        self.render_chat(f, chunks[idx]);
+        idx += 1;
+        self.render_status(f, chunks[idx]);
+        idx += 1;
+        if above_lines > 0 {
+            self.widget_manager
+                .render(f, chunks[idx], WidgetPlacement::AboveEditor);
+            idx += 1;
+        }
+        self.editor
+            .render(f, chunks[idx], self.theme.ui.footer_text);
+        idx += 1;
+        if below_lines > 0 {
+            self.widget_manager
+                .render(f, chunks[idx], WidgetPlacement::BelowEditor);
+            idx += 1;
+        }
+        let footer1 = chunks[idx];
+        let footer2 = chunks[idx + 1];
+        self.render_footer(f, footer1, footer2);
 
         self.selector.render(f, f.area());
         self.dialog.render(f, f.area());
@@ -672,16 +716,15 @@ impl TuiEngine {
             ("●", self.theme.tool_status.success)
         };
 
-        f.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(format!("{status_icon} "), Style::default().fg(status_color)),
-                Span::styled(
-                    self.footer.render_line1(&self.session_id),
-                    Style::default().fg(self.theme.ui.footer_text),
-                ),
-            ])),
-            line1_area,
-        );
+        let mut line1_spans = vec![
+            Span::styled(format!("{status_icon} "), Style::default().fg(status_color)),
+            Span::styled(
+                self.footer.render_line1(&self.session_id),
+                Style::default().fg(self.theme.ui.footer_text),
+            ),
+        ];
+        line1_spans.extend(self.status_manager.render_spans());
+        f.render_widget(Paragraph::new(Line::from(line1_spans)), line1_area);
 
         let level = self.chat.thinking_level;
         let model_display = if self.model.is_empty() {
@@ -1112,6 +1155,37 @@ impl TuiEngine {
                         }
                         OverlayAction::Update { key, content } => {
                             self.overlay_manager.update(key, content.clone());
+                            Ok(())
+                        }
+                    };
+                    let _ = pending.response_tx.send(result);
+                }
+                // Poll UI bridge for extension-initiated widget/status actions
+                Some(pending) = async {
+                    match &mut self.ui_bridge {
+                        Some(bridge) => bridge.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    use uncode_core::ui_action::UiAction;
+                    let result = match &pending.action {
+                        UiAction::SetWidget { config } => {
+                            if let Err(e) = config.validate() {
+                                Err(e)
+                            } else {
+                                self.widget_manager.set_widget(config.clone());
+                                Ok(())
+                            }
+                        }
+                        UiAction::RemoveWidget { key } => {
+                            self.widget_manager.remove_widget(key);
+                            Ok(())
+                        }
+                        UiAction::SetStatus { key, text } => {
+                            match text {
+                                Some(t) => self.status_manager.set(key.clone(), t.clone()),
+                                None => self.status_manager.clear(key),
+                            }
                             Ok(())
                         }
                     };

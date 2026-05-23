@@ -8,6 +8,7 @@ use crate::tool::ExtensionTool;
 
 use uncode_core::dialog::{DialogRequest, DialogResponse};
 use uncode_core::overlay::{OverlayAction, OverlayConfig, OverlayContent};
+use uncode_core::ui_action::{NotifyType, UiAction, WidgetConfig};
 
 /// Callback type for tool registration. Injected by `uncode-agent`.
 ///
@@ -58,6 +59,14 @@ pub type IdleCheckCallback = Arc<dyn Fn() -> bool + Send + Sync>;
 /// Blocks until the TUI processes the action.
 pub type OverlayCallback = Arc<dyn Fn(OverlayAction) -> Result<(), String> + Send + Sync>;
 
+/// Callback type for UI actions (widget/status). Injected by `uncode-cli`.
+/// Blocks until the TUI processes the action.
+pub type UiCallback = Arc<dyn Fn(UiAction) -> Result<(), String> + Send + Sync>;
+
+/// Callback type for system notifications. Injected by `uncode-cli`.
+/// Direct I/O — no TUI channel needed.
+pub type NotifyCallback = Arc<dyn Fn(String, NotifyType) -> Result<(), String> + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -76,6 +85,8 @@ pub struct ExtensionApi {
     compact_callback: Option<CompactCallback>,
     idle_check_callback: Option<IdleCheckCallback>,
     overlay_callback: Option<OverlayCallback>,
+    ui_callback: Option<UiCallback>,
+    notify_callback: Option<NotifyCallback>,
 }
 
 impl ExtensionApi {
@@ -95,6 +106,8 @@ impl ExtensionApi {
             compact_callback: None,
             idle_check_callback: None,
             overlay_callback: None,
+            ui_callback: None,
+            notify_callback: None,
         }
     }
 
@@ -115,6 +128,8 @@ impl ExtensionApi {
         compact_callback: Option<CompactCallback>,
         idle_check_callback: Option<IdleCheckCallback>,
         overlay_callback: Option<OverlayCallback>,
+        ui_callback: Option<UiCallback>,
+        notify_callback: Option<NotifyCallback>,
     ) -> Self {
         Self {
             registry,
@@ -131,6 +146,8 @@ impl ExtensionApi {
             compact_callback,
             idle_check_callback,
             overlay_callback,
+            ui_callback,
+            notify_callback,
         }
     }
 
@@ -293,5 +310,45 @@ impl ExtensionApi {
             key: key.into(),
             content,
         })
+    }
+
+    /// Place a widget above or below the input editor.
+    pub fn set_widget(&self, config: WidgetConfig) -> Result<(), String> {
+        config.validate()?;
+        let callback = self
+            .ui_callback
+            .as_ref()
+            .ok_or("UI not available: no callback configured")?;
+        callback(UiAction::SetWidget { config })
+    }
+
+    /// Remove a previously placed widget by key.
+    pub fn remove_widget(&self, key: &str) -> Result<(), String> {
+        let callback = self
+            .ui_callback
+            .as_ref()
+            .ok_or("UI not available: no callback configured")?;
+        callback(UiAction::RemoveWidget { key: key.into() })
+    }
+
+    /// Set or clear status text displayed in the footer.
+    pub fn set_status(&self, key: &str, text: Option<String>) -> Result<(), String> {
+        let callback = self
+            .ui_callback
+            .as_ref()
+            .ok_or("UI not available: no callback configured")?;
+        callback(UiAction::SetStatus {
+            key: key.into(),
+            text,
+        })
+    }
+
+    /// Send a system notification.
+    pub fn notify(&self, message: &str, notify_type: NotifyType) -> Result<(), String> {
+        let callback = self
+            .notify_callback
+            .as_ref()
+            .ok_or("notify not available: no callback configured")?;
+        callback(message.into(), notify_type)
     }
 }
