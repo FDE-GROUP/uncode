@@ -102,21 +102,22 @@ LLM responses stream as `StreamEvent` variants: `TextDelta` → `ToolCallStart` 
 
 ## 重要约定（文档及 Issues 优先原则）
 
-**没有文档和 Issues 不能开发。** 设计决策先写入 `docs/` 目录下的对应文档，确认后检查 GitHub Issues 是否有对应 Issue，如果没有应当及时创建，然后再开始编码。
+**新功能开发前，必须先有对应文档和 Issue。** 设计决策先写入 `docs/` 目录下的对应文档，确认后检查 GitHub Issues 是否有对应 Issue，如果没有应当及时创建，然后再开始编码。
 
-**此原则不适用于测试、错误修复。**
+**此原则不适用于：测试、错误修复、重构。**
 
 ## Development Workflow
 
-- **GitHub Flow**: main ← PR ← feature-branch, PRs reference issues with `closes #N`
+- **GitHub Flow**: main ← PR ← feature-branch, PR body references issues with `closes #N`
 - **Branch naming**: `feat/N-desc`, `fix/N-desc`, `refactor/N-desc`, `docs/N-desc`, `test/N-desc`, `perf/N-desc`
 - **Documentation language**: Chinese (中文)
 - **Keep main green**: main branch must always build and pass all tests
-- **Commit format**: `type: description (closes #N)` — types: feat, fix, docs, refactor, test, perf, chore
+- **Commit format**: `type: description (refs #N)` — types: feat, fix, docs, refactor, test, perf, chore
+- **PR format**: title uses `(refs #N)`，body contains `closes #N` for auto-close on merge
 
-### 提交前必须本地执行 CI 预检测
+### 推送前必须本地执行 CI 预检测
 
-推送代码或提交审核前，**必须**在本地运行以下五项检查，全部通过后才能 push：
+推送代码或创建 PR 前，**必须**在本地运行以下五项检查，全部通过后才能推送：
 
 ```bash
 RUSTFLAGS="-D warnings" cargo fmt --check --all
