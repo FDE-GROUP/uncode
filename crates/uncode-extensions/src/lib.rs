@@ -9,6 +9,8 @@ pub mod api;
 pub mod command;
 pub mod hooks;
 pub mod loader;
+pub mod manager;
+pub mod state;
 pub mod tool;
 
 #[cfg(feature = "wasm")]

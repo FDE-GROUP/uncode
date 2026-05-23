@@ -252,6 +252,8 @@ pub struct TuiEngine {
         uncode_extensions::command::ExtKeyEvent,
         Box<dyn Fn() + Send + Sync>,
     )>,
+    extension_manager:
+        Option<Arc<parking_lot::Mutex<uncode_extensions::manager::ExtensionManager>>>,
     completion: CompletionEngine,
     leader_pending: bool,
     queue: MessageQueue,
@@ -298,6 +300,7 @@ impl TuiEngine {
             selector: OverlaySelector::new(),
             slash: SlashCommands::new(),
             extension_shortcuts: Vec::new(),
+            extension_manager: None,
             completion: CompletionEngine::new(slash_commands()),
             leader_pending: false,
             queue: MessageQueue::new(),
@@ -356,6 +359,29 @@ impl TuiEngine {
         handler: Box<dyn Fn() + Send + Sync>,
     ) {
         self.extension_shortcuts.push((key, handler));
+    }
+
+    /// Unregister a slash command by name.
+    pub fn unregister_slash_command(&mut self, name: &str) -> bool {
+        self.slash.unregister(name)
+    }
+
+    /// Unregister an extension shortcut by key.
+    pub fn unregister_extension_shortcut(
+        &mut self,
+        key: &uncode_extensions::command::ExtKeyEvent,
+    ) -> bool {
+        let before = self.extension_shortcuts.len();
+        self.extension_shortcuts.retain(|(k, _)| k != key);
+        self.extension_shortcuts.len() < before
+    }
+
+    /// Set the extension manager for `/extensions` commands.
+    pub fn set_extension_manager(
+        &mut self,
+        mgr: Arc<parking_lot::Mutex<uncode_extensions::manager::ExtensionManager>>,
+    ) {
+        self.extension_manager = Some(mgr);
     }
 
     /// Try to dispatch a key event to extension shortcuts.
@@ -1012,7 +1038,7 @@ impl TuiEngine {
                 self.chat.tool_output_visible = !self.chat.tool_output_visible;
             }
             "/help" => {
-                let help = "Keys: Ctrl+O tool output | Ctrl+T thinking | Ctrl+P cycle model | Ctrl+R retry | Ctrl+N new session | Ctrl+/ undo | Ctrl+G editor\nCommands: /clear | /compact | /model [name] | /new | /fork [id] | /export [fmt] | /sessions | /branch | /name [title] | /copy | /usage | /reload | /diff | /theme | /thinking | /details | /tree | /skills | /template\nWhile agent is busy: Enter steers the run; /later <msg> queues follow-up after SessionEnd";
+                let help = "Keys: Ctrl+O tool output | Ctrl+T thinking | Ctrl+P cycle model | Ctrl+R retry | Ctrl+N new session | Ctrl+/ undo | Ctrl+G editor\nCommands: /clear | /compact | /model [name] | /new | /fork [id] | /export [fmt] | /sessions | /branch | /name [title] | /copy | /usage | /reload | /diff | /extensions | /theme | /thinking | /details | /tree | /skills | /template\nWhile agent is busy: Enter steers the run; /later <msg> queues follow-up after SessionEnd";
                 self.chat.push_message(chat::ChatMessage::Summary {
                     completed: vec![help.into()],
                     next_steps: vec![],
@@ -1068,6 +1094,9 @@ impl TuiEngine {
             }
             "/skills" => {
                 self.handle_skills_command();
+            }
+            t if t.starts_with("/extensions") => {
+                self.handle_extensions_command(&text);
             }
             "/quit" => {
                 self.quit_requested = true;
@@ -1904,6 +1933,116 @@ impl TuiEngine {
             completed,
             next_steps: vec![],
         });
+    }
+
+    fn handle_extensions_command(&mut self, text: &str) {
+        use uncode_extensions::state::ExtensionState;
+
+        let args = text.strip_prefix("/extensions").unwrap_or("").trim();
+
+        let Some(mgr_arc) = &self.extension_manager else {
+            self.chat.push_message(chat::ChatMessage::Error {
+                message: "Extensions not available".into(),
+                category: uncode_core::event::ErrorCategory::Config,
+            });
+            return;
+        };
+        let mgr = mgr_arc.lock();
+
+        match args {
+            "" | "list" => {
+                let records = mgr.list();
+                if records.is_empty() {
+                    self.chat.push_message(chat::ChatMessage::Summary {
+                        completed: vec!["没有已加载的扩展。".into()],
+                        next_steps: vec![],
+                    });
+                    return;
+                }
+                let mut lines: Vec<String> = vec!["已加载扩展:".into()];
+                for r in &records {
+                    let state_str = match &r.state {
+                        ExtensionState::Active => "active".to_string(),
+                        ExtensionState::Reloading => "reloading".to_string(),
+                        ExtensionState::Error(e) => format!("error: {e}"),
+                        ExtensionState::Disabled => "disabled".to_string(),
+                    };
+                    let tools = if r.tools.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" tools={}", r.tools.join(","))
+                    };
+                    lines.push(format!(
+                        "  {} [{}] ({}{})",
+                        r.name, state_str, r.source, tools
+                    ));
+                }
+                lines.push(
+                    "命令: /extensions reload <name> | /extensions disable <name> | /extensions enable <name>".into(),
+                );
+                self.chat.push_message(chat::ChatMessage::Summary {
+                    completed: lines,
+                    next_steps: vec![],
+                });
+            }
+            s if s.starts_with("reload ") => {
+                let name = s.strip_prefix("reload ").unwrap().trim();
+                match mgr.reload(name) {
+                    Ok(()) => {
+                        self.chat.push_message(chat::ChatMessage::Summary {
+                            completed: vec![format!("扩展 '{name}' 已重载")],
+                            next_steps: vec![],
+                        });
+                    }
+                    Err(e) => {
+                        self.chat.push_message(chat::ChatMessage::Error {
+                            message: format!("重载失败: {e}"),
+                            category: uncode_core::event::ErrorCategory::Config,
+                        });
+                    }
+                }
+            }
+            s if s.starts_with("disable ") => {
+                let name = s.strip_prefix("disable ").unwrap().trim();
+                match mgr.disable(name) {
+                    Ok(()) => {
+                        self.chat.push_message(chat::ChatMessage::Summary {
+                            completed: vec![format!("扩展 '{name}' 已禁用")],
+                            next_steps: vec![],
+                        });
+                    }
+                    Err(e) => {
+                        self.chat.push_message(chat::ChatMessage::Error {
+                            message: format!("禁用失败: {e}"),
+                            category: uncode_core::event::ErrorCategory::Config,
+                        });
+                    }
+                }
+            }
+            s if s.starts_with("enable ") => {
+                let name = s.strip_prefix("enable ").unwrap().trim();
+                match mgr.enable(name) {
+                    Ok(()) => {
+                        self.chat.push_message(chat::ChatMessage::Summary {
+                            completed: vec![format!("扩展 '{name}' 已启用")],
+                            next_steps: vec![],
+                        });
+                    }
+                    Err(e) => {
+                        self.chat.push_message(chat::ChatMessage::Error {
+                            message: format!("启用失败: {e}"),
+                            category: uncode_core::event::ErrorCategory::Config,
+                        });
+                    }
+                }
+            }
+            _ => {
+                self.chat.push_message(chat::ChatMessage::Summary {
+                    completed: vec!["用法: /extensions [list|reload|disable|enable]".into()],
+                    next_steps: vec![],
+                });
+            }
+        }
     }
 
     fn handle_skill_invoke<F>(&mut self, skill_name: &str, args_str: &str, on_submit: &F)
