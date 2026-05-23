@@ -872,7 +872,9 @@ impl AgentLoop {
                             }
                         }
                         Ok(None) => {}
-                        Err(e) => tracing::warn!("compaction failed: {e}"),
+                        Err(e) => {
+                            warn!("compaction failed: {e} — continuing with uncompressed context");
+                        }
                     }
                 }
 
@@ -1267,6 +1269,14 @@ impl AgentLoop {
                                 pending_tool_calls.len(),
                                 pending_executions.len()
                             );
+                            // Warn on orphaned tool calls (stream ended without ToolCallEnd)
+                            if !pending_tool_calls.is_empty() {
+                                warn!(
+                                    "stream ended with {} pending tool calls (missing ToolCallEnd)",
+                                    pending_tool_calls.len()
+                                );
+                                pending_tool_calls.clear();
+                            }
                             let mut assistant_content: Vec<ContentBlock> =
                                 Vec::with_capacity(pending_tool_calls.len() + 2);
 

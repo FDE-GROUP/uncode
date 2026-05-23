@@ -189,7 +189,7 @@ impl ExecutionOrchestrator {
         };
 
         let duration = start.elapsed().as_millis() as u64;
-        let success = result.is_error;
+        let success = !result.is_error;
         let _terminate = result.terminate;
 
         // 4. after hook
