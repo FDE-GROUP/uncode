@@ -440,7 +440,10 @@ async fn main() -> anyhow::Result<()> {
     let pending_commands: Arc<
         parking_lot::Mutex<Vec<(String, String, uncode_tui::slash::CommandFn)>>,
     > = Arc::new(parking_lot::Mutex::new(Vec::new()));
-    type ShortcutEntry = (uncode_extensions::command::ExtKeyEvent, Box<dyn Fn() + Send + Sync>);
+    type ShortcutEntry = (
+        uncode_extensions::command::ExtKeyEvent,
+        Box<dyn Fn() + Send + Sync>,
+    );
     let pending_shortcuts: Arc<parking_lot::Mutex<Vec<ShortcutEntry>>> =
         Arc::new(parking_lot::Mutex::new(Vec::new()));
 
@@ -475,7 +478,26 @@ async fn main() -> anyhow::Result<()> {
             },
         )),
     );
-    let ext_bridge = ExtensionLifecycleBridge::new(ext_api);
+
+    // Load WASM extensions from ~/.uncode/extensions/
+    let ext_api = Arc::new(ext_api);
+    {
+        let ext_dir = dirs::home_dir()
+            .unwrap_or_default()
+            .join(".uncode")
+            .join("extensions");
+        let loader = uncode_extensions::loader::ExtensionLoader::new();
+        match loader
+            .load_from_dir(&ext_registry, &ext_api, &ext_dir)
+            .await
+        {
+            Ok(count) if count > 0 => tracing::info!("loaded {count} WASM extension(s)"),
+            Ok(_) => tracing::debug!("no WASM extensions loaded"),
+            Err(e) => tracing::warn!("WASM extension loading failed: {e}"),
+        }
+    }
+
+    let ext_bridge = ExtensionLifecycleBridge::from_arc(ext_api);
     agent.set_tool_hooks(Arc::new(ChainedToolHooks::new(vec![
         Arc::new(PermissionToolHooks::new(permission_gate.clone())),
         ext_hooks,

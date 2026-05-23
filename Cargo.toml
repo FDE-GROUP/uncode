@@ -113,6 +113,11 @@ syn = "2"
 quote = "1"
 proc-macro2 = "1"
 
+# ── WASM ──
+wasmtime = { version = "29", default-features = false, features = [
+    "cranelift", "parallel-compilation", "runtime",
+] }
+
 # ── Internal crates ──
 uncode-shared = { path = "crates/uncode-shared" }
 uncode-ai = { path = "crates/uncode-ai" }

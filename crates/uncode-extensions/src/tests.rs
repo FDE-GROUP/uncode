@@ -347,11 +347,12 @@ fn test_loader_new_and_default() {
 #[tokio::test]
 async fn test_load_from_dir_returns_zero() {
     let loader = crate::loader::ExtensionLoader::new();
-    let registry = HookRegistry::new();
+    let registry = Arc::new(HookRegistry::new());
+    let api = Arc::new(ExtensionApi::new(registry.clone()));
 
-    // WASM extension loading not yet implemented, always returns 0
+    // Nonexistent directory returns 0 extensions loaded.
     let count = loader
-        .load_from_dir(&registry, std::path::Path::new("/nonexistent"))
+        .load_from_dir(&registry, &api, std::path::Path::new("/nonexistent"))
         .await
         .unwrap();
     assert_eq!(count, 0);
