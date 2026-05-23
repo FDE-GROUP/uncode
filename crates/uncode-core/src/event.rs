@@ -249,6 +249,13 @@ pub enum AgentEvent {
     AgentSettled {
         session_id: String,
     },
+
+    // ── Extension context injection ──
+    /// Extension injected additional messages before LLM call.
+    ContextInjected {
+        extension_name: String,
+        count: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -534,6 +541,7 @@ pub fn agent_event_tag(event: &AgentEvent) -> &'static str {
         AgentEvent::DecisionMade { .. } => "decision_made",
         AgentEvent::EvaluationScore { .. } => "evaluation_score",
         AgentEvent::AgentSettled { .. } => "agent_settled",
+        AgentEvent::ContextInjected { .. } => "context_injected",
     }
 }
 

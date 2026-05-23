@@ -38,6 +38,8 @@ pub struct HookModification {
     pub is_error_override: Option<bool>,
     /// For ToolCallAfter: override terminate flag.
     pub terminate_override: Option<bool>,
+    /// For Context: additional messages to append before LLM call.
+    pub additional_messages: Option<Vec<uncode_core::message::Message>>,
 }
 
 /// Agent 生命周期钩子（扩展注入点）。
@@ -125,6 +127,8 @@ pub struct HookContext {
 pub enum HookEvent {
     Event(AgentEvent),
     Message(Message),
+    /// Read-only snapshot of messages about to be sent to the LLM.
+    ContextSnapshot(Vec<Message>),
     None,
 }
 

@@ -152,10 +152,10 @@ impl ExtensionLifecycleBridge {
 
     // ── LLM 交互 ──
 
-    pub async fn fire_context(&self, session_id: &str) -> HookResult {
+    pub async fn fire_context(&self, session_id: &str, messages: &[Message]) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
+            event: HookEvent::ContextSnapshot(messages.to_vec()),
         };
         self.registry.fire(LifecycleHook::Context, &ctx).await
     }

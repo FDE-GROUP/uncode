@@ -48,6 +48,7 @@ use uncode_core::tool::{
 pub const MAX_TURNS: u64 = 50;
 const MAX_LLM_RETRIES: u32 = 3;
 const BASE_RETRY_DELAY_MS: u64 = 1000;
+const MAX_INJECTED_MESSAGES: usize = 10;
 
 /// Turn 边界回调可返回的模型变更决策。
 ///
@@ -903,6 +904,40 @@ impl AgentLoop {
                     transform(&mut messages);
                 }
 
+                self.emit(AgentEvent::TurnStart { turn });
+
+                if let Some(ref bridge) = self.extension_bridge {
+                    if let Some(ref sid) = self.session_id {
+                        bridge.fire_turn_start(sid, turn).await;
+                    }
+                }
+
+                if let Some(ref bridge) = self.extension_bridge {
+                    if let Some(ref sid) = self.session_id {
+                        bridge.fire_agent_start(sid).await;
+                        let ctx_result = bridge.fire_context(sid, &messages).await;
+                        match ctx_result {
+                            uncode_extensions::hooks::HookResult::Modify(modification) => {
+                                if let Some(additional) = modification.additional_messages {
+                                    let count = additional.len().min(MAX_INJECTED_MESSAGES);
+                                    for msg in additional.into_iter().take(MAX_INJECTED_MESSAGES) {
+                                        messages.push(msg);
+                                    }
+                                    self.emit(AgentEvent::ContextInjected {
+                                        extension_name: "extension".into(),
+                                        count,
+                                    });
+                                }
+                            }
+                            uncode_extensions::hooks::HookResult::Block { reason } => {
+                                tracing::warn!("extension blocked context hook: {reason}");
+                            }
+                            uncode_extensions::hooks::HookResult::Continue => {}
+                        }
+                        bridge.fire_before_provider_request(sid).await;
+                    }
+                }
+
                 let context = Context {
                     system_prompt: Some(self.system_prompt.clone()),
                     messages: messages.clone(),
@@ -918,22 +953,6 @@ impl AgentLoop {
                     on_response: self.on_response.clone(),
                     ..StreamOptions::default()
                 };
-
-                self.emit(AgentEvent::TurnStart { turn });
-
-                if let Some(ref bridge) = self.extension_bridge {
-                    if let Some(ref sid) = self.session_id {
-                        bridge.fire_turn_start(sid, turn).await;
-                    }
-                }
-
-                if let Some(ref bridge) = self.extension_bridge {
-                    if let Some(ref sid) = self.session_id {
-                        bridge.fire_agent_start(sid).await;
-                        bridge.fire_context(sid).await;
-                        bridge.fire_before_provider_request(sid).await;
-                    }
-                }
 
                 self.emit(AgentEvent::LlmRequestStart {
                     data: Box::new(LlmRequestStartData {
