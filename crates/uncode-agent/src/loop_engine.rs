@@ -969,11 +969,13 @@ impl AgentLoop {
                                             body.clone(),
                                         ),
                                     };
-                                    let handle = tokio::runtime::Handle::current();
-                                    let _ = handle.block_on(registry.fire(
-                                    uncode_extensions::hooks::LifecycleHook::BeforeProviderRequest,
-                                    &ctx,
-                                ));
+                                    let reg = registry.clone();
+                                    let _ = tokio::task::block_in_place(|| {
+                                        tokio::runtime::Handle::current().block_on(reg.fire(
+                                            uncode_extensions::hooks::LifecycleHook::BeforeProviderRequest,
+                                            &ctx,
+                                        ))
+                                    });
                                 }
                             }
                         }))
