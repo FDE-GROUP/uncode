@@ -468,6 +468,22 @@ async fn main() -> anyhow::Result<()> {
     > = Arc::new(parking_lot::Mutex::new(Vec::new()));
     let msg_renderer_cb_pending = pending_message_renderers.clone();
 
+    // Header / Footer / Working Indicator — pending Option pattern.
+    let pending_header: Arc<
+        parking_lot::Mutex<Option<uncode_extensions::header_footer::HeaderConfig>>,
+    > = Arc::new(parking_lot::Mutex::new(None));
+    let header_cb_pending = pending_header.clone();
+
+    let pending_footer: Arc<
+        parking_lot::Mutex<Option<uncode_extensions::header_footer::FooterConfig>>,
+    > = Arc::new(parking_lot::Mutex::new(None));
+    let footer_cb_pending = pending_footer.clone();
+
+    let pending_indicator: Arc<
+        parking_lot::Mutex<Option<uncode_extensions::header_footer::WorkingIndicatorConfig>>,
+    > = Arc::new(parking_lot::Mutex::new(None));
+    let indicator_cb_pending = pending_indicator.clone();
+
     // Dialog channel — bridges WASM blocking thread to TUI async event loop.
     let (dialog_sender, dialog_bridge) = uncode_tui::dialog_channel::dialog_channel(16);
 
@@ -645,6 +661,27 @@ async fn main() -> anyhow::Result<()> {
                 Ok(())
             },
         )),
+        // Header callback — store as pending, flush after TUI creation
+        Some(Arc::new(
+            move |config: Option<uncode_extensions::header_footer::HeaderConfig>| -> Result<(), String> {
+                *header_cb_pending.lock() = config;
+                Ok(())
+            },
+        )),
+        // Footer callback — store as pending, flush after TUI creation
+        Some(Arc::new(
+            move |config: Option<uncode_extensions::header_footer::FooterConfig>| -> Result<(), String> {
+                *footer_cb_pending.lock() = config;
+                Ok(())
+            },
+        )),
+        // Working indicator callback — store as pending, flush after TUI creation
+        Some(Arc::new(
+            move |config: Option<uncode_extensions::header_footer::WorkingIndicatorConfig>| -> Result<(), String> {
+                *indicator_cb_pending.lock() = config;
+                Ok(())
+            },
+        )),
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)
@@ -714,6 +751,17 @@ async fn main() -> anyhow::Result<()> {
         // Flush pending message renderer registrations
         for config in pending_message_renderers.lock().drain(..) {
             tui.register_custom_message_renderer(config.message_type.clone(), config);
+        }
+
+        // Flush pending header / footer / indicator
+        if let Some(config) = pending_header.lock().take() {
+            tui.set_custom_header(Some(config));
+        }
+        if let Some(config) = pending_footer.lock().take() {
+            tui.set_custom_footer(Some(config));
+        }
+        if let Some(config) = pending_indicator.lock().take() {
+            tui.set_custom_indicator(Some(config));
         }
 
         // Set dialog bridge for extension-initiated dialogs

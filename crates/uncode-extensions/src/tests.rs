@@ -514,6 +514,9 @@ fn test_register_tool_with_callback_delegates() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
     );
     api.register_tool(Arc::new(HelloTool)).unwrap();
     assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -531,6 +534,9 @@ fn test_register_tool_callback_error_propagates() {
     let api = ExtensionApi::with_callbacks(
         registry,
         Some(callback),
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -640,6 +646,9 @@ fn test_register_command_with_callback() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
     );
     api.register_command(CommandRegistration {
         name: "ext-cmd".into(),
@@ -725,6 +734,9 @@ fn test_register_shortcut_with_callback() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
     );
     api.register_shortcut(ShortcutRegistration {
         key: ExtKeyEvent {
@@ -735,4 +747,144 @@ fn test_register_shortcut_with_callback() {
     })
     .unwrap();
     assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+// ── Header / Footer / Indicator API tests ──
+
+#[test]
+fn test_set_header_no_callback() {
+    let registry = Arc::new(HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    let result = api.set_header(None);
+    assert!(result.unwrap_err().contains("no callback"));
+}
+
+#[test]
+fn test_set_footer_no_callback() {
+    let registry = Arc::new(HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    let result = api.set_footer(None);
+    assert!(result.unwrap_err().contains("no callback"));
+}
+
+#[test]
+fn test_set_working_indicator_no_callback() {
+    let registry = Arc::new(HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    let result = api.set_working_indicator(None);
+    assert!(result.unwrap_err().contains("no callback"));
+}
+
+#[test]
+fn test_set_header_with_callback() {
+    use std::sync::atomic::AtomicBool;
+    let registry = Arc::new(HookRegistry::new());
+    let called = Arc::new(AtomicBool::new(false));
+    let called_clone = called.clone();
+    let callback = Arc::new(
+        move |_config: Option<crate::header_footer::HeaderConfig>| -> Result<(), String> {
+            called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        },
+    );
+    let api = ExtensionApi::with_callbacks(
+        registry,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(callback),
+        None,
+        None,
+    );
+    api.set_header(None).unwrap();
+    assert!(called.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[test]
+fn test_set_footer_with_callback() {
+    use std::sync::atomic::AtomicBool;
+    let registry = Arc::new(HookRegistry::new());
+    let called = Arc::new(AtomicBool::new(false));
+    let called_clone = called.clone();
+    let callback = Arc::new(
+        move |_config: Option<crate::header_footer::FooterConfig>| -> Result<(), String> {
+            called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        },
+    );
+    let api = ExtensionApi::with_callbacks(
+        registry,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(callback),
+        None,
+    );
+    api.set_footer(None).unwrap();
+    assert!(called.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[test]
+fn test_set_indicator_with_callback() {
+    use std::sync::atomic::AtomicBool;
+    let registry = Arc::new(HookRegistry::new());
+    let called = Arc::new(AtomicBool::new(false));
+    let called_clone = called.clone();
+    let callback = Arc::new(
+        move |_config: Option<crate::header_footer::WorkingIndicatorConfig>| -> Result<(), String> {
+            called_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        },
+    );
+    let api = ExtensionApi::with_callbacks(
+        registry,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(callback),
+    );
+    api.set_working_indicator(None).unwrap();
+    assert!(called.load(std::sync::atomic::Ordering::SeqCst));
 }
