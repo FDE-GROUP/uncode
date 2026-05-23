@@ -94,6 +94,7 @@ async fn execute_prepared_tool_shared(
             }
         })),
         tool_call_id: id.clone(),
+        allowed_paths: Vec::new(),
     };
 
     let mut tool_result = if let Some(exec) = executor {

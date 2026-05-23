@@ -502,6 +502,12 @@ async fn main() -> anyhow::Result<()> {
     > = Arc::new(parking_lot::Mutex::new(None));
     let thinking_labels_cb_pending = pending_thinking_labels.clone();
 
+    // Resource paths — pending pattern (Vec, flushed after TUI setup).
+    let pending_resource_paths: Arc<
+        parking_lot::Mutex<Vec<uncode_extensions::resource::ResourcePathConfig>>,
+    > = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let resource_path_cb_pending = pending_resource_paths.clone();
+
     // Dialog channel — bridges WASM blocking thread to TUI async event loop.
     let (dialog_sender, dialog_bridge) = uncode_tui::dialog_channel::dialog_channel(16);
 
@@ -714,6 +720,13 @@ async fn main() -> anyhow::Result<()> {
                 Ok(())
             },
         )),
+        // Resource path callback — store as pending, flush after agent setup
+        Some(Arc::new(
+            move |config: uncode_extensions::resource::ResourcePathConfig| -> Result<(), String> {
+                resource_path_cb_pending.lock().push(config);
+                Ok(())
+            },
+        )),
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)
@@ -802,6 +815,20 @@ async fn main() -> anyhow::Result<()> {
         }
         if let Some(config) = pending_thinking_labels.lock().take() {
             tui.set_thinking_labels(config.labels);
+        }
+
+        // Flush pending resource paths
+        {
+            let paths = pending_resource_paths.lock();
+            if !paths.is_empty() {
+                for rp in paths.iter() {
+                    tracing::info!(
+                        "extension registered resource path: {} ({})",
+                        rp.path,
+                        rp.description
+                    );
+                }
+            }
         }
 
         // CLI flag overrides (--theme, --thinking)

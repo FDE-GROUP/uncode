@@ -14,6 +14,7 @@ pub mod manager;
 pub mod message_renderer;
 pub mod provider;
 pub mod renderer;
+pub mod resource;
 pub mod state;
 pub mod theme_control;
 pub mod tool;

@@ -111,6 +111,9 @@ pub struct ToolContext {
     pub tool_call_id: String,
     /// Runtime file/shell backend. `None` → tools fall back to `LocalExecutionEnv`.
     pub execution_env: Option<std::sync::Arc<dyn ExecutionEnv>>,
+    /// Additional resource paths registered by extensions. `resolve_path()` allows
+    /// access to files under these prefixes in addition to the project CWD.
+    pub allowed_paths: Vec<std::path::PathBuf>,
 }
 
 /// Context provided to beforeToolCall hook

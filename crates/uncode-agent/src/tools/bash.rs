@@ -51,14 +51,15 @@ struct ParsedArgs {
 
 fn parse_args(
     arguments: &serde_json::Value,
+    extra_allowed: &[std::path::PathBuf],
 ) -> Result<ParsedArgs, uncode_core::error::UncodeError> {
     let command = arguments["command"]
         .as_str()
         .ok_or_else(|| uncode_core::error::UncodeError::Tool("command required".into()))?
         .to_string();
     let workdir_raw = arguments["workdir"].as_str().unwrap_or(".");
-    let workdir =
-        super::resolve_path(workdir_raw).map_err(uncode_core::error::UncodeError::Tool)?;
+    let workdir = super::resolve_path(workdir_raw, extra_allowed)
+        .map_err(uncode_core::error::UncodeError::Tool)?;
     let timeout_secs = arguments["timeout"]
         .as_u64()
         .unwrap_or(DEFAULT_TIMEOUT_SECS);
@@ -109,6 +110,7 @@ fn default_tool_context() -> ToolContext {
         on_progress: None,
         tool_call_id: String::new(),
         execution_env: None,
+        allowed_paths: Vec::new(),
     }
 }
 
@@ -144,7 +146,7 @@ impl ToolExecutor for BashTool {
         &self,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, uncode_core::error::UncodeError> {
-        super::prepare_arguments_path(arguments, "workdir", Some("."))
+        super::prepare_arguments_path(arguments, "workdir", Some("."), &[])
     }
 
     async fn execute(&self, arguments: serde_json::Value) -> UncodeResult<String> {
@@ -160,7 +162,7 @@ impl ToolExecutor for BashTool {
         ctx: ToolContext,
     ) -> UncodeResult<ToolResult> {
         let _env = super::ctx_execution_env(&ctx);
-        let parsed = parse_args(&arguments)?;
+        let parsed = parse_args(&arguments, &ctx.allowed_paths)?;
         Ok(exec_bash_streaming(
             to_exec_args(parsed, self.max_output_bytes, self.make_sandbox()),
             BashStreamContext {

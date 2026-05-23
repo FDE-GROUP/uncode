@@ -6,6 +6,7 @@ use crate::hooks::{Extension, HookRegistry, LifecycleHook};
 use crate::message_renderer::MessageRenderConfig;
 use crate::provider::ProviderRegistration;
 use crate::renderer::ToolRenderConfig;
+use crate::resource::ResourcePathConfig;
 use crate::theme_control::{ThemeControlConfig, ThinkingLabelConfig};
 use crate::tool::ExtensionTool;
 
@@ -91,6 +92,10 @@ pub type ThemeCallback = Arc<dyn Fn(ThemeControlConfig) -> Result<(), String> + 
 pub type ThinkingLabelCallback =
     Arc<dyn Fn(ThinkingLabelConfig) -> Result<(), String> + Send + Sync>;
 
+/// Callback type for resource path registration. Injected by `uncode-cli`.
+pub type ResourcePathCallback =
+    Arc<dyn Fn(crate::resource::ResourcePathConfig) -> Result<(), String> + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -117,6 +122,7 @@ pub struct ExtensionApi {
     working_indicator_callback: Option<WorkingIndicatorCallback>,
     theme_callback: Option<ThemeCallback>,
     thinking_label_callback: Option<ThinkingLabelCallback>,
+    resource_path_callback: Option<ResourcePathCallback>,
 }
 
 impl ExtensionApi {
@@ -144,6 +150,7 @@ impl ExtensionApi {
             working_indicator_callback: None,
             theme_callback: None,
             thinking_label_callback: None,
+            resource_path_callback: None,
         }
     }
 
@@ -172,6 +179,7 @@ impl ExtensionApi {
         working_indicator_callback: Option<WorkingIndicatorCallback>,
         theme_callback: Option<ThemeCallback>,
         thinking_label_callback: Option<ThinkingLabelCallback>,
+        resource_path_callback: Option<ResourcePathCallback>,
     ) -> Self {
         Self {
             registry,
@@ -196,6 +204,7 @@ impl ExtensionApi {
             working_indicator_callback,
             theme_callback,
             thinking_label_callback,
+            resource_path_callback,
         }
     }
 
@@ -466,6 +475,16 @@ impl ExtensionApi {
             .thinking_label_callback
             .as_ref()
             .ok_or("thinking labels not available: no callback configured")?;
+        callback(config)
+    }
+
+    /// Register an additional resource path that the agent's file tools can access.
+    pub fn register_resource_path(&self, config: ResourcePathConfig) -> Result<(), String> {
+        config.validate()?;
+        let callback = self
+            .resource_path_callback
+            .as_ref()
+            .ok_or("resource path registration not available: no callback configured")?;
         callback(config)
     }
 }
