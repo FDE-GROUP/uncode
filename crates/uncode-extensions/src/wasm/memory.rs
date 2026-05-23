@@ -65,6 +65,8 @@ pub struct HostState {
     pub api_handle: u32,
     /// Hooks registered during init.
     pub registered_hooks: Vec<String>,
+    /// Tool metadata registered during init.
+    pub registered_tools: Vec<crate::tool::ExtensionToolMetadata>,
     /// ExtensionApi reference for host imports.
     pub ext_api: std::sync::Arc<crate::api::ExtensionApi>,
 }
