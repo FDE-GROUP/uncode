@@ -10,6 +10,7 @@ use super::host_imports;
 use super::instance::WasmInstance;
 use super::manifest::ExtensionManifest;
 use super::memory::{HostState, WasmExports};
+use super::tool::WasmExtensionTool;
 
 /// Shared WASM engine with pre-configured sandbox and host imports.
 pub struct WasmEngine {
@@ -42,13 +43,14 @@ impl WasmEngine {
 
     /// Compile and instantiate a WASM module.
     ///
-    /// Returns a `WasmInstance` that implements the `Extension` trait.
+    /// Returns `(WasmInstance, Vec<WasmExtensionTool>)` — the instance implements
+    /// the `Extension` trait for hooks, and each tool implements `ExtensionTool`.
     pub fn instantiate(
         &self,
         wasm_bytes: &[u8],
         manifest: ExtensionManifest,
         ext_api: Arc<ExtensionApi>,
-    ) -> Result<WasmInstance, WasmError> {
+    ) -> Result<(WasmInstance, Vec<WasmExtensionTool>), WasmError> {
         // Compile module.
         let module = wasmtime::Module::from_binary(&self.engine, wasm_bytes)
             .map_err(|e| WasmError::Compilation(e.to_string()))?;
@@ -60,6 +62,7 @@ impl WasmEngine {
                 extension_name: manifest.name.clone(),
                 api_handle: 1,
                 registered_hooks: Vec::new(),
+                registered_tools: Vec::new(),
                 ext_api,
             },
         );
@@ -123,13 +126,23 @@ impl WasmEngine {
             lifecycle_hooks.iter().map(|h| h.name()).collect::<Vec<_>>()
         );
 
-        Ok(WasmInstance::new(
-            manifest.name,
-            store,
-            exports,
-            lifecycle_hooks,
-            timeout,
-        ))
+        // Collect tool metadata registered during __uncode_init.
+        let tool_metas: Vec<crate::tool::ExtensionToolMetadata> =
+            store.data_mut().registered_tools.drain(..).collect();
+
+        let instance = WasmInstance::new(manifest.name, store, exports, lifecycle_hooks, timeout);
+
+        let inner = instance.inner_clone();
+        let tools: Vec<WasmExtensionTool> = tool_metas
+            .into_iter()
+            .map(|meta| WasmExtensionTool::new(meta, inner.clone()))
+            .collect();
+
+        if !tools.is_empty() {
+            tracing::info!("WASM extension registered {} tool(s)", tools.len());
+        }
+
+        Ok((instance, tools))
     }
 
     /// Reference to the underlying wasmtime Engine.

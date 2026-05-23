@@ -76,9 +76,17 @@ fn host_register_tool(mut caller: Caller<'_, HostState>, _handle: i32, ptr: i32,
     match std::str::from_utf8(&bytes) {
         Ok(json_str) => {
             match serde_json::from_str::<crate::tool::ExtensionToolMetadata>(json_str) {
-                Ok(_meta) => {
-                    tracing::debug!("extension {ext_name} registers tool via host import (queued)");
-                    0
+                Ok(meta) => {
+                    if let Err(e) = meta.validate() {
+                        tracing::warn!("extension {ext_name} tool metadata invalid: {e}");
+                        return -1;
+                    }
+                    tracing::debug!(
+                        "extension {ext_name} registers tool '{}' via host import",
+                        meta.name
+                    );
+                    caller.data_mut().registered_tools.push(meta);
+                    caller.data_mut().registered_tools.len() as i32 - 1 // tool_id
                 }
                 Err(e) => {
                     tracing::warn!("extension {ext_name} sent invalid tool metadata: {e}");

@@ -10,11 +10,11 @@ use crate::hooks::{HookContext, HookResult};
 use super::WasmError;
 use super::memory::{HostState, WasmExports};
 
-/// Inner mutable state.
-struct WasmInstanceInner {
-    store: Store<HostState>,
-    exports: WasmExports,
-    disabled: bool,
+/// Inner mutable state — shared between WasmInstance and WasmExtensionTool.
+pub struct WasmInstanceInner {
+    pub store: Store<HostState>,
+    pub exports: WasmExports,
+    pub disabled: bool,
 }
 
 /// A WASM-based extension that implements the `Extension` trait.
@@ -51,6 +51,11 @@ impl WasmInstance {
 
     pub fn is_disabled(&self) -> bool {
         self.inner.lock().unwrap().disabled
+    }
+
+    /// Clone the inner Arc for sharing with WasmExtensionTool instances.
+    pub fn inner_clone(&self) -> Arc<std::sync::Mutex<WasmInstanceInner>> {
+        self.inner.clone()
     }
 }
 

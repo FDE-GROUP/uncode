@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::api::ExtensionApi;
 use crate::hooks::HookRegistry;
+use crate::tool::ExtensionTool;
 
 /// WASM extension loader — scans directories and instantiates `.wasm` files.
 ///
@@ -83,7 +84,7 @@ impl ExtensionLoader {
             };
 
             match engine.instantiate(&wasm_bytes, manifest.clone(), api.clone()) {
-                Ok(instance) => {
+                Ok((instance, tools)) => {
                     let ext: Arc<dyn crate::hooks::Extension> = Arc::new(instance);
                     // Resolve lifecycle hooks from manifest.
                     let hooks = if manifest.hooks.is_empty() {
@@ -120,6 +121,15 @@ impl ExtensionLoader {
                             .collect()
                     };
                     registry.register(ext, hooks);
+
+                    // Register WASM tools via ExtensionApi callback.
+                    for tool in tools {
+                        let tool: Arc<dyn ExtensionTool> = Arc::new(tool);
+                        if let Err(e) = api.register_tool(tool) {
+                            tracing::warn!("failed to register WASM tool: {e}");
+                        }
+                    }
+
                     loaded += 1;
                 }
                 Err(e) => {
