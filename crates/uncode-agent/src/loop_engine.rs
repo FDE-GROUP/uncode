@@ -1437,12 +1437,14 @@ impl AgentLoop {
                                 .map(|(id, _, args)| (id.clone(), args.to_string()))
                                 .collect();
 
-                            // ── 决策层防火墙验证 (原则2: 自然语言止于防火墙, #339) ──
-                            // ── + 裁决器 + 审计记录 (#385, #387) ──
-                            {
+                            // ── 决策层防火墙验证 + 裁决器 + 审计 (#339, #385, #387) ──
+                            let mut denied_results: Vec<(String, String, ToolResult)> = Vec::new();
+                            let denied_tool_names: HashSet<String> = {
                                 let acc = self.proposal_acc.lock().unwrap();
                                 let proposals = acc.completed();
-                                if !proposals.is_empty() {
+                                if proposals.is_empty() {
+                                    HashSet::new()
+                                } else {
                                     let mut fw = self.firewall.lock().unwrap();
                                     if fw.is_none() {
                                         *fw = Some(crate::decision::firewall::build_default_firewall(
@@ -1451,6 +1453,7 @@ impl AgentLoop {
                                             std::env::current_dir().unwrap_or_default(),
                                         ));
                                     }
+                                    let mut denied = HashSet::new();
                                     if let Some(ref firewall) = *fw {
                                         let adj = self.adjudicator.lock().unwrap();
                                         let decision_ctx =
@@ -1464,9 +1467,9 @@ impl AgentLoop {
                                             };
                                         for proposal in proposals {
                                             let started_at = std::time::Instant::now();
+                                            let tool_name = proposal.tool_name.clone();
                                             match firewall.process(proposal) {
                                                 Ok(normalized) => {
-                                                    // 防火墙通过 → 裁决器裁决
                                                     let (allowed, reason) =
                                                         if let Some(ref adjudicator) = *adj {
                                                             match adjudicator.adjudicate(
@@ -1500,15 +1503,20 @@ impl AgentLoop {
                                                             started_at.elapsed().as_millis() as u64,
                                                         ),
                                                     });
+                                                    if !allowed {
+                                                        denied.insert(tool_name);
+                                                    }
                                                 }
                                                 Err(e) => {
-                                                    tracing::warn!(
-                                                        "firewall blocked proposal {}: {e}",
-                                                        proposal.tool_name
+                                                    // 防火墙拒绝仅记录审计事件，不阻止执行
+                                                    // 实际的安全控制在 prepare_tool_call 和 PermissionGate 中
+                                                    tracing::debug!(
+                                                        "firewall flagged proposal {}: {e}",
+                                                        tool_name
                                                     );
                                                     self.emit(AgentEvent::DecisionMade {
                                                         turn_id: format!("turn-{turn}"),
-                                                        tool_name: proposal.tool_name.clone(),
+                                                        tool_name: tool_name.clone(),
                                                         allowed: false,
                                                         reason: Some(e.to_string()),
                                                         duration_ms: Some(
@@ -1519,18 +1527,45 @@ impl AgentLoop {
                                             }
                                         }
                                     }
+                                    denied
                                 }
+                            };
+
+                            // 从执行列表中移除被拒绝的工具，并生成错误 tool result
+                            if !denied_tool_names.is_empty() {
+                                let denied_executions: Vec<(String, String, serde_json::Value)> =
+                                    executions
+                                        .drain(..)
+                                        .filter(|(id, name, _args)| {
+                                            if denied_tool_names.contains(name) {
+                                                // 为被拒绝的工具生成错误结果
+                                                denied_results.push((
+                                                    id.clone(),
+                                                    name.clone(),
+                                                    ToolResult::err(format!(
+                                                        "denied by decision policy: {}",
+                                                        name
+                                                    )),
+                                                ));
+                                                false
+                                            } else {
+                                                true
+                                            }
+                                        })
+                                        .collect();
+                                executions = denied_executions;
                             }
 
                             // Batch-execute buffered tool calls (same `executions` as assistant ToolCalls)
-                            if !executions.is_empty() {
+                            let has_denied = !denied_results.is_empty();
+                            if !executions.is_empty() || has_denied {
                                 // Pi strategy: if ANY tool is sequential, run ALL sequentially
                                 let has_sequential = executions.iter().any(|(_, name, _)| {
                                     self.tool_registry.execution_mode(name)
                                         == ExecutionMode::Sequential
                                 });
 
-                                let all_outcomes: Vec<(String, String, ToolResult)> =
+                                let mut all_outcomes: Vec<(String, String, ToolResult)> =
                                     if has_sequential {
                                         let mut outcomes = Vec::with_capacity(executions.len());
                                         for (id, name, args) in executions {
@@ -1610,6 +1645,11 @@ impl AgentLoop {
                                             })
                                             .collect()
                                     };
+
+                                // 将被决策层拒绝的工具结果合并
+                                if !denied_results.is_empty() {
+                                    all_outcomes.extend(denied_results);
+                                }
 
                                 // Persist results, emit events, check terminate
                                 let mut should_terminate = !all_outcomes.is_empty();
