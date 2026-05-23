@@ -507,7 +507,8 @@ mod tests {
         let verdict = rule.validate(&action).unwrap();
         // 在项目根目录下，src/main.rs 可能不存在，但规范化后仍在 CWD 内
         // PathSafetyRule 应允许
-        assert!(verdict.approved || !verdict.approved); // 取决于文件是否存在
+        // verdict.approved 取决于 src/main.rs 是否实际存在于 CWD
+        let _ = verdict;
     }
 
     #[test]
