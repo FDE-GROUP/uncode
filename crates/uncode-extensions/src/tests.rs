@@ -510,6 +510,7 @@ fn test_register_tool_with_callback_delegates() {
         None,
         None,
         None,
+        None,
     );
     api.register_tool(Arc::new(HelloTool)).unwrap();
     assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -527,6 +528,7 @@ fn test_register_tool_callback_error_propagates() {
     let api = ExtensionApi::with_callbacks(
         registry,
         Some(callback),
+        None,
         None,
         None,
         None,
@@ -628,6 +630,7 @@ fn test_register_command_with_callback() {
         None,
         None,
         None,
+        None,
     );
     api.register_command(CommandRegistration {
         name: "ext-cmd".into(),
@@ -702,6 +705,7 @@ fn test_register_shortcut_with_callback() {
         None,
         None,
         Some(callback),
+        None,
         None,
         None,
         None,

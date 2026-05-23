@@ -15,6 +15,8 @@ pub mod highlight;
 pub mod input;
 pub mod markdown;
 pub mod message_queue;
+pub mod overlay;
+pub mod overlay_channel;
 pub mod permission;
 pub mod selector;
 pub mod slash;
@@ -25,9 +27,11 @@ pub mod welcome;
 use crate::chat::ChatState;
 use crate::complete::CompletionEngine;
 use crate::dialog::DialogOverlay;
-use crate::dialog_channel::{DialogBridge, PendingDialog};
+use crate::dialog_channel::DialogBridge;
 use crate::input::{InputAction, InputEditor};
 use crate::message_queue::{MessageQueue, QueueType, SubmitIntent};
+use crate::overlay::OverlayManager;
+use crate::overlay_channel::OverlayBridge;
 use crate::permission::PermissionManager;
 use crate::selector::OverlaySelector;
 use crate::slash::SlashCommands;
@@ -275,6 +279,8 @@ pub struct TuiEngine {
     dialog: DialogOverlay,
     dialog_bridge: Option<DialogBridge>,
     pending_dialog_response: Option<std::sync::mpsc::Sender<uncode_core::dialog::DialogResponse>>,
+    overlay_manager: OverlayManager,
+    overlay_bridge: Option<OverlayBridge>,
 }
 
 impl TuiEngine {
@@ -325,6 +331,8 @@ impl TuiEngine {
             dialog: DialogOverlay::new(Theme::default()),
             dialog_bridge: None,
             pending_dialog_response: None,
+            overlay_manager: OverlayManager::new(),
+            overlay_bridge: None,
         }
     }
 
@@ -399,6 +407,11 @@ impl TuiEngine {
         self.dialog_bridge = Some(bridge);
     }
 
+    /// Set the overlay bridge for extension-initiated overlays.
+    pub fn set_overlay_bridge(&mut self, bridge: OverlayBridge) {
+        self.overlay_bridge = Some(bridge);
+    }
+
     /// Register a custom tool renderer from an extension.
     pub fn register_custom_renderer(
         &mut self,
@@ -419,15 +432,6 @@ impl TuiEngine {
             config.result_max_lines,
         );
         self.renderers.register(tool_name, Box::new(renderer));
-    }
-
-    /// Poll the dialog bridge for pending dialog requests.
-    async fn poll_dialog(&mut self) -> Option<PendingDialog> {
-        if let Some(ref mut bridge) = self.dialog_bridge {
-            bridge.recv().await
-        } else {
-            std::future::pending().await
-        }
     }
 
     /// Try to dispatch a key event to extension shortcuts.
@@ -489,7 +493,7 @@ impl TuiEngine {
         self.current_cancel = None;
     }
 
-    /// ESC 键处理：按优先级 — 拒绝权限 → 中断 Agent → 清除焦点 → 关闭覆盖层
+    /// ESC 键处理：按优先级 — 拒绝权限 → 中断 Agent → 清除焦点 → 关闭覆盖层 → 关闭 Overlay
     pub fn handle_esc(&mut self) {
         if self.permission.has_pending() {
             if let Some(p) = self.permission.deny() {
@@ -511,6 +515,10 @@ impl TuiEngine {
         }
         if self.chat.focused_card.is_some() {
             self.chat.clear_focus();
+        }
+        if self.overlay_manager.has_visible() {
+            self.overlay_manager.handle_escape();
+            return;
         }
         if self.welcome.is_visible() {
             self.welcome.hide();
@@ -541,6 +549,7 @@ impl TuiEngine {
 
         self.selector.render(f, f.area());
         self.dialog.render(f, f.area());
+        self.overlay_manager.render(f, f.area());
         self.welcome.render(f, f.area());
     }
 
@@ -775,6 +784,11 @@ impl TuiEngine {
                                 continue;
                             }
 
+                            // Overlay keyboard capture
+                            if self.overlay_manager.top_capturing() {
+                                continue;
+                            }
+
                             // Permission confirmation keys take priority
                             if self.permission.has_pending() {
                                 match key_event.code {
@@ -983,6 +997,9 @@ impl TuiEngine {
                                     if self.chat.focused_card.is_some() {
                                         self.chat.clear_focus();
                                     }
+                                    if self.overlay_manager.has_visible() {
+                                        self.overlay_manager.handle_escape();
+                                    }
                                     if self.welcome.is_visible() {
                                         self.welcome.hide();
                                     }
@@ -1063,9 +1080,42 @@ impl TuiEngine {
                     }
                 }
                 // Poll dialog bridge for extension-initiated dialogs
-                Some(pending) = self.poll_dialog() => {
+                Some(pending) = async {
+                    match &mut self.dialog_bridge {
+                        Some(bridge) => bridge.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
                     self.pending_dialog_response = Some(pending.response_tx);
                     self.dialog.show(pending.request);
+                }
+                // Poll overlay bridge for extension-initiated overlays
+                Some(pending) = async {
+                    match &mut self.overlay_bridge {
+                        Some(bridge) => bridge.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    use uncode_core::overlay::OverlayAction;
+                    let result = match &pending.action {
+                        OverlayAction::Show { config, content } => {
+                            if let Err(e) = config.validate() {
+                                Err(e)
+                            } else {
+                                self.overlay_manager.show(config.clone(), content.clone());
+                                Ok(())
+                            }
+                        }
+                        OverlayAction::Hide { key } => {
+                            self.overlay_manager.hide(key);
+                            Ok(())
+                        }
+                        OverlayAction::Update { key, content } => {
+                            self.overlay_manager.update(key, content.clone());
+                            Ok(())
+                        }
+                    };
+                    let _ = pending.response_tx.send(result);
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
                     // Idle tick: re-render for status animation

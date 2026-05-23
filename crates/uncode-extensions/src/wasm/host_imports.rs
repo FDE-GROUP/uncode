@@ -44,6 +44,14 @@ pub fn setup_linker(linker: &mut Linker<HostState>) -> anyhow::Result<()> {
     linker.func_wrap("uncode", "__uncode_host_compact", host_compact)?;
     linker.func_wrap("uncode", "__uncode_host_is_idle", host_is_idle)?;
 
+    linker.func_wrap("uncode", "__uncode_host_show_overlay", host_show_overlay)?;
+    linker.func_wrap("uncode", "__uncode_host_hide_overlay", host_hide_overlay)?;
+    linker.func_wrap(
+        "uncode",
+        "__uncode_host_update_overlay",
+        host_update_overlay,
+    )?;
+
     Ok(())
 }
 
@@ -348,5 +356,113 @@ fn host_is_idle(caller: Caller<'_, HostState>, _handle: i32) -> i32 {
         1
     } else {
         0
+    }
+}
+
+fn host_show_overlay(mut caller: Caller<'_, HostState>, _handle: i32, ptr: i32, len: i32) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let json_str = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::warn!("extension {ext_name} sent invalid utf-8 overlay show request");
+            return -1;
+        }
+    };
+    let payload: serde_json::Value = match serde_json::from_str(json_str) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} sent invalid overlay JSON: {e}");
+            return -1;
+        }
+    };
+    let config: uncode_core::overlay::OverlayConfig =
+        match serde_json::from_value(payload.get("config").cloned().unwrap_or_default()) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("extension {ext_name} overlay config invalid: {e}");
+                return -1;
+            }
+        };
+    let content: uncode_core::overlay::OverlayContent =
+        match serde_json::from_value(payload.get("content").cloned().unwrap_or_default()) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("extension {ext_name} overlay content invalid: {e}");
+                return -1;
+            }
+        };
+    match caller.data().ext_api.show_overlay(config, content) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} show_overlay failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_hide_overlay(mut caller: Caller<'_, HostState>, _handle: i32, ptr: i32, len: i32) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let key = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::warn!("extension {ext_name} sent invalid utf-8 overlay key");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.hide_overlay(key) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} hide_overlay failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_update_overlay(
+    mut caller: Caller<'_, HostState>,
+    _handle: i32,
+    key_ptr: i32,
+    key_len: i32,
+    content_ptr: i32,
+    content_len: i32,
+) -> i32 {
+    let key_bytes = match read_memory_bytes(&mut caller, key_ptr, key_len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let key = match std::str::from_utf8(&key_bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::warn!("extension {ext_name} sent invalid utf-8 overlay key");
+            return -1;
+        }
+    };
+    let content_bytes = match read_memory_bytes(&mut caller, content_ptr, content_len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let content: uncode_core::overlay::OverlayContent = match serde_json::from_slice(&content_bytes)
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} sent invalid overlay content JSON: {e}");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.update_overlay(key, content) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} update_overlay failed: {e}");
+            -1
+        }
     }
 }
