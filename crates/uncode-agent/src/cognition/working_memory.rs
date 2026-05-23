@@ -95,9 +95,17 @@ impl WorkingMemory {
     }
 
     /// 清空并重置 turn（turn 结束时调用）
+    ///
+    /// 高重要性条目 (importance >= 7) 会跨 turn 保留，
+    /// 低重要性条目被清除并返回给调用方。
     pub fn flush(&mut self, next_turn: u64) -> Vec<ScratchEntry> {
         self.turn_number = next_turn;
-        std::mem::take(&mut self.entries)
+        let (keep, drain): (Vec<_>, Vec<_>) =
+            self.entries.drain(..).partition(|e| e.importance() >= 7);
+        self.entries = keep;
+        // 保留条目上限：跨 turn 最多累积 16 条
+        self.entries.truncate(16);
+        drain
     }
 
     /// 获取当前所有条目
@@ -193,12 +201,12 @@ mod tests {
     #[test]
     fn test_flush_clears_and_returns() {
         let mut wm = WorkingMemory::new(1);
-        wm.observe("test");
-        wm.observe_important("critical finding");
+        wm.observe("test"); // importance 5 — flushed
+        wm.observe_important("critical finding"); // importance 8 — kept
 
         let flushed = wm.flush(2);
-        assert_eq!(flushed.len(), 2);
-        assert!(wm.is_empty());
+        assert_eq!(flushed.len(), 1);
+        assert_eq!(wm.len(), 1); // critical finding kept
     }
 
     #[test]
@@ -212,5 +220,33 @@ mod tests {
         assert!(hint.contains("security"));
         assert!(hint.contains("rollback"));
         assert!(!hint.contains("random"));
+    }
+
+    #[test]
+    fn test_cross_turn_accumulation() {
+        let mut wm = WorkingMemory::new(1);
+        // Turn 1: 2 important, 1 low
+        wm.observe_important("critical A");
+        wm.observe_important("critical B");
+        wm.note("low priority");
+        let flushed = wm.flush(2);
+        assert_eq!(flushed.len(), 1); // note flushed
+        assert_eq!(wm.len(), 2); // 2 important kept
+
+        // Turn 2: add 1 more important
+        wm.observe_important("critical C");
+        let flushed = wm.flush(3);
+        assert!(flushed.is_empty());
+        assert_eq!(wm.len(), 3); // 3 important accumulated
+    }
+
+    #[test]
+    fn test_truncation_at_16() {
+        let mut wm = WorkingMemory::new(1);
+        for i in 0..20 {
+            wm.observe_important(format!("finding {i}")); // importance 8
+        }
+        let _ = wm.flush(2);
+        assert_eq!(wm.len(), 16); // truncated
     }
 }

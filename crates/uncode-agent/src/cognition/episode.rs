@@ -58,6 +58,8 @@ pub struct EpisodeEntry {
 pub struct EpisodeMemory {
     entries: Vec<EpisodeEntry>,
     capacity: usize,
+    /// token 预算上限（估算值）；0 表示不限制，仅用 count-based 驱逐
+    token_budget: usize,
 }
 
 impl EpisodeMemory {
@@ -65,7 +67,14 @@ impl EpisodeMemory {
         Self {
             entries: Vec::with_capacity(capacity),
             capacity,
+            token_budget: 0,
         }
+    }
+
+    /// 设置 token 预算上限；超过时基于重要性自适应驱逐
+    pub fn with_token_budget(mut self, budget: usize) -> Self {
+        self.token_budget = budget;
+        self
     }
 
     /// 记录一个事件，自动评分
@@ -203,17 +212,61 @@ impl EpisodeMemory {
     }
 
     fn maybe_evict(&mut self) {
+        // Token-budget-based eviction: 当估算 token 超过预算时驱逐
+        if self.token_budget > 0 {
+            let estimated_tokens = self.estimate_tokens();
+            if estimated_tokens <= self.token_budget {
+                return;
+            }
+            // 收集低重要性条目，按重要性排序后批量移除
+            let mut candidates: Vec<(usize, ImportanceScore)> = self
+                .entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| !e.importance.is_at_least(ImportanceScore::MEDIUM))
+                .map(|(i, e)| (i, e.importance))
+                .collect();
+            candidates.sort_by_key(|(_, s)| *s);
+
+            // 从后往前移除（保持 index 有效）
+            let mut freed = 0usize;
+            let mut to_remove: Vec<usize> = Vec::new();
+            for (idx, _) in &candidates {
+                if estimated_tokens - freed <= self.token_budget {
+                    break;
+                }
+                freed += self.estimate_entry_tokens(&self.entries[*idx]);
+                to_remove.push(*idx);
+            }
+            // 按逆序移除
+            for idx in to_remove.into_iter().rev() {
+                self.entries.remove(idx);
+            }
+            if self.estimate_tokens() > self.token_budget {
+                // 仍然超预算，扩容 token_budget 50%
+                self.token_budget = (self.token_budget * 3) / 2;
+            }
+            return;
+        }
+        // Fallback: count-based eviction (2x capacity)
         while self.entries.len() > self.capacity * 2 {
-            // 驱逐重要性 < MEDIUM 的条目
             let candidates = self.eviction_candidates(ImportanceScore::MEDIUM);
             if candidates.is_empty() {
-                // 所有条目都至少 MEDIUM，扩容 50%
                 self.capacity = (self.capacity * 3) / 2;
                 break;
             }
-            // 移除第一个（最低重要性）
             self.entries.remove(candidates[0]);
         }
+    }
+
+    /// 估算总 token 数（4 字符 ≈ 1 token）
+    fn estimate_tokens(&self) -> usize {
+        self.entries.iter().map(|e| self.estimate_entry_tokens(e)).sum()
+    }
+
+    fn estimate_entry_tokens(&self, entry: &EpisodeEntry) -> usize {
+        let chars = entry.event_type.len() + entry.summary.len();
+        chars / 4 + 1
     }
 }
 
@@ -299,5 +352,42 @@ mod tests {
         );
         let high = mem.query_by_importance(ImportanceScore(6));
         assert_eq!(high.len(), 1);
+    }
+
+    #[test]
+    fn test_token_budget_eviction() {
+        let mut mem = EpisodeMemory::new(100)
+            .with_token_budget(50); // 50 tokens budget
+
+        // Insert many low-importance entries (~100 chars each ≈ 25 tokens each)
+        for i in 0..10 {
+            mem.record("content_delta", format!("chunk_{i}_padding_text_to_add_length_here"), 1);
+        }
+
+        // Should have evicted down to stay within budget
+        let tokens = mem.estimate_tokens();
+        assert!(
+            tokens <= 75, // allow some overshoot margin
+            "expected <= ~75 tokens after eviction, got {tokens}"
+        );
+    }
+
+    #[test]
+    fn test_token_budget_preserves_critical() {
+        let mut mem = EpisodeMemory::new(100)
+            .with_token_budget(20);
+
+        // Fill with low-importance
+        for i in 0..5 {
+            mem.record("content_delta", format!("padding_{i}_text"), 1);
+        }
+        // Add critical
+        mem.record("decision_made", "critical decision", 1);
+
+        let critical = mem.query_by_importance(ImportanceScore::CRITICAL);
+        assert!(
+            !critical.is_empty(),
+            "critical entry should survive token-budget eviction"
+        );
     }
 }

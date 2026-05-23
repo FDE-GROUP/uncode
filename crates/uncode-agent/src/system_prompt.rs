@@ -79,6 +79,13 @@ impl SystemPromptBuilder {
         self
     }
 
+    pub fn append(mut self, text: &str) -> Self {
+        if !text.is_empty() {
+            self.parts.push(text.to_string());
+        }
+        self
+    }
+
     pub fn build(self) -> String {
         self.parts.join("\n\n")
     }
