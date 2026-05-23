@@ -1117,6 +1117,16 @@ impl ChatState {
                 text: content.to_string(),
             });
         }
+        // Extract todos from streamed text in real-time so the plan
+        // appears before tool results rather than only at turn end.
+        let text = match self.messages.last() {
+            Some(ChatMessage::Assistant { text }) => text.as_str(),
+            _ => return,
+        };
+        let items = parse_markdown_todos(text);
+        if !items.is_empty() {
+            self.upsert_todo_list("assistant".to_string(), "Todos".to_string(), items);
+        }
     }
 
     /// 追加思考文本
