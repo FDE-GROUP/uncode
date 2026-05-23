@@ -8,6 +8,7 @@
 
 pub mod chat;
 pub mod complete;
+pub mod custom_layout;
 pub mod dialog;
 pub mod dialog_channel;
 pub mod diff_viewer;
@@ -293,6 +294,9 @@ pub struct TuiEngine {
     status_manager: StatusManager,
     ui_bridge: Option<UiBridge>,
     message_renderers: MessageRendererRegistry,
+    custom_header: Option<crate::custom_layout::CustomHeader>,
+    custom_footer: Option<crate::custom_layout::CustomFooter>,
+    custom_indicator: Option<crate::custom_layout::CustomIndicator>,
 }
 
 impl TuiEngine {
@@ -349,6 +353,9 @@ impl TuiEngine {
             status_manager: StatusManager::new(),
             ui_bridge: None,
             message_renderers: MessageRendererRegistry::new(),
+            custom_header: None,
+            custom_footer: None,
+            custom_indicator: None,
         }
     }
 
@@ -468,6 +475,31 @@ impl TuiEngine {
             .register(message_type, Box::new(renderer));
     }
 
+    /// Set custom header. Pass `None` to restore built-in (no header).
+    pub fn set_custom_header(
+        &mut self,
+        config: Option<uncode_extensions::header_footer::HeaderConfig>,
+    ) {
+        self.custom_header = config.map(|c| crate::custom_layout::CustomHeader::from_config(&c));
+    }
+
+    /// Set custom footer. Pass `None` to restore built-in footer.
+    pub fn set_custom_footer(
+        &mut self,
+        config: Option<uncode_extensions::header_footer::FooterConfig>,
+    ) {
+        self.custom_footer = config.map(|c| crate::custom_layout::CustomFooter::from_config(&c));
+    }
+
+    /// Set custom working indicator. Pass `None` to restore built-in ●/○.
+    pub fn set_custom_indicator(
+        &mut self,
+        config: Option<uncode_extensions::header_footer::WorkingIndicatorConfig>,
+    ) {
+        self.custom_indicator =
+            config.map(|c| crate::custom_layout::CustomIndicator::from_config(&c));
+    }
+
     /// Try to dispatch a key event to extension shortcuts.
     fn try_extension_shortcut(&self, key_event: crossterm::event::KeyEvent) -> bool {
         use uncode_extensions::command::{ExtKey, ExtKeyEvent, ExtModifiers};
@@ -567,10 +599,18 @@ impl TuiEngine {
         use uncode_core::ui_action::WidgetPlacement;
         let above_lines = self.widget_manager.lines_for(WidgetPlacement::AboveEditor);
         let below_lines = self.widget_manager.lines_for(WidgetPlacement::BelowEditor);
+        let header_lines = self
+            .custom_header
+            .as_ref()
+            .map(|h| h.line_count())
+            .unwrap_or(0);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints({
-                let mut c = Vec::with_capacity(7);
+                let mut c = Vec::with_capacity(9);
+                if header_lines > 0 {
+                    c.push(Constraint::Length(header_lines)); // Custom header
+                }
                 c.push(Constraint::Min(0)); // 对话区
                 c.push(Constraint::Length(1)); // 状态行
                 if above_lines > 0 {
@@ -587,6 +627,10 @@ impl TuiEngine {
             .split(f.area());
 
         let mut idx = 0;
+        if header_lines > 0 {
+            self.render_header(f, chunks[idx]);
+            idx += 1;
+        }
         self.render_chat(f, chunks[idx]);
         idx += 1;
         self.render_status(f, chunks[idx]);
@@ -709,12 +753,37 @@ impl TuiEngine {
             .add_modifier(ratatui::style::Modifier::BOLD);
         let dim = Style::default().fg(self.theme.ui.footer_text).bg(bg_color);
 
+        let indicator = if let Some(ref ci) = self.custom_indicator {
+            ci.frame_at(self.tick as u64).to_string()
+        } else {
+            "*".to_string()
+        };
+
         let line = Line::from(vec![
-            Span::styled(format!(" * {label} "), accent),
+            Span::styled(format!(" {indicator} {label} "), accent),
             Span::styled(format!("({elapsed} | {tokens} tok)"), dim),
         ]);
 
         f.render_widget(Paragraph::new(line), area);
+    }
+
+    fn render_header(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        if let Some(ref header) = self.custom_header {
+            let height = header.line_count() as u16;
+            let lines = &header.lines;
+            for (i, line) in lines.iter().enumerate() {
+                if i as u16 >= height || area.height == 0 {
+                    break;
+                }
+                let line_area = ratatui::layout::Rect {
+                    x: area.x,
+                    y: area.y + i as u16,
+                    width: area.width,
+                    height: 1,
+                };
+                f.render_widget(Paragraph::new(line.clone()), line_area);
+            }
+        }
     }
 
     fn render_footer(
@@ -723,16 +792,21 @@ impl TuiEngine {
         line1_area: ratatui::layout::Rect,
         line2_area: ratatui::layout::Rect,
     ) {
-        let (status_icon, status_color) = if self.agent_busy {
-            let dot = if (self.tick / 4).is_multiple_of(2) {
-                "●"
-            } else {
-                "○"
-            };
-            (dot, self.theme.tool_status.success)
-        } else {
-            ("●", self.theme.tool_status.success)
-        };
+        if let Some(ref custom) = self.custom_footer {
+            // Render custom footer lines
+            for (i, line) in custom.lines.iter().enumerate() {
+                let area = if i == 0 { line1_area } else { line2_area };
+                if area.height == 0 {
+                    break;
+                }
+                f.render_widget(Paragraph::new(line.clone()), area);
+            }
+            // Optionally append built-in info
+            // For now, custom footer replaces built-in completely
+            return;
+        }
+
+        let (status_icon, status_color) = self.working_indicator_icon();
 
         let mut line1_spans = vec![
             Span::styled(format!("{status_icon} "), Style::default().fg(status_color)),
@@ -754,6 +828,24 @@ impl TuiEngine {
             .footer
             .render_line2(model_display, level.icon(), &self.theme);
         f.render_widget(Paragraph::new(line2), line2_area);
+    }
+
+    /// Returns (icon, color) for the working indicator — custom or built-in.
+    fn working_indicator_icon(&self) -> (&str, Color) {
+        if let Some(ref indicator) = self.custom_indicator {
+            let frame = indicator.frame_at(self.tick as u64);
+            let color = self.theme.tool_status.success;
+            (frame, color)
+        } else if self.agent_busy {
+            let dot = if (self.tick / 4).is_multiple_of(2) {
+                "●"
+            } else {
+                "○"
+            };
+            (dot, self.theme.tool_status.success)
+        } else {
+            ("●", self.theme.tool_status.success)
+        }
     }
 
     pub async fn run<F>(&mut self, mut event_rx: broadcast::Receiver<AgentEvent>, on_submit: F)

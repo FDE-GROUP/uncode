@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::command::{CommandRegistration, ShortcutRegistration};
+use crate::header_footer::{FooterConfig, HeaderConfig, WorkingIndicatorConfig};
 use crate::hooks::{Extension, HookRegistry, LifecycleHook};
 use crate::message_renderer::MessageRenderConfig;
 use crate::provider::ProviderRegistration;
@@ -72,6 +73,16 @@ pub type NotifyCallback = Arc<dyn Fn(String, NotifyType) -> Result<(), String> +
 pub type MessageRendererCallback =
     Arc<dyn Fn(MessageRenderConfig) -> Result<(), String> + Send + Sync>;
 
+/// Callback type for header replacement. Injected by `uncode-cli`.
+pub type HeaderCallback = Arc<dyn Fn(Option<HeaderConfig>) -> Result<(), String> + Send + Sync>;
+
+/// Callback type for footer replacement. Injected by `uncode-cli`.
+pub type FooterCallback = Arc<dyn Fn(Option<FooterConfig>) -> Result<(), String> + Send + Sync>;
+
+/// Callback type for working indicator replacement. Injected by `uncode-cli`.
+pub type WorkingIndicatorCallback =
+    Arc<dyn Fn(Option<WorkingIndicatorConfig>) -> Result<(), String> + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -93,6 +104,9 @@ pub struct ExtensionApi {
     ui_callback: Option<UiCallback>,
     notify_callback: Option<NotifyCallback>,
     message_renderer_callback: Option<MessageRendererCallback>,
+    header_callback: Option<HeaderCallback>,
+    footer_callback: Option<FooterCallback>,
+    working_indicator_callback: Option<WorkingIndicatorCallback>,
 }
 
 impl ExtensionApi {
@@ -115,6 +129,9 @@ impl ExtensionApi {
             ui_callback: None,
             notify_callback: None,
             message_renderer_callback: None,
+            header_callback: None,
+            footer_callback: None,
+            working_indicator_callback: None,
         }
     }
 
@@ -138,6 +155,9 @@ impl ExtensionApi {
         ui_callback: Option<UiCallback>,
         notify_callback: Option<NotifyCallback>,
         message_renderer_callback: Option<MessageRendererCallback>,
+        header_callback: Option<HeaderCallback>,
+        footer_callback: Option<FooterCallback>,
+        working_indicator_callback: Option<WorkingIndicatorCallback>,
     ) -> Self {
         Self {
             registry,
@@ -157,6 +177,9 @@ impl ExtensionApi {
             ui_callback,
             notify_callback,
             message_renderer_callback,
+            header_callback,
+            footer_callback,
+            working_indicator_callback,
         }
     }
 
@@ -368,6 +391,45 @@ impl ExtensionApi {
             .message_renderer_callback
             .as_ref()
             .ok_or("message renderer registration not available: no callback configured")?;
+        callback(config)
+    }
+
+    /// Replace the built-in header with custom content. Pass `None` to restore defaults.
+    pub fn set_header(&self, config: Option<HeaderConfig>) -> Result<(), String> {
+        if let Some(ref c) = config {
+            c.validate()?;
+        }
+        let callback = self
+            .header_callback
+            .as_ref()
+            .ok_or("header not available: no callback configured")?;
+        callback(config)
+    }
+
+    /// Replace the built-in footer with custom content. Pass `None` to restore defaults.
+    pub fn set_footer(&self, config: Option<FooterConfig>) -> Result<(), String> {
+        if let Some(ref c) = config {
+            c.validate()?;
+        }
+        let callback = self
+            .footer_callback
+            .as_ref()
+            .ok_or("footer not available: no callback configured")?;
+        callback(config)
+    }
+
+    /// Replace the built-in working indicator animation. Pass `None` to restore defaults.
+    pub fn set_working_indicator(
+        &self,
+        config: Option<WorkingIndicatorConfig>,
+    ) -> Result<(), String> {
+        if let Some(ref c) = config {
+            c.validate()?;
+        }
+        let callback = self
+            .working_indicator_callback
+            .as_ref()
+            .ok_or("working indicator not available: no callback configured")?;
         callback(config)
     }
 }
