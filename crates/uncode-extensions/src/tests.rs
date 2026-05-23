@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
 use crate::api::ExtensionApi;
+use crate::command::{
+    CommandRegistration, ExtKey, ExtKeyEvent, ExtModifiers, ShortcutRegistration,
+};
 use crate::hooks::{
     Extension, HookContext, HookEvent, HookModification, HookRegistry, HookResult, LifecycleHook,
 };
@@ -492,7 +495,7 @@ fn test_register_tool_with_callback_delegates() {
         },
     );
 
-    let api = ExtensionApi::with_tool_callback(registry, callback);
+    let api = ExtensionApi::with_callbacks(registry, Some(callback), None, None);
     api.register_tool(Arc::new(HelloTool)).unwrap();
     assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
@@ -506,7 +509,157 @@ fn test_register_tool_callback_error_propagates() {
         },
     );
 
-    let api = ExtensionApi::with_tool_callback(registry, callback);
+    let api = ExtensionApi::with_callbacks(registry, Some(callback), None, None);
     let result = api.register_tool(Arc::new(HelloTool));
     assert!(result.unwrap_err().contains("rejected"));
+}
+
+// ── CommandRegistration tests ──
+
+#[test]
+fn test_command_validate_ok() {
+    let cmd = CommandRegistration {
+        name: "my-cmd".into(),
+        description: "A custom command".into(),
+    };
+    assert!(cmd.validate().is_ok());
+}
+
+#[test]
+fn test_command_validate_reserved_name() {
+    for reserved in crate::command::RESERVED_COMMAND_NAMES {
+        let cmd = CommandRegistration {
+            name: reserved.to_string(),
+            description: "desc".into(),
+        };
+        assert!(cmd.validate().unwrap_err().contains("reserved"));
+    }
+}
+
+#[test]
+fn test_command_validate_empty_name() {
+    let cmd = CommandRegistration {
+        name: "".into(),
+        description: "desc".into(),
+    };
+    assert!(cmd.validate().unwrap_err().contains("empty"));
+}
+
+#[test]
+fn test_command_validate_whitespace_name() {
+    let cmd = CommandRegistration {
+        name: "my cmd".into(),
+        description: "desc".into(),
+    };
+    assert!(cmd.validate().unwrap_err().contains("whitespace"));
+}
+
+#[test]
+fn test_command_validate_empty_description() {
+    let cmd = CommandRegistration {
+        name: "my-cmd".into(),
+        description: "".into(),
+    };
+    assert!(cmd.validate().unwrap_err().contains("description"));
+}
+
+#[test]
+fn test_register_command_no_callback() {
+    let registry = Arc::new(HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    let result = api.register_command(CommandRegistration {
+        name: "test".into(),
+        description: "test".into(),
+    });
+    assert!(result.unwrap_err().contains("no callback"));
+}
+
+#[test]
+fn test_register_command_with_callback() {
+    use std::sync::atomic::AtomicUsize;
+    let registry = Arc::new(HookRegistry::new());
+    let called = Arc::new(AtomicUsize::new(0));
+    let called_clone = called.clone();
+    let callback = Arc::new(move |cmd: CommandRegistration| -> Result<(), String> {
+        assert_eq!(cmd.name, "ext-cmd");
+        called_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(())
+    });
+    let api = ExtensionApi::with_callbacks(registry, None, Some(callback), None);
+    api.register_command(CommandRegistration {
+        name: "ext-cmd".into(),
+        description: "Extension command".into(),
+    })
+    .unwrap();
+    assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
+}
+
+// ── ShortcutRegistration tests ──
+
+#[test]
+fn test_shortcut_validate_ok() {
+    let shortcut = ShortcutRegistration {
+        key: ExtKeyEvent {
+            key: ExtKey::F(5),
+            modifiers: ExtModifiers {
+                ctrl: true,
+                alt: false,
+                shift: false,
+            },
+        },
+        description: "Run extension".into(),
+    };
+    assert!(shortcut.validate().is_ok());
+}
+
+#[test]
+fn test_shortcut_validate_reserved() {
+    let shortcut = ShortcutRegistration {
+        key: ExtKeyEvent {
+            key: ExtKey::Char('c'),
+            modifiers: ExtModifiers {
+                ctrl: true,
+                alt: false,
+                shift: false,
+            },
+        },
+        description: "Override quit".into(),
+    };
+    assert!(shortcut.validate().unwrap_err().contains("reserved"));
+}
+
+#[test]
+fn test_shortcut_validate_empty_description() {
+    let shortcut = ShortcutRegistration {
+        key: ExtKeyEvent {
+            key: ExtKey::F(5),
+            modifiers: ExtModifiers::default(),
+        },
+        description: "".into(),
+    };
+    assert!(shortcut.validate().unwrap_err().contains("description"));
+}
+
+#[test]
+fn test_register_shortcut_with_callback() {
+    use std::sync::atomic::AtomicUsize;
+    let registry = Arc::new(HookRegistry::new());
+    let called = Arc::new(AtomicUsize::new(0));
+    let called_clone = called.clone();
+    let callback = Arc::new(
+        move |_shortcut: ShortcutRegistration| -> Result<(), String> {
+            called_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        },
+    );
+    let api = ExtensionApi::with_callbacks(registry, None, None, Some(callback));
+    api.register_shortcut(ShortcutRegistration {
+        key: ExtKeyEvent {
+            key: ExtKey::F(5),
+            modifiers: ExtModifiers::default(),
+        },
+        description: "Test shortcut".into(),
+    })
+    .unwrap();
+    assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
 }

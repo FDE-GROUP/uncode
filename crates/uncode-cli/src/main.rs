@@ -435,15 +435,45 @@ async fn main() -> anyhow::Result<()> {
     let ext_registry = Arc::new(uncode_extensions::hooks::HookRegistry::new());
     let ext_hooks = Arc::new(ExtensionToolHooks::new(ext_registry.clone()));
     let tool_reg_for_cb = tool_registry.clone();
-    let ext_api = uncode_extensions::api::ExtensionApi::with_tool_callback(
+
+    // Pending command/shortcut registrations — consumed by TUI after spawn
+    let pending_commands: Arc<
+        parking_lot::Mutex<Vec<(String, String, uncode_tui::slash::CommandFn)>>,
+    > = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    type ShortcutEntry = (uncode_extensions::command::ExtKeyEvent, Box<dyn Fn() + Send + Sync>);
+    let pending_shortcuts: Arc<parking_lot::Mutex<Vec<ShortcutEntry>>> =
+        Arc::new(parking_lot::Mutex::new(Vec::new()));
+
+    let cmd_cb_pending = pending_commands.clone();
+    let shortcut_cb_pending = pending_shortcuts.clone();
+
+    let ext_api = uncode_extensions::api::ExtensionApi::with_callbacks(
         ext_registry.clone(),
-        Arc::new(
+        Some(Arc::new(
             move |name: String,
                   tool: std::sync::Arc<dyn uncode_extensions::tool::ExtensionTool>| {
                 let adapter = ExtensionToolExecutor::new(tool);
                 tool_reg_for_cb.register_extension_tool(name, Arc::new(adapter))
             },
-        ),
+        )),
+        Some(Arc::new(
+            move |cmd: uncode_extensions::command::CommandRegistration| -> Result<(), String> {
+                let desc = cmd.description.clone();
+                let handler_name = cmd.name.clone();
+                let handler: uncode_tui::slash::CommandFn =
+                    Box::new(move |_args| format!("[extension command: {handler_name}]"));
+                cmd_cb_pending.lock().push((cmd.name, desc, handler));
+                Ok(())
+            },
+        )),
+        Some(Arc::new(
+            move |shortcut: uncode_extensions::command::ShortcutRegistration| -> Result<(), String> {
+                let handler: Box<dyn Fn() + Send + Sync> =
+                    Box::new(move || {});
+                shortcut_cb_pending.lock().push((shortcut.key, handler));
+                Ok(())
+            },
+        )),
     );
     let ext_bridge = ExtensionLifecycleBridge::new(ext_api);
     agent.set_tool_hooks(Arc::new(ChainedToolHooks::new(vec![
@@ -464,6 +494,15 @@ async fn main() -> anyhow::Result<()> {
             .collect();
         tui.set_available_models(model_ids);
         tui.set_default_model(model.clone());
+
+        // Flush pending extension command/shortcut registrations into the TUI
+        for (name, desc, handler) in pending_commands.lock().drain(..) {
+            tui.register_slash_command(&name, &desc, handler);
+        }
+        for (key, handler) in pending_shortcuts.lock().drain(..) {
+            tui.register_extension_shortcut(key, handler);
+        }
+
         tui.run(
             event_rx,
             move |text, cancel_token, current_model, session_id, intent| {
