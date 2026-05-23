@@ -83,6 +83,23 @@ pub fn setup_linker(linker: &mut Linker<HostState>) -> anyhow::Result<()> {
         host_register_resource_path,
     )?;
 
+    linker.func_wrap("uncode", "__uncode_host_session_fork", host_session_fork)?;
+    linker.func_wrap(
+        "uncode",
+        "__uncode_host_session_navigate",
+        host_session_navigate,
+    )?;
+    linker.func_wrap(
+        "uncode",
+        "__uncode_host_session_switch",
+        host_session_switch,
+    )?;
+    linker.func_wrap(
+        "uncode",
+        "__uncode_host_session_set_name",
+        host_session_set_name,
+    )?;
+
     Ok(())
 }
 
@@ -783,6 +800,104 @@ fn host_register_resource_path(
         Ok(()) => 0,
         Err(e) => {
             tracing::warn!("extension {ext_name} register_resource_path failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_session_fork(mut caller: Caller<'_, HostState>, _handle: i32, ptr: i32, len: i32) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let entry_id = match std::str::from_utf8(&bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            tracing::warn!("extension {ext_name} sent invalid utf-8 entry_id");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.session_fork(&entry_id) {
+        Ok(_) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} session_fork failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_session_navigate(
+    mut caller: Caller<'_, HostState>,
+    _handle: i32,
+    ptr: i32,
+    len: i32,
+) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let entry_id = match std::str::from_utf8(&bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            tracing::warn!("extension {ext_name} sent invalid utf-8 entry_id");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.session_navigate(&entry_id) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} session_navigate failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_session_switch(mut caller: Caller<'_, HostState>, _handle: i32, ptr: i32, len: i32) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let session_id = match std::str::from_utf8(&bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            tracing::warn!("extension {ext_name} sent invalid utf-8 session_id");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.session_switch(&session_id) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} session_switch failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_session_set_name(
+    mut caller: Caller<'_, HostState>,
+    _handle: i32,
+    ptr: i32,
+    len: i32,
+) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let name = match std::str::from_utf8(&bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            tracing::warn!("extension {ext_name} sent invalid utf-8 name");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.session_set_name(&name) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} session_set_name failed: {e}");
             -1
         }
     }
