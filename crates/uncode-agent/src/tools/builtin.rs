@@ -51,7 +51,13 @@ pub fn register_coding_tools(
             tools_config.max_file_bytes,
         )),
     );
-    registry.register("bash", Arc::new(BashTool::new()));
+    registry.register(
+        "bash",
+        Arc::new(
+            BashTool::new()
+                .with_sandbox(tools_config.bash.sandbox, tools_config.bash.sandbox_profile),
+        ),
+    );
     registry.register("find", Arc::new(FindTool));
     registry.register("ls", Arc::new(LsTool));
     registry.register("web_fetch", Arc::new(WebFetchTool::new()));
