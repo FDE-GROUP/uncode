@@ -62,6 +62,14 @@ pub fn setup_linker(linker: &mut Linker<HostState>) -> anyhow::Result<()> {
         host_register_message_renderer,
     )?;
 
+    linker.func_wrap("uncode", "__uncode_host_set_header", host_set_header)?;
+    linker.func_wrap("uncode", "__uncode_host_set_footer", host_set_footer)?;
+    linker.func_wrap(
+        "uncode",
+        "__uncode_host_set_working_indicator",
+        host_set_working_indicator,
+    )?;
+
     Ok(())
 }
 
@@ -612,6 +620,80 @@ fn host_register_message_renderer(
         Ok(()) => 0,
         Err(e) => {
             tracing::warn!("extension {ext_name} register_message_renderer failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_set_header(mut caller: Caller<'_, HostState>, _handle: i32, ptr: i32, len: i32) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let config: Option<crate::header_footer::HeaderConfig> = match serde_json::from_slice(&bytes) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} sent invalid header config JSON: {e}");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.set_header(config) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} set_header failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_set_footer(mut caller: Caller<'_, HostState>, _handle: i32, ptr: i32, len: i32) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let config: Option<crate::header_footer::FooterConfig> = match serde_json::from_slice(&bytes) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} sent invalid footer config JSON: {e}");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.set_footer(config) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} set_footer failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_set_working_indicator(
+    mut caller: Caller<'_, HostState>,
+    _handle: i32,
+    ptr: i32,
+    len: i32,
+) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let config: Option<crate::header_footer::WorkingIndicatorConfig> =
+        match serde_json::from_slice(&bytes) {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!(
+                    "extension {ext_name} sent invalid working indicator config JSON: {e}"
+                );
+                return -1;
+            }
+        };
+    match caller.data().ext_api.set_working_indicator(config) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} set_working_indicator failed: {e}");
             -1
         }
     }

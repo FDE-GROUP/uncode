@@ -7,6 +7,7 @@
 
 pub mod api;
 pub mod command;
+pub mod header_footer;
 pub mod hooks;
 pub mod loader;
 pub mod manager;
