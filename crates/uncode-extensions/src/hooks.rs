@@ -46,6 +46,7 @@ pub struct HookModification {
 /// **OpenCode:** 无 1:1 钩子名；对照插件/Hook 产品能力即可。
 #[derive(Clone)]
 pub enum LifecycleHook {
+    // 现有 8 个
     SessionStart,
     TurnStart,
     MessageReceived,
@@ -54,6 +55,28 @@ pub enum LifecycleHook {
     ToolCallAfter,
     TurnEnd,
     SessionEnd,
+    // Session 管理
+    SessionShutdown,
+    SessionBeforeCompact,
+    SessionCompact,
+    // Agent 生命周期
+    BeforeAgentStart,
+    AgentStart,
+    AgentEnd,
+    // LLM 交互
+    Context,
+    BeforeProviderRequest,
+    AfterProviderResponse,
+    // 流式更新
+    MessageUpdate,
+    // 模型事件
+    ModelSelect,
+    // 工具执行细化
+    ToolExecutionStart,
+    ToolExecutionUpdate,
+    ToolExecutionEnd,
+    // 资源发现
+    ResourcesDiscover,
 }
 
 impl LifecycleHook {
@@ -67,6 +90,21 @@ impl LifecycleHook {
             Self::ToolCallAfter => "tool_call_after",
             Self::TurnEnd => "turn_end",
             Self::SessionEnd => "session_end",
+            Self::SessionShutdown => "session_shutdown",
+            Self::SessionBeforeCompact => "session_before_compact",
+            Self::SessionCompact => "session_compact",
+            Self::BeforeAgentStart => "before_agent_start",
+            Self::AgentStart => "agent_start",
+            Self::AgentEnd => "agent_end",
+            Self::Context => "context",
+            Self::BeforeProviderRequest => "before_provider_request",
+            Self::AfterProviderResponse => "after_provider_response",
+            Self::MessageUpdate => "message_update",
+            Self::ModelSelect => "model_select",
+            Self::ToolExecutionStart => "tool_execution_start",
+            Self::ToolExecutionUpdate => "tool_execution_update",
+            Self::ToolExecutionEnd => "tool_execution_end",
+            Self::ResourcesDiscover => "resources_discover",
         }
     }
 }

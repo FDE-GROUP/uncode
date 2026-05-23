@@ -341,6 +341,15 @@ impl AgentLoop {
         self.extension_bridge = Some(bridge);
     }
 
+    /// Fire `SessionShutdown` lifecycle hook (called from harness abort).
+    pub async fn fire_session_shutdown(&self) {
+        if let Some(ref bridge) = self.extension_bridge {
+            if let Some(ref sid) = self.session_id {
+                bridge.fire_session_shutdown(sid).await;
+            }
+        }
+    }
+
     /// Restrict tools visible to the LLM and executable in this loop.
     ///
     /// **Pi:** `setActiveTools`.
@@ -645,6 +654,10 @@ impl AgentLoop {
             message_id: user_message.id.clone(),
         });
 
+        if let Some(ref bridge) = self.extension_bridge {
+            bridge.fire_before_agent_start(&session_id).await;
+        }
+
         self.emit(AgentEvent::SessionStart {
             session_id: session_id.clone(),
             timestamp: chrono::Utc::now(),
@@ -652,6 +665,7 @@ impl AgentLoop {
 
         if let Some(ref bridge) = self.extension_bridge {
             bridge.fire_session_start(&session_id).await;
+            bridge.fire_resources_discover(&session_id).await;
         }
 
         // Build context from session store (picks up all previous messages for resume)
@@ -777,6 +791,9 @@ impl AgentLoop {
                 )
                 .await
                 {
+                    if let Some(ref bridge) = self.extension_bridge {
+                        bridge.fire_session_before_compact(&session_id).await;
+                    }
                     self.emit(AgentEvent::CompactionStart {
                         data: Box::new(CompactionStartData {
                             session_id: session_id.clone(),
@@ -843,6 +860,9 @@ impl AgentLoop {
                                 summary_text,
                                 reason: CompactionReason::Threshold,
                             });
+                            if let Some(ref bridge) = self.extension_bridge {
+                                bridge.fire_session_compact(&session_id).await;
+                            }
                         }
                         Ok(None) => {}
                         Err(e) => tracing::warn!("compaction failed: {e}"),
@@ -904,6 +924,14 @@ impl AgentLoop {
                 if let Some(ref bridge) = self.extension_bridge {
                     if let Some(ref sid) = self.session_id {
                         bridge.fire_turn_start(sid, turn).await;
+                    }
+                }
+
+                if let Some(ref bridge) = self.extension_bridge {
+                    if let Some(ref sid) = self.session_id {
+                        bridge.fire_agent_start(sid).await;
+                        bridge.fire_context(sid).await;
+                        bridge.fire_before_provider_request(sid).await;
                     }
                 }
 
@@ -1087,6 +1115,11 @@ impl AgentLoop {
                                 content: text,
                                 content_index: None,
                             });
+                            if let Some(ref bridge) = self.extension_bridge {
+                                if let Some(ref sid) = self.session_id {
+                                    bridge.fire_message_update(sid).await;
+                                }
+                            }
                         }
                         StreamEvent::ToolCallStart { id, name } => {
                             info!("tool call start: {name} ({id})");
@@ -1095,6 +1128,11 @@ impl AgentLoop {
                                 tool_name: name.clone(),
                                 arguments_summary: String::new(),
                             });
+                            if let Some(ref bridge) = self.extension_bridge {
+                                if let Some(ref sid) = self.session_id {
+                                    bridge.fire_tool_execution_start(sid).await;
+                                }
+                            }
                             tool_start_times.insert(id.clone(), std::time::Instant::now());
                             pending_tool_calls.push((id, name, String::new()));
                         }
@@ -1112,6 +1150,11 @@ impl AgentLoop {
                                         detail: tc.2.clone(),
                                     });
                                     args_pushed.insert(id.clone());
+                                }
+                            }
+                            if let Some(ref bridge) = self.extension_bridge {
+                                if let Some(ref sid) = self.session_id {
+                                    bridge.fire_tool_execution_update(sid).await;
                                 }
                             }
                         }
@@ -1416,6 +1459,11 @@ impl AgentLoop {
                                             is_error,
                                         }),
                                     });
+                                    if let Some(ref bridge) = self.extension_bridge {
+                                        if let Some(ref sid) = self.session_id {
+                                            bridge.fire_tool_execution_end(sid).await;
+                                        }
+                                    }
 
                                     // ── 决策层评估 + 反馈 (原则5: 事件流双向通道, #340) ──
                                     {
@@ -1553,6 +1601,12 @@ impl AgentLoop {
                     }),
                 });
 
+                if let Some(ref bridge) = self.extension_bridge {
+                    if let Some(ref sid) = self.session_id {
+                        bridge.fire_after_provider_response(sid).await;
+                    }
+                }
+
                 // TurnEnd
                 if !self.cancel_token.is_cancelled() {
                     let turn_usage = UsageInfo {
@@ -1582,6 +1636,7 @@ impl AgentLoop {
                     if let Some(ref bridge) = self.extension_bridge {
                         if let Some(ref sid) = self.session_id {
                             bridge.fire_turn_end(sid, turn).await;
+                            bridge.fire_agent_end(sid).await;
                         }
                     }
                     if !turn_phase_completed.is_empty() || !turn_phase_issues.is_empty() {
@@ -1628,6 +1683,11 @@ impl AgentLoop {
                                         source: ModelChangeSource::Auto,
                                     }),
                                 });
+                                if let Some(ref bridge) = self.extension_bridge {
+                                    if let Some(ref sid) = self.session_id {
+                                        bridge.fire_model_select(sid).await;
+                                    }
+                                }
                             }
                         }
                         if let Some(new_tl) = &decision.thinking_level {
