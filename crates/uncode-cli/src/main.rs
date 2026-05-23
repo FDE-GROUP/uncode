@@ -468,6 +468,9 @@ async fn main() -> anyhow::Result<()> {
     // Overlay channel — same pattern for extension overlays.
     let (overlay_sender, overlay_bridge) = uncode_tui::overlay_channel::overlay_channel(16);
 
+    // UI action channel — widget + status.
+    let (ui_sender, ui_bridge) = uncode_tui::ui_channel::ui_channel(16);
+
     // Agent control state for extension callbacks (abort/compact/is_idle)
     let active_run_handle = agent.active_run_handle();
     let abort_token: Arc<std::sync::Mutex<tokio_util::sync::CancellationToken>> = Arc::new(
@@ -597,6 +600,38 @@ async fn main() -> anyhow::Result<()> {
                     .map_err(|e| format!("overlay response error: {e}"))?
             },
         )),
+        // UI action callback — bridges to TUI via blocking channel
+        Some(Arc::new(
+            move |action: uncode_core::ui_action::UiAction| -> Result<(), String> {
+                let (response_tx, response_rx) = std::sync::mpsc::channel();
+                ui_sender
+                    .blocking_send(uncode_tui::ui_channel::PendingUiAction {
+                        action,
+                        response_tx,
+                    })
+                    .map_err(|e| format!("UI channel error: {e}"))?;
+                response_rx
+                    .recv()
+                    .map_err(|e| format!("UI response error: {e}"))?
+            },
+        )),
+        // Notify callback — direct OSC output to terminal
+        Some(Arc::new(
+            move |message: String, notify_type: uncode_core::ui_action::NotifyType| -> Result<(), String> {
+                let icon = match notify_type {
+                    uncode_core::ui_action::NotifyType::Info => "ℹ",
+                    uncode_core::ui_action::NotifyType::Warning => "⚠",
+                    uncode_core::ui_action::NotifyType::Error => "✖",
+                };
+                // OSC 777 notification sequence (supported by many terminals)
+                let osc = format!("\x1b]777;{icon} {message}\x07");
+                let _ = std::io::Write::write_all(&mut std::io::stdout(), osc.as_bytes());
+                // Also try OSC 9 (iTerm2 / Windows Terminal)
+                let osc9 = format!("\x1b]9;{icon} {message}\x07");
+                let _ = std::io::Write::write_all(&mut std::io::stdout(), osc9.as_bytes());
+                Ok(())
+            },
+        )),
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)
@@ -666,6 +701,7 @@ async fn main() -> anyhow::Result<()> {
         // Set dialog bridge for extension-initiated dialogs
         tui.set_dialog_bridge(dialog_bridge);
         tui.set_overlay_bridge(overlay_bridge);
+        tui.set_ui_bridge(ui_bridge);
 
         tui.set_extension_manager(ext_manager);
 

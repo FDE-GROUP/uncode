@@ -52,6 +52,11 @@ pub fn setup_linker(linker: &mut Linker<HostState>) -> anyhow::Result<()> {
         host_update_overlay,
     )?;
 
+    linker.func_wrap("uncode", "__uncode_host_set_widget", host_set_widget)?;
+    linker.func_wrap("uncode", "__uncode_host_remove_widget", host_remove_widget)?;
+    linker.func_wrap("uncode", "__uncode_host_set_status", host_set_status)?;
+    linker.func_wrap("uncode", "__uncode_host_notify", host_notify)?;
+
     Ok(())
 }
 
@@ -462,6 +467,118 @@ fn host_update_overlay(
         Ok(()) => 0,
         Err(e) => {
             tracing::warn!("extension {ext_name} update_overlay failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_set_widget(mut caller: Caller<'_, HostState>, _handle: i32, ptr: i32, len: i32) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let config: uncode_core::ui_action::WidgetConfig = match serde_json::from_slice(&bytes) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} sent invalid widget config JSON: {e}");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.set_widget(config) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} set_widget failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_remove_widget(mut caller: Caller<'_, HostState>, _handle: i32, ptr: i32, len: i32) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    let key = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::warn!("extension {ext_name} sent invalid utf-8 widget key");
+            return -1;
+        }
+    };
+    match caller.data().ext_api.remove_widget(key) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} remove_widget failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_set_status(mut caller: Caller<'_, HostState>, _handle: i32, ptr: i32, len: i32) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let ext_name = caller.data().extension_name.clone();
+    // Expect JSON: { "key": "...", "text": "..." | null }
+    let payload: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} sent invalid status JSON: {e}");
+            return -1;
+        }
+    };
+    let key = match payload.get("key").and_then(|v| v.as_str()) {
+        Some(k) => k.to_string(),
+        None => {
+            tracing::warn!("extension {ext_name} status missing 'key' field");
+            return -1;
+        }
+    };
+    let text = payload
+        .get("text")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    match caller.data().ext_api.set_status(&key, text) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} set_status failed: {e}");
+            -1
+        }
+    }
+}
+
+fn host_notify(
+    mut caller: Caller<'_, HostState>,
+    _handle: i32,
+    level: i32,
+    ptr: i32,
+    len: i32,
+) -> i32 {
+    let ext_name = caller.data().extension_name.clone();
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+    let message = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::warn!("extension {ext_name} sent invalid utf-8 notify message");
+            return -1;
+        }
+    };
+    let notify_type = match level {
+        0 => uncode_core::ui_action::NotifyType::Info,
+        1 => uncode_core::ui_action::NotifyType::Warning,
+        2 => uncode_core::ui_action::NotifyType::Error,
+        _ => uncode_core::ui_action::NotifyType::Info,
+    };
+    match caller.data().ext_api.notify(message, notify_type) {
+        Ok(()) => 0,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} notify failed: {e}");
             -1
         }
     }
