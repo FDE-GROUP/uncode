@@ -8,10 +8,12 @@ mod host_imports;
 mod instance;
 mod manifest;
 mod memory;
+mod tool;
 
 pub use engine::WasmEngine;
 pub use instance::WasmInstance;
 pub use manifest::{ExtensionManifest, ExtensionPermissions};
+pub use tool::WasmExtensionTool;
 
 use std::time::Duration;
 

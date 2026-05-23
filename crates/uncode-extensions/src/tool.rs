@@ -6,7 +6,7 @@
 /// Tool metadata provided by extensions at registration time.
 ///
 /// Converted to `uncode_ai::ToolDefinition` by the adapter in `uncode-agent`.
-#[derive(serde::Deserialize)]
+#[derive(Clone, serde::Deserialize)]
 pub struct ExtensionToolMetadata {
     pub name: String,
     pub description: String,
