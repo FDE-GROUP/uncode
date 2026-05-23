@@ -9,21 +9,21 @@ use uncode_extensions::hooks::{HookContext, HookEvent, HookResult, LifecycleHook
 /// Held by `AgentLoop` and called at the appropriate lifecycle points.
 pub struct ExtensionLifecycleBridge {
     registry: Arc<uncode_extensions::hooks::HookRegistry>,
-    api: ExtensionApi,
+    api: Arc<ExtensionApi>,
 }
 
 impl ExtensionLifecycleBridge {
     pub fn new(api: ExtensionApi) -> Self {
         let registry = api.registry().clone();
-        Self { registry, api }
+        Self {
+            registry,
+            api: Arc::new(api),
+        }
     }
 
-    /// Construct from an `Arc<ExtensionApi>`, unwrapping the Arc.
+    /// Construct from an `Arc<ExtensionApi>`.
     pub fn from_arc(api: Arc<ExtensionApi>) -> Self {
         let registry = api.registry().clone();
-        // SAFETY: we just created this Arc and have the only reference.
-        let api =
-            Arc::try_unwrap(api).unwrap_or_else(|_| panic!("ExtensionApi Arc should be unique"));
         Self { registry, api }
     }
 

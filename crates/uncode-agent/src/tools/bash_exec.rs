@@ -168,7 +168,8 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
                         return bash_timeout_result();
                     }
                     Ok(Ok(Some(l))) => {
-                        if output.len() >= args.max_output_bytes {
+                        // Reserve 16 bytes for the truncation marker
+                        if output.len() + l.len() + 16 >= args.max_output_bytes {
                             kill_process_group(pgid);
                             truncated = true;
                             output.push_str("\n[truncated]");
@@ -179,12 +180,6 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
                         }
                         output.push_str(&l);
                         output.push('\n');
-                        if output.len() >= args.max_output_bytes {
-                            kill_process_group(pgid);
-                            truncated = true;
-                            output.push_str("\n[truncated]");
-                            break;
-                        }
                     }
                     Ok(Ok(None)) => break,
                     Ok(Err(_)) => break,
