@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::command::{CommandRegistration, ShortcutRegistration};
 use crate::hooks::{Extension, HookRegistry, LifecycleHook};
+use crate::provider::ProviderRegistration;
 use crate::tool::ExtensionTool;
 
 /// Callback type for tool registration. Injected by `uncode-agent`.
@@ -24,6 +25,13 @@ pub type CommandUnregisterCallback = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 pub type ShortcutRegistrationCallback =
     Arc<dyn Fn(ShortcutRegistration) -> Result<(), String> + Send + Sync>;
 
+/// Callback type for dynamic LLM provider registration. Injected by `uncode-cli`.
+pub type ProviderRegistrationCallback =
+    Arc<dyn Fn(ProviderRegistration) -> Result<(), String> + Send + Sync>;
+
+/// Callback type for dynamic provider unregistration. Injected by `uncode-cli`.
+pub type ProviderUnregisterCallback = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -34,6 +42,8 @@ pub struct ExtensionApi {
     command_callback: Option<CommandRegistrationCallback>,
     command_unregister_callback: Option<CommandUnregisterCallback>,
     shortcut_callback: Option<ShortcutRegistrationCallback>,
+    provider_callback: Option<ProviderRegistrationCallback>,
+    provider_unregister_callback: Option<ProviderUnregisterCallback>,
 }
 
 impl ExtensionApi {
@@ -45,6 +55,8 @@ impl ExtensionApi {
             command_callback: None,
             command_unregister_callback: None,
             shortcut_callback: None,
+            provider_callback: None,
+            provider_unregister_callback: None,
         }
     }
 
@@ -57,6 +69,8 @@ impl ExtensionApi {
         command_callback: Option<CommandRegistrationCallback>,
         command_unregister_callback: Option<CommandUnregisterCallback>,
         shortcut_callback: Option<ShortcutRegistrationCallback>,
+        provider_callback: Option<ProviderRegistrationCallback>,
+        provider_unregister_callback: Option<ProviderUnregisterCallback>,
     ) -> Self {
         Self {
             registry,
@@ -65,6 +79,8 @@ impl ExtensionApi {
             command_callback,
             command_unregister_callback,
             shortcut_callback,
+            provider_callback,
+            provider_unregister_callback,
         }
     }
 
@@ -125,5 +141,24 @@ impl ExtensionApi {
             .as_ref()
             .ok_or("shortcut registration not available: no callback configured")?;
         callback(shortcut)
+    }
+
+    /// Register a dynamic LLM provider from an extension.
+    pub fn register_provider(&self, config: ProviderRegistration) -> Result<(), String> {
+        config.validate()?;
+        let callback = self
+            .provider_callback
+            .as_ref()
+            .ok_or("provider registration not available: no callback configured")?;
+        callback(config)
+    }
+
+    /// Unregister a previously registered dynamic provider by name.
+    pub fn unregister_provider(&self, name: &str) -> bool {
+        if let Some(callback) = &self.provider_unregister_callback {
+            callback(name)
+        } else {
+            false
+        }
     }
 }

@@ -133,7 +133,7 @@ impl ExtensionManager {
         Ok(ext_name)
     }
 
-    /// Unload an extension: unregister all hooks and tools, remove state record.
+    /// Unload an extension: unregister all hooks, tools, and providers, remove state record.
     pub fn unload(&self, name: &str) -> Result<(), String> {
         let record = self
             .state
@@ -144,6 +144,9 @@ impl ExtensionManager {
         for tool_name in &record.tools {
             self.api.unregister_tool(tool_name);
         }
+
+        // Unregister provider (best-effort).
+        self.api.unregister_provider(name);
 
         // Unregister hooks.
         self.registry.unregister(name);
@@ -200,6 +203,7 @@ impl ExtensionManager {
         for tool_name in &record.tools {
             self.api.unregister_tool(tool_name);
         }
+        self.api.unregister_provider(name);
         self.registry.unregister(name);
 
         self.state.update_state(name, ExtensionState::Disabled);

@@ -10,6 +10,7 @@ pub mod command;
 pub mod hooks;
 pub mod loader;
 pub mod manager;
+pub mod provider;
 pub mod state;
 pub mod tool;
 

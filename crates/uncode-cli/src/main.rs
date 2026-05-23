@@ -453,6 +453,9 @@ async fn main() -> anyhow::Result<()> {
     let tool_reg_for_unregister = tool_registry.clone();
     let cmd_cb_for_unregister = pending_commands.clone();
 
+    let model_reg_for_provider = model_registry.clone();
+    let model_reg_for_unregister = model_registry.clone();
+
     let ext_api = uncode_extensions::api::ExtensionApi::with_callbacks(
         ext_registry.clone(),
         // Tool registration callback
@@ -492,6 +495,39 @@ async fn main() -> anyhow::Result<()> {
                 Ok(())
             },
         )),
+        // Provider registration callback
+        Some(Arc::new(
+            move |reg: uncode_extensions::provider::ProviderRegistration| -> Result<(), String> {
+                let api_name = reg.protocol.api_name();
+                for m in &reg.models {
+                    let model = uncode_ai::model::Model {
+                        id: m.id.clone(),
+                        name: m.name.clone(),
+                        api: api_name.to_string(),
+                        provider: reg.name.clone(),
+                        base_url: reg.base_url.clone(),
+                        context_window: m.context_window,
+                        max_output_tokens: m.max_output_tokens,
+                        ..uncode_ai::model::Model::default()
+                    };
+                    model_reg_for_provider.register(model);
+                }
+                tracing::info!(
+                    "dynamic provider '{}' registered {} model(s)",
+                    reg.name,
+                    reg.models.len()
+                );
+                Ok(())
+            },
+        )),
+        // Provider unregister callback
+        Some(Arc::new(move |name: &str| -> bool {
+            let removed = model_reg_for_unregister.unregister_by_provider(name);
+            if removed > 0 {
+                tracing::info!("dynamic provider '{name}' unregistered {removed} model(s)");
+            }
+            removed > 0
+        })),
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)
@@ -846,7 +882,7 @@ fn build_registries(config: &AppConfig) -> (ApiRegistry, ModelRegistry) {
     api_registry.register(Arc::new(OllamaNativeApi::new()));
 
     // config.models 非空时完全替代内置列表，否则用内置列表
-    let mut model_registry = if config.models.is_empty() {
+    let model_registry = if config.models.is_empty() {
         ModelRegistry::from_builtin()
     } else {
         use uncode_core::model::Model;
