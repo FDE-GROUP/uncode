@@ -6,6 +6,7 @@ use crate::hooks::{Extension, HookRegistry, LifecycleHook};
 use crate::message_renderer::MessageRenderConfig;
 use crate::provider::ProviderRegistration;
 use crate::renderer::ToolRenderConfig;
+use crate::theme_control::{ThemeControlConfig, ThinkingLabelConfig};
 use crate::tool::ExtensionTool;
 
 use uncode_core::dialog::{DialogRequest, DialogResponse};
@@ -83,6 +84,13 @@ pub type FooterCallback = Arc<dyn Fn(Option<FooterConfig>) -> Result<(), String>
 pub type WorkingIndicatorCallback =
     Arc<dyn Fn(Option<WorkingIndicatorConfig>) -> Result<(), String> + Send + Sync>;
 
+/// Callback type for theme switching. Injected by `uncode-cli`.
+pub type ThemeCallback = Arc<dyn Fn(ThemeControlConfig) -> Result<(), String> + Send + Sync>;
+
+/// Callback type for thinking label customization. Injected by `uncode-cli`.
+pub type ThinkingLabelCallback =
+    Arc<dyn Fn(ThinkingLabelConfig) -> Result<(), String> + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -107,6 +115,8 @@ pub struct ExtensionApi {
     header_callback: Option<HeaderCallback>,
     footer_callback: Option<FooterCallback>,
     working_indicator_callback: Option<WorkingIndicatorCallback>,
+    theme_callback: Option<ThemeCallback>,
+    thinking_label_callback: Option<ThinkingLabelCallback>,
 }
 
 impl ExtensionApi {
@@ -132,6 +142,8 @@ impl ExtensionApi {
             header_callback: None,
             footer_callback: None,
             working_indicator_callback: None,
+            theme_callback: None,
+            thinking_label_callback: None,
         }
     }
 
@@ -158,6 +170,8 @@ impl ExtensionApi {
         header_callback: Option<HeaderCallback>,
         footer_callback: Option<FooterCallback>,
         working_indicator_callback: Option<WorkingIndicatorCallback>,
+        theme_callback: Option<ThemeCallback>,
+        thinking_label_callback: Option<ThinkingLabelCallback>,
     ) -> Self {
         Self {
             registry,
@@ -180,6 +194,8 @@ impl ExtensionApi {
             header_callback,
             footer_callback,
             working_indicator_callback,
+            theme_callback,
+            thinking_label_callback,
         }
     }
 
@@ -430,6 +446,26 @@ impl ExtensionApi {
             .working_indicator_callback
             .as_ref()
             .ok_or("working indicator not available: no callback configured")?;
+        callback(config)
+    }
+
+    /// Switch the active TUI theme by name.
+    pub fn set_theme(&self, config: ThemeControlConfig) -> Result<(), String> {
+        config.validate()?;
+        let callback = self
+            .theme_callback
+            .as_ref()
+            .ok_or("theme not available: no callback configured")?;
+        callback(config)
+    }
+
+    /// Customize thinking level labels.
+    pub fn set_thinking_labels(&self, config: ThinkingLabelConfig) -> Result<(), String> {
+        config.validate()?;
+        let callback = self
+            .thinking_label_callback
+            .as_ref()
+            .ok_or("thinking labels not available: no callback configured")?;
         callback(config)
     }
 }
