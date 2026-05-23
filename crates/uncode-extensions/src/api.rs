@@ -7,6 +7,7 @@ use crate::message_renderer::MessageRenderConfig;
 use crate::provider::ProviderRegistration;
 use crate::renderer::ToolRenderConfig;
 use crate::resource::ResourcePathConfig;
+use crate::session::{SessionAction, SessionResponse};
 use crate::theme_control::{ThemeControlConfig, ThinkingLabelConfig};
 use crate::tool::ExtensionTool;
 
@@ -96,6 +97,10 @@ pub type ThinkingLabelCallback =
 pub type ResourcePathCallback =
     Arc<dyn Fn(crate::resource::ResourcePathConfig) -> Result<(), String> + Send + Sync>;
 
+/// Callback type for session tree operations. Injected by `uncode-cli`.
+pub type SessionCallback =
+    Arc<dyn Fn(SessionAction) -> Result<SessionResponse, String> + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -123,6 +128,7 @@ pub struct ExtensionApi {
     theme_callback: Option<ThemeCallback>,
     thinking_label_callback: Option<ThinkingLabelCallback>,
     resource_path_callback: Option<ResourcePathCallback>,
+    session_callback: Option<SessionCallback>,
 }
 
 impl ExtensionApi {
@@ -151,6 +157,7 @@ impl ExtensionApi {
             theme_callback: None,
             thinking_label_callback: None,
             resource_path_callback: None,
+            session_callback: None,
         }
     }
 
@@ -180,6 +187,7 @@ impl ExtensionApi {
         theme_callback: Option<ThemeCallback>,
         thinking_label_callback: Option<ThinkingLabelCallback>,
         resource_path_callback: Option<ResourcePathCallback>,
+        session_callback: Option<SessionCallback>,
     ) -> Self {
         Self {
             registry,
@@ -205,6 +213,7 @@ impl ExtensionApi {
             theme_callback,
             thinking_label_callback,
             resource_path_callback,
+            session_callback,
         }
     }
 
@@ -486,5 +495,73 @@ impl ExtensionApi {
             .as_ref()
             .ok_or("resource path registration not available: no callback configured")?;
         callback(config)
+    }
+
+    /// Fork a new session branch from the specified entry.
+    ///
+    /// **Pi:** `ctx.fork()`.
+    pub fn session_fork(&self, entry_id: &str) -> Result<String, String> {
+        let action = SessionAction::Fork {
+            entry_id: entry_id.into(),
+        };
+        action.validate()?;
+        let callback = self
+            .session_callback
+            .as_ref()
+            .ok_or("session operations not available: no callback configured")?;
+        match callback(action)? {
+            SessionResponse::Forked { session_id } => Ok(session_id),
+            SessionResponse::Ok => Err("unexpected response for fork".into()),
+        }
+    }
+
+    /// Navigate the session tree to the specified entry.
+    ///
+    /// **Pi:** `ctx.navigateTree()`.
+    pub fn session_navigate(&self, entry_id: &str) -> Result<(), String> {
+        let action = SessionAction::Navigate {
+            entry_id: entry_id.into(),
+        };
+        action.validate()?;
+        let callback = self
+            .session_callback
+            .as_ref()
+            .ok_or("session operations not available: no callback configured")?;
+        match callback(action)? {
+            SessionResponse::Ok => Ok(()),
+            other => Err(format!("unexpected response for navigate: {other:?}")),
+        }
+    }
+
+    /// Switch to a different session entirely.
+    ///
+    /// **Pi:** `ctx.switchSession()`.
+    pub fn session_switch(&self, session_id: &str) -> Result<(), String> {
+        let action = SessionAction::Switch {
+            session_id: session_id.into(),
+        };
+        action.validate()?;
+        let callback = self
+            .session_callback
+            .as_ref()
+            .ok_or("session operations not available: no callback configured")?;
+        match callback(action)? {
+            SessionResponse::Ok => Ok(()),
+            other => Err(format!("unexpected response for switch: {other:?}")),
+        }
+    }
+
+    /// Set the display name of the current session.
+    pub fn session_set_name(&self, name: &str) -> Result<(), String> {
+        let action = SessionAction::SetName { name: name.into() };
+        action.validate()?;
+        let callback = self
+            .session_callback
+            .as_ref()
+            .ok_or("session operations not available: no callback configured")?;
+        match callback(action)? {
+            SessionResponse::Ok => Ok(()),
+            other => Err(format!("unexpected response for set_name: {other:?}")),
+        }
     }
 }

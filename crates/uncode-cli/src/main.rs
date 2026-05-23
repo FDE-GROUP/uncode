@@ -517,6 +517,9 @@ async fn main() -> anyhow::Result<()> {
     // UI action channel — widget + status.
     let (ui_sender, ui_bridge) = uncode_tui::ui_channel::ui_channel(16);
 
+    // Session action channel — extension session tree operations.
+    let (session_sender, session_bridge) = uncode_tui::session_channel::session_channel(16);
+
     // Agent control state for extension callbacks (abort/compact/is_idle)
     let active_run_handle = agent.active_run_handle();
     let abort_token: Arc<std::sync::Mutex<tokio_util::sync::CancellationToken>> = Arc::new(
@@ -727,6 +730,24 @@ async fn main() -> anyhow::Result<()> {
                 Ok(())
             },
         )),
+        // Session action callback — bridges to session store via channel
+        Some(Arc::new(
+            move |action: uncode_extensions::session::SessionAction|
+                  -> Result<uncode_extensions::session::SessionResponse, String> {
+                let (response_tx, response_rx) = std::sync::mpsc::channel();
+                session_sender
+                    .blocking_send(
+                        uncode_tui::session_channel::PendingSessionAction {
+                            action,
+                            response_tx,
+                        },
+                    )
+                    .map_err(|e| format!("session channel error: {e}"))?;
+                response_rx
+                    .recv()
+                    .map_err(|e| format!("session response error: {e}"))?
+            },
+        )),
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)
@@ -845,6 +866,7 @@ async fn main() -> anyhow::Result<()> {
         tui.set_dialog_bridge(dialog_bridge);
         tui.set_overlay_bridge(overlay_bridge);
         tui.set_ui_bridge(ui_bridge);
+        tui.set_session_bridge(session_bridge);
 
         tui.set_extension_manager(ext_manager);
 
