@@ -44,6 +44,15 @@ pub type RendererRegistrationCallback =
 pub type DialogCallback =
     Arc<dyn Fn(DialogRequest) -> Result<DialogResponse, String> + Send + Sync>;
 
+/// Callback type for agent abort. Injected by `uncode-cli`.
+pub type AbortCallback = Arc<dyn Fn() + Send + Sync>;
+
+/// Callback type for triggering context compaction. Injected by `uncode-cli`.
+pub type CompactCallback = Arc<dyn Fn() + Send + Sync>;
+
+/// Callback type for checking if the agent is idle. Injected by `uncode-cli`.
+pub type IdleCheckCallback = Arc<dyn Fn() -> bool + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -58,6 +67,9 @@ pub struct ExtensionApi {
     provider_unregister_callback: Option<ProviderUnregisterCallback>,
     renderer_callback: Option<RendererRegistrationCallback>,
     dialog_callback: Option<DialogCallback>,
+    abort_callback: Option<AbortCallback>,
+    compact_callback: Option<CompactCallback>,
+    idle_check_callback: Option<IdleCheckCallback>,
 }
 
 impl ExtensionApi {
@@ -73,6 +85,9 @@ impl ExtensionApi {
             provider_unregister_callback: None,
             renderer_callback: None,
             dialog_callback: None,
+            abort_callback: None,
+            compact_callback: None,
+            idle_check_callback: None,
         }
     }
 
@@ -89,6 +104,9 @@ impl ExtensionApi {
         provider_unregister_callback: Option<ProviderUnregisterCallback>,
         renderer_callback: Option<RendererRegistrationCallback>,
         dialog_callback: Option<DialogCallback>,
+        abort_callback: Option<AbortCallback>,
+        compact_callback: Option<CompactCallback>,
+        idle_check_callback: Option<IdleCheckCallback>,
     ) -> Self {
         Self {
             registry,
@@ -101,6 +119,9 @@ impl ExtensionApi {
             provider_unregister_callback,
             renderer_callback,
             dialog_callback,
+            abort_callback,
+            compact_callback,
+            idle_check_callback,
         }
     }
 
@@ -199,5 +220,34 @@ impl ExtensionApi {
             .as_ref()
             .ok_or("dialog not available: no callback configured")?;
         callback(request)
+    }
+
+    /// Abort the current agent run.
+    ///
+    /// **Pi:** `ctx.abort()`.
+    pub fn abort(&self) {
+        if let Some(callback) = &self.abort_callback {
+            callback();
+        }
+    }
+
+    /// Trigger context compaction.
+    ///
+    /// **Pi:** `ctx.compact()`.
+    pub fn compact(&self) {
+        if let Some(callback) = &self.compact_callback {
+            callback();
+        }
+    }
+
+    /// Check if the agent is currently idle.
+    ///
+    /// **Pi:** `ctx.isIdle()`.
+    pub fn is_idle(&self) -> bool {
+        if let Some(callback) = &self.idle_check_callback {
+            callback()
+        } else {
+            true
+        }
     }
 }

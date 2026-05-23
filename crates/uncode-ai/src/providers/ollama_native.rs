@@ -241,8 +241,8 @@ impl Api for OllamaNativeApi {
         context: &Context,
         options: &StreamOptions,
     ) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
-        let body = build_ollama_body(model, context, options);
-        crate::notify_request_payload(options, &body);
+        let mut body = build_ollama_body(model, context, options);
+        crate::notify_request_payload(options, &mut body);
         let url = format!("{}/api/chat", model.base_url);
 
         let req = crate::apply_option_headers(self.client.post(&url).json(&body), options);

@@ -149,8 +149,8 @@ impl Api for GeminiGenerativeAiApi {
         context: &Context,
         options: &StreamOptions,
     ) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
-        let body = build_gemini_body(model, context, options);
-        crate::notify_request_payload(options, &body);
+        let mut body = build_gemini_body(model, context, options);
+        crate::notify_request_payload(options, &mut body);
         let url = format!(
             "{}/models/{}:streamGenerateContent?alt=sse",
             model.base_url, model.id

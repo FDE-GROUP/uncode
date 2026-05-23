@@ -465,6 +465,14 @@ async fn main() -> anyhow::Result<()> {
     // Dialog channel — bridges WASM blocking thread to TUI async event loop.
     let (dialog_sender, dialog_bridge) = uncode_tui::dialog_channel::dialog_channel(16);
 
+    // Agent control state for extension callbacks (abort/compact/is_idle)
+    let active_run_handle = agent.active_run_handle();
+    let abort_token: Arc<std::sync::Mutex<tokio_util::sync::CancellationToken>> = Arc::new(
+        std::sync::Mutex::new(tokio_util::sync::CancellationToken::new()),
+    );
+    let abort_token_for_cb = abort_token.clone();
+    let abort_token_for_run = abort_token.clone();
+
     let ext_api = uncode_extensions::api::ExtensionApi::with_callbacks(
         ext_registry.clone(),
         // Tool registration callback
@@ -559,6 +567,18 @@ async fn main() -> anyhow::Result<()> {
                     .map_err(|e| format!("dialog response error: {e}"))
             },
         )),
+        // Abort callback — cancel the shared abort token
+        Some(Arc::new(move || {
+            if let Ok(guard) = abort_token_for_cb.lock() {
+                guard.cancel();
+            }
+        })),
+        // Compact callback — no-op placeholder (compaction triggered internally)
+        None,
+        // Idle check callback — read active_run atomic
+        Some(Arc::new(move || -> bool {
+            !active_run_handle.load(std::sync::atomic::Ordering::Acquire)
+        })),
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)
@@ -635,7 +655,12 @@ async fn main() -> anyhow::Result<()> {
             move |text, cancel_token, current_model, session_id, intent| {
                 let agent = shared_agent.clone();
                 let tx = event_tx.clone();
+                let abort_token_clone = abort_token_for_run.clone();
                 tokio::spawn(async move {
+                    // Update shared abort token so extension abort() cancels this run
+                    if let Ok(mut guard) = abort_token_clone.lock() {
+                        *guard = cancel_token.clone();
+                    }
                     let expanded = expand_url_refs(&text).await;
                     match intent {
                         uncode_tui::message_queue::SubmitIntent::Steer => {

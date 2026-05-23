@@ -38,6 +38,8 @@ pub struct HookModification {
     pub is_error_override: Option<bool>,
     /// For ToolCallAfter: override terminate flag.
     pub terminate_override: Option<bool>,
+    /// For Context: additional messages to append before LLM call.
+    pub additional_messages: Option<Vec<uncode_core::message::Message>>,
 }
 
 /// Agent 生命周期钩子（扩展注入点）。
@@ -46,6 +48,7 @@ pub struct HookModification {
 /// **OpenCode:** 无 1:1 钩子名；对照插件/Hook 产品能力即可。
 #[derive(Clone)]
 pub enum LifecycleHook {
+    // 现有 8 个
     SessionStart,
     TurnStart,
     MessageReceived,
@@ -54,6 +57,28 @@ pub enum LifecycleHook {
     ToolCallAfter,
     TurnEnd,
     SessionEnd,
+    // Session 管理
+    SessionShutdown,
+    SessionBeforeCompact,
+    SessionCompact,
+    // Agent 生命周期
+    BeforeAgentStart,
+    AgentStart,
+    AgentEnd,
+    // LLM 交互
+    Context,
+    BeforeProviderRequest,
+    AfterProviderResponse,
+    // 流式更新
+    MessageUpdate,
+    // 模型事件
+    ModelSelect,
+    // 工具执行细化
+    ToolExecutionStart,
+    ToolExecutionUpdate,
+    ToolExecutionEnd,
+    // 资源发现
+    ResourcesDiscover,
 }
 
 impl LifecycleHook {
@@ -67,6 +92,21 @@ impl LifecycleHook {
             Self::ToolCallAfter => "tool_call_after",
             Self::TurnEnd => "turn_end",
             Self::SessionEnd => "session_end",
+            Self::SessionShutdown => "session_shutdown",
+            Self::SessionBeforeCompact => "session_before_compact",
+            Self::SessionCompact => "session_compact",
+            Self::BeforeAgentStart => "before_agent_start",
+            Self::AgentStart => "agent_start",
+            Self::AgentEnd => "agent_end",
+            Self::Context => "context",
+            Self::BeforeProviderRequest => "before_provider_request",
+            Self::AfterProviderResponse => "after_provider_response",
+            Self::MessageUpdate => "message_update",
+            Self::ModelSelect => "model_select",
+            Self::ToolExecutionStart => "tool_execution_start",
+            Self::ToolExecutionUpdate => "tool_execution_update",
+            Self::ToolExecutionEnd => "tool_execution_end",
+            Self::ResourcesDiscover => "resources_discover",
         }
     }
 }
@@ -87,6 +127,10 @@ pub struct HookContext {
 pub enum HookEvent {
     Event(AgentEvent),
     Message(Message),
+    /// Read-only snapshot of messages about to be sent to the LLM.
+    ContextSnapshot(Vec<Message>),
+    /// LLM request payload about to be sent (read-only snapshot for extensions).
+    ProviderRequest(serde_json::Value),
     None,
 }
 

@@ -20,8 +20,8 @@ pub fn apply_option_headers(
     req
 }
 
-/// 在 HTTP 发送前调用，传入即将提交的 JSON 请求体。
-pub fn notify_request_payload(options: &StreamOptions, body: &Value) {
+/// 在 HTTP 发送前调用，传入即将提交的 JSON 请求体（`&mut` 允许扩展修改非核心字段）。
+pub fn notify_request_payload(options: &StreamOptions, body: &mut Value) {
     if let Some(ref cb) = options.on_payload {
         cb(body);
     }
@@ -58,7 +58,7 @@ mod tests {
             })),
             ..Default::default()
         };
-        notify_request_payload(&options, &serde_json::json!({"model": "x"}));
+        notify_request_payload(&options, &mut serde_json::json!({"model": "x"}));
         assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 

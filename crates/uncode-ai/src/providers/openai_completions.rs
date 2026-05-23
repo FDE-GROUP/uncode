@@ -382,8 +382,8 @@ impl Api for OpenAiCompletionsApi {
         context: &Context,
         options: &StreamOptions,
     ) -> Result<BoxStream<'static, StreamEvent>, UncodeError> {
-        let body = build_request_body(model, context, options);
-        crate::notify_request_payload(options, &body);
+        let mut body = build_request_body(model, context, options);
+        crate::notify_request_payload(options, &mut body);
         let url = format!("{}/chat/completions", model.base_url);
 
         let mut req = self.client.post(&url).json(&body);

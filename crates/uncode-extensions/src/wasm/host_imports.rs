@@ -40,6 +40,10 @@ pub fn setup_linker(linker: &mut Linker<HostState>) -> anyhow::Result<()> {
 
     linker.func_wrap("uncode", "__uncode_host_show_dialog", host_show_dialog)?;
 
+    linker.func_wrap("uncode", "__uncode_host_abort", host_abort)?;
+    linker.func_wrap("uncode", "__uncode_host_compact", host_compact)?;
+    linker.func_wrap("uncode", "__uncode_host_is_idle", host_is_idle)?;
+
     Ok(())
 }
 
@@ -324,5 +328,25 @@ fn host_show_dialog(
             tracing::warn!("extension {ext_name} show_dialog failed: {e}");
             -1
         }
+    }
+}
+
+fn host_abort(caller: Caller<'_, HostState>, _handle: i32) {
+    let ext_name = caller.data().extension_name.clone();
+    tracing::info!("extension {ext_name} requested agent abort");
+    caller.data().ext_api.abort();
+}
+
+fn host_compact(caller: Caller<'_, HostState>, _handle: i32) {
+    let ext_name = caller.data().extension_name.clone();
+    tracing::info!("extension {ext_name} requested context compaction");
+    caller.data().ext_api.compact();
+}
+
+fn host_is_idle(caller: Caller<'_, HostState>, _handle: i32) -> i32 {
+    if caller.data().ext_api.is_idle() {
+        1
+    } else {
+        0
     }
 }
