@@ -160,10 +160,14 @@ impl ExtensionLifecycleBridge {
         self.registry.fire(LifecycleHook::Context, &ctx).await
     }
 
-    pub async fn fire_before_provider_request(&self, session_id: &str) -> HookResult {
+    pub async fn fire_before_provider_request(
+        &self,
+        session_id: &str,
+        payload: &serde_json::Value,
+    ) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
+            event: HookEvent::ProviderRequest(payload.clone()),
         };
         self.registry
             .fire(LifecycleHook::BeforeProviderRequest, &ctx)

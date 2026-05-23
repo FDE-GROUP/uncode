@@ -939,7 +939,6 @@ impl AgentLoop {
                             }
                             uncode_extensions::hooks::HookResult::Continue => {}
                         }
-                        bridge.fire_before_provider_request(sid).await;
                     }
                 }
 
@@ -948,13 +947,44 @@ impl AgentLoop {
                     messages: messages.clone(),
                     tools: tools.clone(),
                 };
+
+                // Build on_payload callback that bridges to extension hooks.
+                let ext_registry = self.extension_bridge.as_ref().map(|b| b.registry().clone());
+                let session_id_for_payload = self.session_id.clone();
+                let existing_on_payload = self.on_payload.clone();
+                let on_payload_cb: Option<PayloadCallback> =
+                    if ext_registry.is_some() && session_id_for_payload.is_some() {
+                        Some(Arc::new(move |body: &mut serde_json::Value| {
+                            if let Some(ref cb) = existing_on_payload {
+                                cb(body);
+                            }
+                            if let Some(ref registry) = ext_registry {
+                                if let Some(ref sid) = session_id_for_payload {
+                                    let ctx = uncode_extensions::hooks::HookContext {
+                                        session_id: Some(sid.clone()),
+                                        event: uncode_extensions::hooks::HookEvent::ProviderRequest(
+                                            body.clone(),
+                                        ),
+                                    };
+                                    let handle = tokio::runtime::Handle::current();
+                                    let _ = handle.block_on(registry.fire(
+                                    uncode_extensions::hooks::LifecycleHook::BeforeProviderRequest,
+                                    &ctx,
+                                ));
+                                }
+                            }
+                        }))
+                    } else {
+                        existing_on_payload
+                    };
+
                 let options = StreamOptions {
                     api_key,
                     temperature: Some(0.7),
                     max_tokens: Some(8192),
                     thinking_level,
                     session_id: self.session_id.clone(),
-                    on_payload: self.on_payload.clone(),
+                    on_payload: on_payload_cb,
                     on_response: self.on_response.clone(),
                     ..StreamOptions::default()
                 };

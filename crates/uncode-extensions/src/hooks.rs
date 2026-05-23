@@ -129,6 +129,8 @@ pub enum HookEvent {
     Message(Message),
     /// Read-only snapshot of messages about to be sent to the LLM.
     ContextSnapshot(Vec<Message>),
+    /// LLM request payload about to be sent (read-only snapshot for extensions).
+    ProviderRequest(serde_json::Value),
     None,
 }
 
