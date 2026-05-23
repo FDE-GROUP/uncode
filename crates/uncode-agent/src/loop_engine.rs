@@ -180,6 +180,12 @@ pub struct AgentLoop {
     firewall: std::sync::Mutex<Option<crate::decision::firewall::SemanticFirewall>>,
     /// 演化引擎 — 认知显化与决策驱动设计 自适应进化 (#342)
     evolution: std::sync::Mutex<uncode_shared::evolution::EvolutionEngine>,
+    /// 工作记忆 — 认知层 turn 内 scratchpad (#385)
+    working_memory: std::sync::Mutex<crate::cognition::working_memory::WorkingMemory>,
+    /// 情景记忆 — 认知层按重要性评分的事件记忆 (#385)
+    episode_memory: std::sync::Mutex<crate::cognition::episode::EpisodeMemory>,
+    /// 裁决器 — 决策层合法性判定 (#385)
+    adjudicator: std::sync::Mutex<Option<crate::decision::adjudication::Adjudicator>>,
     /// 扩展生命周期桥接 — Extension Runtime Phase 1 (#344)
     extension_bridge: Option<crate::hooks::ExtensionLifecycleBridge>,
 }
@@ -223,6 +229,13 @@ impl AgentLoop {
             ),
             firewall: std::sync::Mutex::new(None),
             evolution: std::sync::Mutex::new(uncode_shared::evolution::EvolutionEngine::new(3)),
+            working_memory: std::sync::Mutex::new(
+                crate::cognition::working_memory::WorkingMemory::new(0),
+            ),
+            episode_memory: std::sync::Mutex::new(crate::cognition::episode::EpisodeMemory::new(
+                100,
+            )),
+            adjudicator: std::sync::Mutex::new(None),
             extension_bridge: None,
         }
     }
@@ -303,6 +316,13 @@ impl AgentLoop {
             ),
             firewall: std::sync::Mutex::new(None),
             evolution: std::sync::Mutex::new(uncode_shared::evolution::EvolutionEngine::new(3)),
+            working_memory: std::sync::Mutex::new(
+                crate::cognition::working_memory::WorkingMemory::new(0),
+            ),
+            episode_memory: std::sync::Mutex::new(crate::cognition::episode::EpisodeMemory::new(
+                100,
+            )),
+            adjudicator: std::sync::Mutex::new(None),
             extension_bridge: None,
         }
     }
@@ -341,6 +361,11 @@ impl AgentLoop {
 
     pub fn set_extension_bridge(&mut self, bridge: crate::hooks::ExtensionLifecycleBridge) {
         self.extension_bridge = Some(bridge);
+    }
+
+    /// 注入裁决器 — 决策层合法性判定 (#385)
+    pub fn set_adjudicator(&mut self, adj: crate::decision::adjudication::Adjudicator) {
+        *self.adjudicator.lock().unwrap() = Some(adj);
     }
 
     /// Fire `SessionShutdown` lifecycle hook (called from harness abort).
@@ -955,33 +980,34 @@ impl AgentLoop {
                 let ext_registry = self.extension_bridge.as_ref().map(|b| b.registry().clone());
                 let session_id_for_payload = self.session_id.clone();
                 let existing_on_payload = self.on_payload.clone();
-                let on_payload_cb: Option<PayloadCallback> =
-                    if ext_registry.is_some() && session_id_for_payload.is_some() {
-                        Some(Arc::new(move |body: &mut serde_json::Value| {
-                            if let Some(ref cb) = existing_on_payload {
-                                cb(body);
-                            }
-                            if let Some(ref registry) = ext_registry {
-                                if let Some(ref sid) = session_id_for_payload {
-                                    let ctx = uncode_extensions::hooks::HookContext {
-                                        session_id: Some(sid.clone()),
-                                        event: uncode_extensions::hooks::HookEvent::ProviderRequest(
-                                            body.clone(),
-                                        ),
-                                    };
-                                    let reg = registry.clone();
-                                    let _ = tokio::task::block_in_place(|| {
-                                        tokio::runtime::Handle::current().block_on(reg.fire(
+                let on_payload_cb: Option<PayloadCallback> = if ext_registry.is_some()
+                    && session_id_for_payload.is_some()
+                {
+                    Some(Arc::new(move |body: &mut serde_json::Value| {
+                        if let Some(ref cb) = existing_on_payload {
+                            cb(body);
+                        }
+                        if let Some(ref registry) = ext_registry {
+                            if let Some(ref sid) = session_id_for_payload {
+                                let ctx = uncode_extensions::hooks::HookContext {
+                                    session_id: Some(sid.clone()),
+                                    event: uncode_extensions::hooks::HookEvent::ProviderRequest(
+                                        body.clone(),
+                                    ),
+                                };
+                                let reg = registry.clone();
+                                let _ = tokio::task::block_in_place(|| {
+                                    tokio::runtime::Handle::current().block_on(reg.fire(
                                             uncode_extensions::hooks::LifecycleHook::BeforeProviderRequest,
                                             &ctx,
                                         ))
-                                    });
-                                }
+                                });
                             }
-                        }))
-                    } else {
-                        existing_on_payload
-                    };
+                        }
+                    }))
+                } else {
+                    existing_on_payload
+                };
 
                 let options = StreamOptions {
                     api_key,
@@ -1094,6 +1120,14 @@ impl AgentLoop {
 
                 // ── 决策层连线 (#339): 重置提案累积器 ──
                 self.proposal_acc.lock().unwrap().reset();
+
+                // ── 认知层连线 (#385): 初始化 turn 反馈累积器 ──
+                let mut turn_feedback = crate::decision::feedback::TurnFeedback::new(turn as u32);
+                // 重置工作记忆的 turn 编号
+                {
+                    let mut wm = self.working_memory.lock().unwrap();
+                    wm.flush(turn);
+                }
 
                 // ── Stream processing loop ──
                 loop {
@@ -1532,10 +1566,8 @@ impl AgentLoop {
                                         }
                                     }
 
-                                    // ── 决策层评估 + 反馈 (原则5: 事件流双向通道, #340) ──
+                                    // ── 决策层评估 + 反馈闭环 (原则5: 事件流双向通道, #385) ──
                                     {
-                                        use crate::decision::evaluator::Evaluator;
-                                        use crate::decision::feedback::FeedbackBridge;
                                         let result = crate::decision::execution::ExecutionResult {
                                             tool_id: id.clone(),
                                             tool_name: name.clone(),
@@ -1549,43 +1581,44 @@ impl AgentLoop {
                                             },
                                             terminate: tool_result.terminate,
                                         };
-                                        let evaluator: &dyn Evaluator = if result
-                                            .output
-                                            .as_ref()
-                                            .map_or(false, |o| o.contains("test result:"))
-                                        {
-                                            &crate::decision::evaluator::VerifiedEvaluator
+
+                                        let active_tools: Vec<String> = self
+                                            .tool_registry
+                                            .active_tool_names()
+                                            .unwrap_or_default();
+                                        let test_output = if content_text.contains("test result:") {
+                                            Some(content_text.as_str())
                                         } else {
-                                            &crate::decision::evaluator::BasicEvaluator
+                                            None
                                         };
-                                        let ctx = crate::decision::evaluator::EvaluationContext {
-                                            turn_number: turn as u32,
-                                            tool_name: name.clone(),
-                                            test_output: if content_text.contains("test result:") {
-                                                Some(content_text.clone())
-                                            } else {
-                                                None
-                                            },
-                                            lint_output: None,
-                                        };
-                                        let score = evaluator.evaluate(&result, &ctx);
-                                        let level_name = match score.level {
-                                            crate::decision::evaluator::AssessmentLevel::RawOutput => "H0",
-                                            crate::decision::evaluator::AssessmentLevel::Basic => "H1",
-                                            crate::decision::evaluator::AssessmentLevel::Verified => "H2",
-                                            crate::decision::evaluator::AssessmentLevel::Reproducible => "H3",
-                                        };
-                                        self.emit(AgentEvent::EvaluationScore {
-                                            turn_id: format!("turn-{turn}"),
-                                            level: level_name.to_string(),
-                                            quality_score: score.quality_score,
-                                            summary: Some(format!(
-                                                "{}: {:.0}%",
-                                                name,
-                                                score.quality_score * 100.0
-                                            )),
-                                        });
-                                        let _feedback = FeedbackBridge::infer_feedback(&result);
+                                        turn_feedback.record(
+                                            &result,
+                                            &active_tools,
+                                            turn_input_tokens as usize,
+                                            test_output,
+                                        );
+
+                                        // 发出评估事件（兼容现有 UI）
+                                        if let Some(ref eval) = turn_feedback.evaluation {
+                                            if let Some(last_score) = eval.scores.last() {
+                                                let level_name = match last_score.level {
+                                                    crate::decision::evaluator::AssessmentLevel::RawOutput => "H0",
+                                                    crate::decision::evaluator::AssessmentLevel::Basic => "H1",
+                                                    crate::decision::evaluator::AssessmentLevel::Verified => "H2",
+                                                    crate::decision::evaluator::AssessmentLevel::Reproducible => "H3",
+                                                };
+                                                self.emit(AgentEvent::EvaluationScore {
+                                                    turn_id: format!("turn-{turn}"),
+                                                    level: level_name.to_string(),
+                                                    quality_score: last_score.quality_score,
+                                                    summary: Some(format!(
+                                                        "{}: {:.0}%",
+                                                        name,
+                                                        last_score.quality_score * 100.0
+                                                    )),
+                                                });
+                                            }
+                                        }
                                     }
 
                                     let args_short = summarize_tool_args(
@@ -1706,6 +1739,33 @@ impl AgentLoop {
                             bridge.fire_agent_end(sid).await;
                         }
                     }
+
+                    // ── 认知层反馈闭环 (#385): TurnFeedback → WorkingMemory → EpisodeMemory ──
+                    {
+                        let wm_entries = turn_feedback.to_working_memory_entries();
+                        if !wm_entries.is_empty() {
+                            let mut wm = self.working_memory.lock().unwrap();
+                            for (content, important) in wm_entries {
+                                if important {
+                                    wm.observe_important(content);
+                                } else {
+                                    wm.observe(content);
+                                }
+                            }
+                        }
+
+                        // 将 turn 摘要记录到情景记忆
+                        let mut ep = self.episode_memory.lock().unwrap();
+                        for obs in &turn_feedback.observations {
+                            let event_type = if obs.starts_with('❌') {
+                                "tool_result_failure"
+                            } else {
+                                "tool_result_success"
+                            };
+                            ep.record(event_type, obs, turn);
+                        }
+                    }
+
                     if !turn_phase_completed.is_empty() || !turn_phase_issues.is_empty() {
                         let heuristic = build_phase_summary_heuristic(
                             turn,

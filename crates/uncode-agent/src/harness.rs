@@ -103,11 +103,27 @@ pub struct AgentHarness {
     pending_writes: Vec<PendingSessionWrite>,
     resources: HarnessResources,
     session_store: Arc<SessionStore>,
+    /// Phase 守卫策略 — 与 Adjudicator 共享，动态同步 phase (#385)
+    phase_guard: std::sync::Arc<crate::decision::adjudication::PhaseGuardPolicy>,
 }
 
 impl AgentHarness {
-    pub fn new(agent: AgentLoop, session_store: Arc<SessionStore>) -> Self {
+    pub fn new(mut agent: AgentLoop, session_store: Arc<SessionStore>) -> Self {
         let cwd = std::env::current_dir().unwrap_or_default();
+
+        // 构建 PhaseGuardPolicy 并注入 Adjudicator (#385)
+        let phase_guard = std::sync::Arc::new(
+            crate::decision::adjudication::PhaseGuardPolicy::new(AgentHarnessPhase::Idle),
+        );
+        let cancel_token = tokio_util::sync::CancellationToken::new();
+        let adjudicator = crate::decision::adjudication::build_default_adjudicator(
+            (*phase_guard).clone(),
+            cancel_token,
+            crate::loop_engine::MAX_TURNS as u32,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+        );
+        agent.set_adjudicator(adjudicator);
+
         Self {
             agent,
             phase: AgentHarnessPhase::Idle,
@@ -117,6 +133,7 @@ impl AgentHarness {
                 templates: TemplateStore::load(),
             },
             session_store,
+            phase_guard,
         }
     }
 
@@ -128,12 +145,14 @@ impl AgentHarness {
                 self.phase.to_string(),
             )));
         }
-        self.phase = phase;
+        self.phase = phase.clone();
+        self.phase_guard.set_phase(phase);
         Ok(())
     }
 
     fn exit_phase(&mut self) {
         self.phase = AgentHarnessPhase::Idle;
+        self.phase_guard.set_phase(AgentHarnessPhase::Idle);
     }
 
     pub fn phase(&self) -> &AgentHarnessPhase {
@@ -201,27 +220,13 @@ impl AgentHarness {
     /// 参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3
     pub fn bridge_execution_to_cognition(
         &self,
-        result: &crate::decision::execution::ExecutionResult,
-        turn_number: u32,
-        active_tools: &[String],
-        context_tokens: usize,
+        _result: &crate::decision::execution::ExecutionResult,
+        _turn_number: u32,
+        _active_tools: &[String],
+        _context_tokens: usize,
     ) {
-        use crate::decision::feedback::FeedbackBridge;
-
-        // 生成 AgentStep（离线训练数据）
-        let step = FeedbackBridge::to_agent_step(
-            format!("turn-{turn_number}"),
-            turn_number,
-            active_tools,
-            context_tokens,
-            result,
-            FeedbackBridge::infer_feedback(result),
-        );
-
-        // AgentStep 已生成（面向离线训练）
-        // AgentEvent::EvaluationScore 将在 turn 结束时聚合发出
-        // TODO(#340): 接入 FeedbackBridge.emit(via agent.event_tx)
-        let _ = step;
+        // 反馈闭环已通过 AgentLoop 内的 TurnFeedback → WorkingMemory → EpisodeMemory 实现 (#385)
+        // 此方法保留以兼容外部调用方
     }
 
     // ── 核心方法 ──
