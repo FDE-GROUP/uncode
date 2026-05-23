@@ -35,6 +35,7 @@ impl SlashCommands {
                     "/usage         — Token 用量统计",
                     "/reload        — 重新加载配置",
                     "/diff          — 显示工作区变更",
+                    "/extensions    — 管理扩展 (list|reload|disable|enable)",
                     "/quit          — 退出",
                 ];
                 cmds.join("\n")
@@ -56,6 +57,10 @@ impl SlashCommands {
 
     pub fn names(&self) -> Vec<String> {
         self.commands.keys().cloned().collect()
+    }
+
+    pub fn unregister(&mut self, name: &str) -> bool {
+        self.commands.remove(name).is_some()
     }
 }
 

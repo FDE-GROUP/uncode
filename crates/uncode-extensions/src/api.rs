@@ -10,9 +10,15 @@ use crate::tool::ExtensionTool;
 pub type ToolRegistrationCallback =
     Arc<dyn Fn(String, Arc<dyn ExtensionTool>) -> Result<(), String> + Send + Sync>;
 
+/// Callback type for tool unregistration. Injected by `uncode-agent`.
+pub type ToolUnregisterCallback = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+
 /// Callback type for slash command registration. Injected by `uncode-cli`.
 pub type CommandRegistrationCallback =
     Arc<dyn Fn(CommandRegistration) -> Result<(), String> + Send + Sync>;
+
+/// Callback type for command unregistration. Injected by `uncode-cli`.
+pub type CommandUnregisterCallback = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
 /// Callback type for keyboard shortcut registration. Injected by `uncode-cli`.
 pub type ShortcutRegistrationCallback =
@@ -24,7 +30,9 @@ pub type ShortcutRegistrationCallback =
 pub struct ExtensionApi {
     registry: Arc<HookRegistry>,
     tool_callback: Option<ToolRegistrationCallback>,
+    tool_unregister_callback: Option<ToolUnregisterCallback>,
     command_callback: Option<CommandRegistrationCallback>,
+    command_unregister_callback: Option<CommandUnregisterCallback>,
     shortcut_callback: Option<ShortcutRegistrationCallback>,
 }
 
@@ -33,22 +41,29 @@ impl ExtensionApi {
         Self {
             registry,
             tool_callback: None,
+            tool_unregister_callback: None,
             command_callback: None,
+            command_unregister_callback: None,
             shortcut_callback: None,
         }
     }
 
     /// Create with all optional callbacks (called by uncode-cli).
+    #[allow(clippy::too_many_arguments)]
     pub fn with_callbacks(
         registry: Arc<HookRegistry>,
         tool_callback: Option<ToolRegistrationCallback>,
+        tool_unregister_callback: Option<ToolUnregisterCallback>,
         command_callback: Option<CommandRegistrationCallback>,
+        command_unregister_callback: Option<CommandUnregisterCallback>,
         shortcut_callback: Option<ShortcutRegistrationCallback>,
     ) -> Self {
         Self {
             registry,
             tool_callback,
+            tool_unregister_callback,
             command_callback,
+            command_unregister_callback,
             shortcut_callback,
         }
     }
@@ -74,6 +89,15 @@ impl ExtensionApi {
         callback(meta.name, tool)
     }
 
+    /// Unregister a previously registered tool by name.
+    pub fn unregister_tool(&self, name: &str) -> bool {
+        if let Some(callback) = &self.tool_unregister_callback {
+            callback(name)
+        } else {
+            false
+        }
+    }
+
     /// Register a slash command from an extension.
     pub fn register_command(&self, cmd: CommandRegistration) -> Result<(), String> {
         cmd.validate()?;
@@ -82,6 +106,15 @@ impl ExtensionApi {
             .as_ref()
             .ok_or("command registration not available: no callback configured")?;
         callback(cmd)
+    }
+
+    /// Unregister a previously registered slash command by name.
+    pub fn unregister_command(&self, name: &str) -> bool {
+        if let Some(callback) = &self.command_unregister_callback {
+            callback(name)
+        } else {
+            false
+        }
     }
 
     /// Register a keyboard shortcut from an extension.

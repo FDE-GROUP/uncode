@@ -44,6 +44,7 @@ pub struct HookModification {
 ///
 /// **Pi:** 概念上接近 Pi Harness 扩展点；uncode 以 WASM 扩展 + 本枚举分发。
 /// **OpenCode:** 无 1:1 钩子名；对照插件/Hook 产品能力即可。
+#[derive(Clone)]
 pub enum LifecycleHook {
     SessionStart,
     TurnStart,
@@ -129,6 +130,34 @@ impl HookRegistry {
                 .push(name.clone());
         }
         self.extensions.insert(name, ext);
+    }
+
+    /// Unregister an extension by name.
+    ///
+    /// Removes the extension and cleans up all its hook subscriptions.
+    /// Empty hook entries are removed. Returns `true` if the extension existed.
+    pub fn unregister(&self, name: &str) -> bool {
+        let removed = self.extensions.remove(name).is_some();
+        if removed {
+            // Collect hook keys, then update each entry.
+            let hook_keys: Vec<String> = self.hooks.iter().map(|e| e.key().clone()).collect();
+            for key in hook_keys {
+                if let Some(mut entry) = self.hooks.get_mut(&key) {
+                    entry.retain(|n| n != name);
+                }
+            }
+            // Remove empty hook entries.
+            let empty_keys: Vec<String> = self
+                .hooks
+                .iter()
+                .filter(|e| e.value().is_empty())
+                .map(|e| e.key().clone())
+                .collect();
+            for key in empty_keys {
+                self.hooks.remove(&key);
+            }
+        }
+        removed
     }
 
     /// Fire a lifecycle hook to all registered extensions.

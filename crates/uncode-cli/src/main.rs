@@ -450,8 +450,12 @@ async fn main() -> anyhow::Result<()> {
     let cmd_cb_pending = pending_commands.clone();
     let shortcut_cb_pending = pending_shortcuts.clone();
 
+    let tool_reg_for_unregister = tool_registry.clone();
+    let cmd_cb_for_unregister = pending_commands.clone();
+
     let ext_api = uncode_extensions::api::ExtensionApi::with_callbacks(
         ext_registry.clone(),
+        // Tool registration callback
         Some(Arc::new(
             move |name: String,
                   tool: std::sync::Arc<dyn uncode_extensions::tool::ExtensionTool>| {
@@ -459,6 +463,11 @@ async fn main() -> anyhow::Result<()> {
                 tool_reg_for_cb.register_extension_tool(name, Arc::new(adapter))
             },
         )),
+        // Tool unregister callback
+        Some(Arc::new(move |name: &str| -> bool {
+            tool_reg_for_unregister.unregister(name)
+        })),
+        // Command registration callback
         Some(Arc::new(
             move |cmd: uncode_extensions::command::CommandRegistration| -> Result<(), String> {
                 let desc = cmd.description.clone();
@@ -469,6 +478,12 @@ async fn main() -> anyhow::Result<()> {
                 Ok(())
             },
         )),
+        // Command unregister callback
+        Some(Arc::new(move |name: &str| -> bool {
+            cmd_cb_for_unregister.lock().retain(|(n, _, _)| n != name);
+            true
+        })),
+        // Shortcut registration callback
         Some(Arc::new(
             move |shortcut: uncode_extensions::command::ShortcutRegistration| -> Result<(), String> {
                 let handler: Box<dyn Fn() + Send + Sync> =
@@ -479,23 +494,36 @@ async fn main() -> anyhow::Result<()> {
         )),
     );
 
-    // Load WASM extensions from ~/.uncode/extensions/
+    // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)
     let ext_api = Arc::new(ext_api);
-    {
-        let ext_dir = dirs::home_dir()
-            .unwrap_or_default()
-            .join(".uncode")
-            .join("extensions");
-        let loader = uncode_extensions::loader::ExtensionLoader::new();
-        match loader
-            .load_from_dir(&ext_registry, &ext_api, &ext_dir)
-            .await
-        {
-            Ok(count) if count > 0 => tracing::info!("loaded {count} WASM extension(s)"),
-            Ok(_) => tracing::debug!("no WASM extensions loaded"),
-            Err(e) => tracing::warn!("WASM extension loading failed: {e}"),
+    let ext_global_dir = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".uncode")
+        .join("extensions");
+    let ext_project_dir = std::env::current_dir()
+        .ok()
+        .map(|d| d.join(".uncode").join("extensions"));
+
+    let ext_manager = {
+        let mgr = uncode_extensions::manager::ExtensionManager::new(
+            ext_registry.clone(),
+            ext_api.clone(),
+            ext_global_dir,
+            ext_project_dir,
+        );
+        let report = mgr.discover_and_load_all();
+        if !report.loaded.is_empty() {
+            tracing::info!(
+                "loaded {} extension(s), {} error(s)",
+                report.loaded.len(),
+                report.errors.len()
+            );
         }
-    }
+        for (name, err) in &report.errors {
+            tracing::warn!("extension '{name}' failed to load: {err}");
+        }
+        Arc::new(parking_lot::Mutex::new(mgr))
+    };
 
     let ext_bridge = ExtensionLifecycleBridge::from_arc(ext_api);
     agent.set_tool_hooks(Arc::new(ChainedToolHooks::new(vec![
@@ -524,6 +552,8 @@ async fn main() -> anyhow::Result<()> {
         for (key, handler) in pending_shortcuts.lock().drain(..) {
             tui.register_extension_shortcut(key, handler);
         }
+
+        tui.set_extension_manager(ext_manager);
 
         tui.run(
             event_rx,
