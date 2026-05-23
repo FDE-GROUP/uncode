@@ -15,6 +15,7 @@ pub mod highlight;
 pub mod input;
 pub mod markdown;
 pub mod message_queue;
+pub mod message_renderer;
 pub mod overlay;
 pub mod overlay_channel;
 pub mod permission;
@@ -33,6 +34,7 @@ use crate::dialog::DialogOverlay;
 use crate::dialog_channel::DialogBridge;
 use crate::input::{InputAction, InputEditor};
 use crate::message_queue::{MessageQueue, QueueType, SubmitIntent};
+use crate::message_renderer::MessageRendererRegistry;
 use crate::overlay::OverlayManager;
 use crate::overlay_channel::OverlayBridge;
 use crate::permission::PermissionManager;
@@ -290,6 +292,7 @@ pub struct TuiEngine {
     widget_manager: WidgetManager,
     status_manager: StatusManager,
     ui_bridge: Option<UiBridge>,
+    message_renderers: MessageRendererRegistry,
 }
 
 impl TuiEngine {
@@ -345,6 +348,7 @@ impl TuiEngine {
             widget_manager: WidgetManager::new(),
             status_manager: StatusManager::new(),
             ui_bridge: None,
+            message_renderers: MessageRendererRegistry::new(),
         }
     }
 
@@ -449,6 +453,19 @@ impl TuiEngine {
             config.result_max_lines,
         );
         self.renderers.register(tool_name, Box::new(renderer));
+    }
+
+    /// Register a custom message renderer by message type.
+    pub fn register_custom_message_renderer(
+        &mut self,
+        message_type: String,
+        config: uncode_extensions::message_renderer::MessageRenderConfig,
+    ) {
+        use crate::message_renderer::TemplateMessageRenderer;
+        let renderer =
+            TemplateMessageRenderer::new(config.render_template, config.result_max_lines);
+        self.message_renderers
+            .register(message_type, Box::new(renderer));
     }
 
     /// Try to dispatch a key event to extension shortcuts.
@@ -610,6 +627,7 @@ impl TuiEngine {
             self.agent_busy,
             self.chat.tool_output_visible,
             &workdir,
+            &self.message_renderers,
         );
 
         // Step 2: Compute total and auto_scroll
@@ -1186,6 +1204,17 @@ impl TuiEngine {
                                 Some(t) => self.status_manager.set(key.clone(), t.clone()),
                                 None => self.status_manager.clear(key),
                             }
+                            Ok(())
+                        }
+                        UiAction::CustomMessage {
+                            message_type,
+                            content,
+                        } => {
+                            self.chat.push_message(chat::ChatMessage::Custom {
+                                message_type: message_type.clone(),
+                                content: content.clone(),
+                                expanded: true,
+                            });
                             Ok(())
                         }
                     };
@@ -2917,17 +2946,28 @@ mod tests {
         let engine = TuiEngine::new();
         let area = ratatui::layout::Rect::new(0, 0, 80, 24);
         // 空消息 — 不 panic，无提示文字
-        let lines =
-            engine
-                .chat
-                .render_lines(area, &engine.renderers, &engine.theme, 0, false, true);
+        let lines = engine.chat.render_lines(
+            area,
+            &engine.renderers,
+            &engine.theme,
+            0,
+            false,
+            true,
+            &engine.message_renderers,
+        );
         assert_eq!(lines.len(), 0);
 
         // 使用 light theme — 不 panic
         let light = Theme::light();
-        let lines_light = engine
-            .chat
-            .render_lines(area, &engine.renderers, &light, 0, false, true);
+        let lines_light = engine.chat.render_lines(
+            area,
+            &engine.renderers,
+            &light,
+            0,
+            false,
+            true,
+            &engine.message_renderers,
+        );
         assert_eq!(lines_light.len(), 0);
     }
 

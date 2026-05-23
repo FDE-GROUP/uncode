@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::command::{CommandRegistration, ShortcutRegistration};
 use crate::hooks::{Extension, HookRegistry, LifecycleHook};
+use crate::message_renderer::MessageRenderConfig;
 use crate::provider::ProviderRegistration;
 use crate::renderer::ToolRenderConfig;
 use crate::tool::ExtensionTool;
@@ -67,6 +68,10 @@ pub type UiCallback = Arc<dyn Fn(UiAction) -> Result<(), String> + Send + Sync>;
 /// Direct I/O — no TUI channel needed.
 pub type NotifyCallback = Arc<dyn Fn(String, NotifyType) -> Result<(), String> + Send + Sync>;
 
+/// Callback type for message renderer registration. Injected by `uncode-cli`.
+pub type MessageRendererCallback =
+    Arc<dyn Fn(MessageRenderConfig) -> Result<(), String> + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -87,6 +92,7 @@ pub struct ExtensionApi {
     overlay_callback: Option<OverlayCallback>,
     ui_callback: Option<UiCallback>,
     notify_callback: Option<NotifyCallback>,
+    message_renderer_callback: Option<MessageRendererCallback>,
 }
 
 impl ExtensionApi {
@@ -108,6 +114,7 @@ impl ExtensionApi {
             overlay_callback: None,
             ui_callback: None,
             notify_callback: None,
+            message_renderer_callback: None,
         }
     }
 
@@ -130,6 +137,7 @@ impl ExtensionApi {
         overlay_callback: Option<OverlayCallback>,
         ui_callback: Option<UiCallback>,
         notify_callback: Option<NotifyCallback>,
+        message_renderer_callback: Option<MessageRendererCallback>,
     ) -> Self {
         Self {
             registry,
@@ -148,6 +156,7 @@ impl ExtensionApi {
             overlay_callback,
             ui_callback,
             notify_callback,
+            message_renderer_callback,
         }
     }
 
@@ -350,5 +359,15 @@ impl ExtensionApi {
             .as_ref()
             .ok_or("notify not available: no callback configured")?;
         callback(message.into(), notify_type)
+    }
+
+    /// Register a custom message renderer by message type.
+    pub fn register_message_renderer(&self, config: MessageRenderConfig) -> Result<(), String> {
+        config.validate()?;
+        let callback = self
+            .message_renderer_callback
+            .as_ref()
+            .ok_or("message renderer registration not available: no callback configured")?;
+        callback(config)
     }
 }
