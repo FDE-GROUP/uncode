@@ -4,8 +4,29 @@ use std::sync::Arc;
 
 use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
 
+/// Origin of a registered tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolSource {
+    Builtin,
+    Extension,
+}
+
+/// Reserved builtin tool names that extensions cannot override.
+const RESERVED_TOOL_NAMES: &[&str] = &[
+    "read",
+    "write",
+    "edit",
+    "bash",
+    "grep",
+    "find",
+    "ls",
+    "web_fetch",
+    "web_search",
+];
+
 pub struct ToolRegistry {
     tools: RwLock<HashMap<String, Arc<dyn ToolExecutor>>>,
+    sources: RwLock<HashMap<String, ToolSource>>,
     /// When `Some`, only these tools are exposed to the LLM and may execute.
     /// **Pi:** `setActiveTools`.
     active_names: RwLock<Option<HashSet<String>>>,
@@ -15,6 +36,7 @@ impl ToolRegistry {
     pub fn new() -> Self {
         Self {
             tools: RwLock::new(HashMap::with_capacity(8)),
+            sources: RwLock::new(HashMap::new()),
             active_names: RwLock::new(None),
         }
     }
@@ -41,9 +63,14 @@ impl ToolRegistry {
     }
 
     /// Whether a registered tool is in the active set (or all registered tools when no filter).
+    ///
+    /// Extension tools always bypass the active filter — they are always visible.
     pub fn is_active(&self, name: &str) -> bool {
         if !self.tools.read().contains_key(name) {
             return false;
+        }
+        if self.sources.read().get(name) == Some(&ToolSource::Extension) {
+            return true;
         }
         match self.active_names.read().as_ref() {
             None => true,
@@ -59,7 +86,44 @@ impl ToolRegistry {
     }
 
     pub fn register(&self, name: impl Into<String>, tool: Arc<dyn ToolExecutor>) {
-        self.tools.write().insert(name.into(), tool);
+        let name = name.into();
+        self.tools.write().insert(name.clone(), tool);
+        self.sources.write().insert(name, ToolSource::Builtin);
+    }
+
+    /// Register an extension tool. Validates name is not a reserved builtin.
+    pub fn register_extension_tool(
+        &self,
+        name: impl Into<String>,
+        tool: Arc<dyn ToolExecutor>,
+    ) -> Result<(), String> {
+        let name = name.into();
+        if RESERVED_TOOL_NAMES.contains(&name.as_str()) {
+            return Err(format!(
+                "cannot register extension tool with reserved name: {name}"
+            ));
+        }
+        {
+            let tools = self.tools.read();
+            if tools.contains_key(&name) {
+                return Err(format!("tool already registered: {name}"));
+            }
+        }
+        self.tools.write().insert(name.clone(), tool);
+        self.sources.write().insert(name, ToolSource::Extension);
+        Ok(())
+    }
+
+    /// Query the source of a registered tool.
+    pub fn source(&self, name: &str) -> Option<ToolSource> {
+        self.sources.read().get(name).copied()
+    }
+
+    /// Unregister a tool (for hot-reload support).
+    pub fn unregister(&self, name: &str) -> bool {
+        let removed = self.tools.write().remove(name).is_some();
+        self.sources.write().remove(name);
+        removed
     }
 
     pub fn get(&self, name: &str) -> Option<Arc<dyn ToolExecutor>> {
@@ -69,11 +133,17 @@ impl ToolRegistry {
     pub fn definitions(&self) -> Vec<ToolDefinition> {
         let tools = self.tools.read();
         let active = self.active_names.read();
+        let sources = self.sources.read();
         tools
             .iter()
-            .filter(|(name, _)| match active.as_ref() {
-                None => true,
-                Some(set) => set.contains(*name),
+            .filter(|(name, _)| {
+                if sources.get(*name) == Some(&ToolSource::Extension) {
+                    return true;
+                }
+                match active.as_ref() {
+                    None => true,
+                    Some(set) => set.contains(*name),
+                }
             })
             .map(|(_, t)| t.definition())
             .collect()
@@ -87,11 +157,17 @@ impl ToolRegistry {
     pub fn list_active(&self) -> Vec<String> {
         let tools = self.tools.read();
         let active = self.active_names.read();
+        let sources = self.sources.read();
         tools
             .keys()
-            .filter(|name| match active.as_ref() {
-                None => true,
-                Some(set) => set.contains(*name),
+            .filter(|name| {
+                if sources.get(*name) == Some(&ToolSource::Extension) {
+                    return true;
+                }
+                match active.as_ref() {
+                    None => true,
+                    Some(set) => set.contains(*name),
+                }
             })
             .cloned()
             .collect()
@@ -796,5 +872,171 @@ mod tests {
             .validate("read", &serde_json::json!({"path": "a", "extra": true}))
             .unwrap_err();
         assert!(err.contains("unknown property"));
+    }
+
+    // ── ToolSource tracking tests ──
+
+    #[test]
+    fn test_register_sets_builtin_source() {
+        let reg = ToolRegistry::new();
+        reg.register(
+            "read",
+            Arc::new(FakeTool {
+                def: ToolDefinition {
+                    name: "read".into(),
+                    description: "".into(),
+                    parameters: serde_json::json!({}),
+                    label: None,
+                    execution_mode: Default::default(),
+                },
+            }),
+        );
+        assert_eq!(reg.source("read"), Some(ToolSource::Builtin));
+    }
+
+    #[test]
+    fn test_register_extension_tool_ok() {
+        let reg = ToolRegistry::new();
+        let result = reg.register_extension_tool(
+            "my_tool",
+            Arc::new(FakeTool {
+                def: ToolDefinition {
+                    name: "my_tool".into(),
+                    description: "Custom".into(),
+                    parameters: serde_json::json!({}),
+                    label: None,
+                    execution_mode: Default::default(),
+                },
+            }),
+        );
+        assert!(result.is_ok());
+        assert_eq!(reg.source("my_tool"), Some(ToolSource::Extension));
+    }
+
+    #[test]
+    fn test_register_extension_tool_rejects_reserved_name() {
+        let reg = ToolRegistry::new();
+        for reserved in &[
+            "read",
+            "write",
+            "edit",
+            "bash",
+            "grep",
+            "find",
+            "ls",
+            "web_fetch",
+            "web_search",
+        ] {
+            let result = reg.register_extension_tool(
+                *reserved,
+                Arc::new(FakeTool {
+                    def: ToolDefinition {
+                        name: reserved.to_string(),
+                        description: "Custom".into(),
+                        parameters: serde_json::json!({}),
+                        label: None,
+                        execution_mode: Default::default(),
+                    },
+                }),
+            );
+            assert!(result.unwrap_err().contains("reserved"));
+        }
+    }
+
+    #[test]
+    fn test_register_extension_tool_rejects_duplicate() {
+        let reg = ToolRegistry::new();
+        reg.register(
+            "existing",
+            Arc::new(FakeTool {
+                def: ToolDefinition {
+                    name: "existing".into(),
+                    description: "".into(),
+                    parameters: serde_json::json!({}),
+                    label: None,
+                    execution_mode: Default::default(),
+                },
+            }),
+        );
+        let result = reg.register_extension_tool(
+            "existing",
+            Arc::new(FakeTool {
+                def: ToolDefinition {
+                    name: "existing".into(),
+                    description: "dup".into(),
+                    parameters: serde_json::json!({}),
+                    label: None,
+                    execution_mode: Default::default(),
+                },
+            }),
+        );
+        assert!(result.unwrap_err().contains("already registered"));
+    }
+
+    #[test]
+    fn test_extension_tool_bypasses_active_filter() {
+        let reg = ToolRegistry::new();
+        reg.register(
+            "read",
+            Arc::new(FakeTool {
+                def: ToolDefinition {
+                    name: "read".into(),
+                    description: "Read".into(),
+                    parameters: serde_json::json!({}),
+                    label: None,
+                    execution_mode: Default::default(),
+                },
+            }),
+        );
+        reg.register_extension_tool(
+            "ext_tool",
+            Arc::new(FakeTool {
+                def: ToolDefinition {
+                    name: "ext_tool".into(),
+                    description: "Extension".into(),
+                    parameters: serde_json::json!({}),
+                    label: None,
+                    execution_mode: Default::default(),
+                },
+            }),
+        )
+        .unwrap();
+
+        reg.set_active_tools(&["read"]).unwrap();
+
+        // Builtin: active
+        assert!(reg.is_active("read"));
+        // Extension: always active, bypasses filter
+        assert!(reg.is_active("ext_tool"));
+        // Definitions include extension tool even with active filter
+        let defs = reg.definitions();
+        assert_eq!(defs.len(), 2);
+    }
+
+    #[test]
+    fn test_unregister_tool() {
+        let reg = ToolRegistry::new();
+        reg.register(
+            "read",
+            Arc::new(FakeTool {
+                def: ToolDefinition {
+                    name: "read".into(),
+                    description: "".into(),
+                    parameters: serde_json::json!({}),
+                    label: None,
+                    execution_mode: Default::default(),
+                },
+            }),
+        );
+        assert!(reg.unregister("read"));
+        assert!(!reg.is_active("read"));
+        assert!(reg.get("read").is_none());
+        assert_eq!(reg.source("read"), None);
+    }
+
+    #[test]
+    fn test_unregister_nonexistent() {
+        let reg = ToolRegistry::new();
+        assert!(!reg.unregister("nope"));
     }
 }

@@ -31,8 +31,9 @@ use uncode_agent::session::store::SessionStore;
 use uncode_agent::tools::{ToolLaunchConfig, ToolRegistry, register_coding_tools_and_configure};
 use uncode_agent::workspace_graph::WorkspaceGraphCache;
 use uncode_agent::{
-    AgentLoop, ChainedToolHooks, ContextLoader, ExtensionLifecycleBridge, ExtensionToolHooks,
-    GitHubClient, PermissionGate, PermissionPolicy, PermissionToolHooks, SystemPromptBuilder,
+    AgentLoop, ChainedToolHooks, ContextLoader, ExtensionLifecycleBridge, ExtensionToolExecutor,
+    ExtensionToolHooks, GitHubClient, PermissionGate, PermissionPolicy, PermissionToolHooks,
+    SystemPromptBuilder,
 };
 use uncode_ai::{
     AnthropicMessagesApi, GeminiGenerativeAiApi, OllamaNativeApi, OpenAiCompletionsApi,
@@ -433,7 +434,18 @@ async fn main() -> anyhow::Result<()> {
     ));
     let ext_registry = Arc::new(uncode_extensions::hooks::HookRegistry::new());
     let ext_hooks = Arc::new(ExtensionToolHooks::new(ext_registry.clone()));
-    let ext_bridge = ExtensionLifecycleBridge::new(ext_registry);
+    let tool_reg_for_cb = tool_registry.clone();
+    let ext_api = uncode_extensions::api::ExtensionApi::with_tool_callback(
+        ext_registry.clone(),
+        Arc::new(
+            move |name: String,
+                  tool: std::sync::Arc<dyn uncode_extensions::tool::ExtensionTool>| {
+                let adapter = ExtensionToolExecutor::new(tool);
+                tool_reg_for_cb.register_extension_tool(name, Arc::new(adapter))
+            },
+        ),
+    );
+    let ext_bridge = ExtensionLifecycleBridge::new(ext_api);
     agent.set_tool_hooks(Arc::new(ChainedToolHooks::new(vec![
         Arc::new(PermissionToolHooks::new(permission_gate.clone())),
         ext_hooks,
