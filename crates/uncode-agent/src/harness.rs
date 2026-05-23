@@ -107,12 +107,13 @@ pub struct AgentHarness {
 
 impl AgentHarness {
     pub fn new(agent: AgentLoop, session_store: Arc<SessionStore>) -> Self {
+        let cwd = std::env::current_dir().unwrap_or_default();
         Self {
             agent,
             phase: AgentHarnessPhase::Idle,
             pending_writes: Vec::new(),
             resources: HarnessResources {
-                skills: SkillRegistry::load(),
+                skills: SkillRegistry::load_with_project(&cwd),
                 templates: TemplateStore::load(),
             },
             session_store,

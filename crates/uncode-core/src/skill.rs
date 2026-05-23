@@ -1,5 +1,23 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::path::Path;
+
+/// Skill 来源标记。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SkillSource {
+    #[serde(rename = "builtin")]
+    BuiltIn,
+    #[serde(rename = "global")]
+    Global,
+    #[serde(rename = "project")]
+    Project,
+}
+
+impl Default for SkillSource {
+    fn default() -> Self {
+        Self::BuiltIn
+    }
+}
 
 /// Skill 输入参数定义
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -24,9 +42,11 @@ pub struct Skill {
     /// If true, skill is application-only (not visible to the model)
     #[serde(default)]
     pub disable_model_invocation: bool,
+    #[serde(default)]
+    pub source: SkillSource,
 }
 
-/// Skill 注册表：内置 + 用户自定义。
+/// Skill 注册表：内置 + 全局 + 项目级。
 ///
 /// **Pi:** 对应 Skills 目录加载；**OpenCode:** 对照 SkillTool。
 pub struct SkillRegistry {
@@ -34,19 +54,38 @@ pub struct SkillRegistry {
 }
 
 impl SkillRegistry {
+    /// Load built-in + global skills (no project-level discovery).
     pub fn load() -> Self {
+        Self::load_with_project(Path::new(""))
+    }
+
+    /// Load built-in + global + project-level skills.
+    ///
+    /// Priority: project > global > builtin (later loads overwrite earlier).
+    pub fn load_with_project(project_dir: &Path) -> Self {
         let mut skills = HashMap::new();
 
+        // 1. Built-in skills (lowest priority)
         for s in builtins() {
             skills.insert(s.name.clone(), s);
         }
 
-        // 用户自定义：~/.uncode/skills/**/*.md（递归遍历）
-        if let Some(dir) = dirs::config_dir() {
-            let skill_dir = dir.join("uncode").join("skills");
-            if skill_dir.is_dir() {
-                load_skills_recursive(&skill_dir, &mut skills);
-            }
+        // 2. Global skills
+        if let Some(home) = dirs::home_dir() {
+            let global_dir = home.join(".uncode").join("skills");
+            load_skills_from_dir(&global_dir, SkillSource::Global, &mut skills);
+        }
+
+        // Legacy path (~/.config/uncode/skills/)
+        if let Some(config) = dirs::config_dir() {
+            let legacy_dir = config.join("uncode").join("skills");
+            load_skills_from_dir(&legacy_dir, SkillSource::Global, &mut skills);
+        }
+
+        // 3. Project skills (<project_dir>/.uncode/skills/) — highest priority
+        if !project_dir.as_os_str().is_empty() {
+            let project_skills_dir = project_dir.join(".uncode").join("skills");
+            load_skills_from_dir(&project_skills_dir, SkillSource::Project, &mut skills);
         }
 
         Self { skills }
@@ -106,8 +145,19 @@ impl fmt::Display for Skill {
     }
 }
 
-/// 递归遍历目录加载 .md 技能文件（尊重 .gitignore）
-fn load_skills_recursive(dir: &std::path::Path, skills: &mut HashMap<String, Skill>) {
+/// Load skills from a directory tree, tagging each with the given source.
+fn load_skills_from_dir(dir: &Path, source: SkillSource, skills: &mut HashMap<String, Skill>) {
+    if !dir.is_dir() {
+        return;
+    }
+    load_skills_recursive_with_source(dir, source, skills);
+}
+
+fn load_skills_recursive_with_source(
+    dir: &Path,
+    source: SkillSource,
+    skills: &mut HashMap<String, Skill>,
+) {
     let gitignore_path = dir.join(".gitignore");
     let ignore_patterns: Vec<String> = if gitignore_path.exists() {
         std::fs::read_to_string(&gitignore_path)
@@ -125,7 +175,6 @@ fn load_skills_recursive(dir: &std::path::Path, skills: &mut HashMap<String, Ski
             let path = entry.path();
             let file_name = path.file_name().unwrap_or_default().to_string_lossy();
 
-            // Skip gitignored entries
             if ignore_patterns
                 .iter()
                 .any(|p| file_name.starts_with(p.trim_start_matches('*')))
@@ -134,11 +183,12 @@ fn load_skills_recursive(dir: &std::path::Path, skills: &mut HashMap<String, Ski
             }
 
             if path.is_dir() && !file_name.starts_with('.') {
-                load_skills_recursive(&path, skills);
+                load_skills_recursive_with_source(&path, source, skills);
             } else if path.extension().and_then(|e| e.to_str()) == Some("md")
                 && let Ok(content) = std::fs::read_to_string(&path)
-                && let Some(skill) = parse_skill_md(&content)
+                && let Some(mut skill) = parse_skill_md(&content)
             {
+                skill.source = source;
                 skills.insert(skill.name.clone(), skill);
             }
         }
@@ -204,6 +254,7 @@ fn parse_skill_md(content: &str) -> Option<Skill> {
         inputs,
         prompt,
         disable_model_invocation,
+        source: SkillSource::BuiltIn,
     })
 }
 
@@ -226,6 +277,7 @@ fn builtins() -> Vec<Skill> {
             }],
             prompt: "你是一位资深代码审查专家。\n\n请审查以下代码：{{path}}\n\n审查维度：\n1. 安全性漏洞\n2. 性能问题\n3. 可维护性\n4. 测试覆盖\n\n输出格式：\n- 按严重程度排序\n- 每个问题标注位置和建议修改\n\n用中文回复。".into(),
             disable_model_invocation: false,
+            source: SkillSource::BuiltIn,
         },
         Skill {
             name: "explain".into(),
@@ -238,6 +290,7 @@ fn builtins() -> Vec<Skill> {
             }],
             prompt: "请解释以下代码：{{path}}\n\n用易懂的中文描述：\n1. 整体功能\n2. 关键算法或设计\n3. 潜在的问题或改进点".into(),
             disable_model_invocation: false,
+            source: SkillSource::BuiltIn,
         },
         Skill {
             name: "test-gen".into(),
@@ -250,6 +303,7 @@ fn builtins() -> Vec<Skill> {
             }],
             prompt: "你是一位测试工程师。\n\n请为以下代码生成单元测试：{{path}}\n\n要求：\n1. 覆盖正常路径和边界条件\n2. 覆盖错误处理\n3. 使用该语言的主流测试框架\n4. 每个测试有清晰的描述\n\n用中文回复，直接输出测试代码。".into(),
             disable_model_invocation: false,
+            source: SkillSource::BuiltIn,
         },
         Skill {
             name: "refactor".into(),
@@ -262,6 +316,7 @@ fn builtins() -> Vec<Skill> {
             }],
             prompt: "你是一位重构专家。\n\n请分析以下代码并提出重构建议：{{path}}\n\n关注：\n1. 设计模式改进\n2. 函数拆分\n3. 命名和组织\n4. 消除重复\n\n用中文回复，给出具体方案和代码。".into(),
             disable_model_invocation: false,
+            source: SkillSource::BuiltIn,
         },
         Skill {
             name: "security-audit".into(),
@@ -274,6 +329,7 @@ fn builtins() -> Vec<Skill> {
             }],
             prompt: "你是一位安全审计专家。\n\n请对以下代码进行安全审计：{{path}}\n\n审计维度（OWASP Top 10）：\n1. 注入攻击（SQL/XSS/命令注入）\n2. 认证和会话管理\n3. 敏感数据暴露\n4. 访问控制缺陷\n5. 安全配置错误\n\n用中文回复，按风险等级排序。".into(),
             disable_model_invocation: false,
+            source: SkillSource::BuiltIn,
         },
     ]
 }
@@ -290,6 +346,26 @@ mod tests {
         assert!(registry.get("test-gen").is_some());
         assert!(registry.get("refactor").is_some());
         assert!(registry.get("security-audit").is_some());
+    }
+
+    #[test]
+    fn test_builtin_source() {
+        let registry = SkillRegistry::load();
+        for skill in registry.list() {
+            assert_eq!(skill.source, SkillSource::BuiltIn);
+        }
+    }
+
+    #[test]
+    fn test_load_with_empty_project_dir() {
+        let registry = SkillRegistry::load_with_project(Path::new(""));
+        assert!(registry.get("code-review").is_some());
+    }
+
+    #[test]
+    fn test_load_with_nonexistent_project_dir() {
+        let registry = SkillRegistry::load_with_project(Path::new("/nonexistent"));
+        assert!(registry.get("code-review").is_some());
     }
 
     #[test]
@@ -361,6 +437,7 @@ Do something with {{path}}."#;
             }],
             prompt: String::new(),
             disable_model_invocation: false,
+            source: SkillSource::BuiltIn,
         };
         assert_eq!(format!("{skill}"), "test — desc [path]");
     }
@@ -395,5 +472,10 @@ Normal prompt."#;
         let visible = registry.list_model_visible();
         // All builtins have disable_model_invocation=false
         assert_eq!(visible.len(), registry.list().len());
+    }
+
+    #[test]
+    fn test_skill_source_default() {
+        assert_eq!(SkillSource::default(), SkillSource::BuiltIn);
     }
 }
