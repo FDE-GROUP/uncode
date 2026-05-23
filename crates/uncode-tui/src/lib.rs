@@ -1109,7 +1109,9 @@ impl TuiEngine {
                 let parts: Vec<&str> = t[1..].splitn(2, ' ').collect();
                 let skill_name = parts[0];
                 let args = parts.get(1).copied().unwrap_or("");
-                let registry = uncode_core::skill::SkillRegistry::load();
+                let registry = uncode_core::skill::SkillRegistry::load_with_project(
+                    &std::env::current_dir().unwrap_or_default(),
+                );
                 if registry.get(skill_name).is_some() {
                     self.handle_skill_invoke(skill_name, args, on_submit);
                 } else {
@@ -1916,7 +1918,8 @@ impl TuiEngine {
 
     fn handle_skills_command(&mut self) {
         use uncode_core::skill::SkillRegistry;
-        let registry = SkillRegistry::load();
+        let registry =
+            SkillRegistry::load_with_project(&std::env::current_dir().unwrap_or_default());
         let list = registry.list();
         if list.is_empty() {
             self.chat.push_message(chat::ChatMessage::Summary {
@@ -2050,7 +2053,8 @@ impl TuiEngine {
         F: Fn(String, CancellationToken, String, String, SubmitIntent),
     {
         use uncode_core::skill::SkillRegistry;
-        let registry = SkillRegistry::load();
+        let registry =
+            SkillRegistry::load_with_project(&std::env::current_dir().unwrap_or_default());
         let _skill = match registry.get(skill_name) {
             Some(s) => s,
             None => {
