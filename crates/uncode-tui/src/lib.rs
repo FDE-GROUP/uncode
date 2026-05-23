@@ -21,6 +21,7 @@ pub mod overlay;
 pub mod overlay_channel;
 pub mod permission;
 pub mod selector;
+pub mod session_channel;
 pub mod slash;
 pub mod status;
 pub mod theme;
@@ -40,6 +41,7 @@ use crate::overlay::OverlayManager;
 use crate::overlay_channel::OverlayBridge;
 use crate::permission::PermissionManager;
 use crate::selector::OverlaySelector;
+use crate::session_channel::SessionBridge;
 use crate::slash::SlashCommands;
 use crate::status::StatusManager;
 use crate::theme::Theme;
@@ -299,6 +301,7 @@ pub struct TuiEngine {
     widget_manager: WidgetManager,
     status_manager: StatusManager,
     ui_bridge: Option<UiBridge>,
+    session_bridge: Option<SessionBridge>,
     message_renderers: MessageRendererRegistry,
     custom_header: Option<crate::custom_layout::CustomHeader>,
     custom_footer: Option<crate::custom_layout::CustomFooter>,
@@ -358,6 +361,7 @@ impl TuiEngine {
             widget_manager: WidgetManager::new(),
             status_manager: StatusManager::new(),
             ui_bridge: None,
+            session_bridge: None,
             message_renderers: MessageRendererRegistry::new(),
             custom_header: None,
             custom_footer: None,
@@ -444,6 +448,11 @@ impl TuiEngine {
     /// Set the UI bridge for extension-initiated widget/status actions.
     pub fn set_ui_bridge(&mut self, bridge: UiBridge) {
         self.ui_bridge = Some(bridge);
+    }
+
+    /// Set the session bridge for extension-initiated session tree operations.
+    pub fn set_session_bridge(&mut self, bridge: SessionBridge) {
+        self.session_bridge = Some(bridge);
     }
 
     /// Register a custom tool renderer from an extension.
@@ -1334,6 +1343,34 @@ impl TuiEngine {
                                 expanded: true,
                             });
                             Ok(())
+                        }
+                    };
+                    let _ = pending.response_tx.send(result);
+                }
+                // Poll session bridge for extension-initiated session tree operations
+                Some(pending) = async {
+                    match &mut self.session_bridge {
+                        Some(bridge) => bridge.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    use uncode_extensions::session::{SessionAction, SessionResponse};
+                    let result: Result<SessionResponse, String> = match &pending.action {
+                        SessionAction::Fork { .. } => {
+                            // TODO: bridge to SessionStore::fork_session
+                            Err("session fork not yet connected to session store".into())
+                        }
+                        SessionAction::Navigate { .. } => {
+                            // TODO: bridge to SessionStore::set_leaf
+                            Err("session navigate not yet connected to session store".into())
+                        }
+                        SessionAction::Switch { .. } => {
+                            // TODO: bridge to harness session switch
+                            Err("session switch not yet connected to session store".into())
+                        }
+                        SessionAction::SetName { .. } => {
+                            // TODO: bridge to SessionStore::update_title
+                            Err("session set_name not yet connected to session store".into())
                         }
                     };
                     let _ = pending.response_tx.send(result);
