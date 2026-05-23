@@ -11,6 +11,7 @@ pub mod hooks;
 pub mod loader;
 pub mod manager;
 pub mod provider;
+pub mod renderer;
 pub mod state;
 pub mod tool;
 

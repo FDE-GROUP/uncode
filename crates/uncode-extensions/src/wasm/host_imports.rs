@@ -32,6 +32,14 @@ pub fn setup_linker(linker: &mut Linker<HostState>) -> anyhow::Result<()> {
         host_register_provider,
     )?;
 
+    linker.func_wrap(
+        "uncode",
+        "__uncode_host_register_renderer",
+        host_register_renderer,
+    )?;
+
+    linker.func_wrap("uncode", "__uncode_host_show_dialog", host_show_dialog)?;
+
     Ok(())
 }
 
@@ -221,6 +229,99 @@ fn host_register_provider(
         }
         Err(_) => {
             tracing::warn!("extension {ext_name} sent invalid utf-8 provider data");
+            -1
+        }
+    }
+}
+
+fn host_register_renderer(
+    mut caller: Caller<'_, HostState>,
+    _handle: i32,
+    ptr: i32,
+    len: i32,
+) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+
+    let ext_name = caller.data().extension_name.clone();
+    match std::str::from_utf8(&bytes) {
+        Ok(json_str) => match serde_json::from_str::<crate::renderer::ToolRenderConfig>(json_str) {
+            Ok(config) => match caller.data().ext_api.register_renderer(config) {
+                Ok(()) => 0,
+                Err(e) => {
+                    tracing::warn!("extension {ext_name} renderer registration failed: {e}");
+                    -1
+                }
+            },
+            Err(e) => {
+                tracing::warn!("extension {ext_name} sent invalid renderer JSON: {e}");
+                -1
+            }
+        },
+        Err(_) => {
+            tracing::warn!("extension {ext_name} sent invalid utf-8 renderer data");
+            -1
+        }
+    }
+}
+
+fn host_show_dialog(
+    mut caller: Caller<'_, HostState>,
+    _handle: i32,
+    ptr: i32,
+    len: i32,
+    out_ptr: i32,
+) -> i32 {
+    let bytes = match read_memory_bytes(&mut caller, ptr, len) {
+        Some(b) => b,
+        None => return -1,
+    };
+
+    let ext_name = caller.data().extension_name.clone();
+    let json_str = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            tracing::warn!("extension {ext_name} sent invalid utf-8 dialog request");
+            return -1;
+        }
+    };
+
+    let request: uncode_core::dialog::DialogRequest = match serde_json::from_str(json_str) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("extension {ext_name} sent invalid dialog JSON: {e}");
+            return -1;
+        }
+    };
+
+    match caller.data().ext_api.show_dialog(request) {
+        Ok(response) => {
+            let response_json = match serde_json::to_string(&response) {
+                Ok(j) => j,
+                Err(e) => {
+                    tracing::warn!("extension {ext_name} dialog response serialize failed: {e}");
+                    return -1;
+                }
+            };
+            let response_bytes = response_json.as_bytes();
+            let response_len = response_bytes.len() as i32;
+            let memory = match caller.get_export("memory").and_then(|m| m.into_memory()) {
+                Some(m) => m,
+                None => return -1,
+            };
+            let data = memory.data_mut(&mut caller);
+            let start = out_ptr as usize;
+            let end = start + response_bytes.len();
+            if end > data.len() {
+                return -1;
+            }
+            data[start..end].copy_from_slice(response_bytes);
+            response_len
+        }
+        Err(e) => {
+            tracing::warn!("extension {ext_name} show_dialog failed: {e}");
             -1
         }
     }
