@@ -18,6 +18,15 @@ impl ExtensionLifecycleBridge {
         Self { registry, api }
     }
 
+    /// Construct from an `Arc<ExtensionApi>`, unwrapping the Arc.
+    pub fn from_arc(api: Arc<ExtensionApi>) -> Self {
+        let registry = api.registry().clone();
+        // SAFETY: we just created this Arc and have the only reference.
+        let api =
+            Arc::try_unwrap(api).unwrap_or_else(|_| panic!("ExtensionApi Arc should be unique"));
+        Self { registry, api }
+    }
+
     /// Access the ExtensionApi for loading extensions.
     pub fn api(&self) -> &ExtensionApi {
         &self.api

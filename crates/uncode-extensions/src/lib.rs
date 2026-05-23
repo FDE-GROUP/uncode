@@ -11,5 +11,8 @@ pub mod hooks;
 pub mod loader;
 pub mod tool;
 
+#[cfg(feature = "wasm")]
+pub mod wasm;
+
 #[cfg(test)]
 mod tests;
