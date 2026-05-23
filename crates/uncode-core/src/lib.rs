@@ -24,6 +24,7 @@ pub mod skill;
 pub mod template;
 pub mod text;
 pub mod tool;
+pub mod ui_action;
 pub mod workspace_graph;
 
 #[cfg(test)]
