@@ -295,6 +295,13 @@ pub enum AgentEvent {
         extension_name: String,
         count: usize,
     },
+
+    // ── Governance: phase state machine ──
+    /// PhaseStateMachine transition within a turn (Cognize→Adjudicate→Execute cycle).
+    PhaseTransition {
+        #[serde(flatten)]
+        data: Box<PhaseTransitionEventData>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -455,6 +462,16 @@ pub struct ContextThresholdData {
     pub context_window: u64,
 }
 
+// ── Governance: PhaseStateMachine transition event data ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhaseTransitionEventData {
+    pub from: String,
+    pub to: String,
+    pub trigger: String,
+    pub turn: u64,
+}
+
 /// Hook 返回值 — 事件监听器可返回控制指令修改 Agent 行为。
 ///
 /// **Pi:** 对应 Harness hook 的 typed return（block context / patch tool result / cancel compact 等）。
@@ -585,6 +602,7 @@ pub fn agent_event_tag(event: &AgentEvent) -> &'static str {
         AgentEvent::EvaluationScore { .. } => "evaluation_score",
         AgentEvent::AgentSettled { .. } => "agent_settled",
         AgentEvent::ContextInjected { .. } => "context_injected",
+        AgentEvent::PhaseTransition { .. } => "phase_transition",
     }
 }
 
@@ -625,7 +643,7 @@ fn turn_lifecycle_rank(tag: &str) -> Option<u8> {
     match tag {
         "turn_start" => Some(0),
         "message_start" => Some(1),
-        "content_delta" | "tool_call_start" => Some(2),
+        "content_delta" | "tool_call_start" | "phase_transition" => Some(2),
         "tool_call_progress" => Some(3),
         "tool_call_end" => Some(4),
         "message_end" => Some(5),
