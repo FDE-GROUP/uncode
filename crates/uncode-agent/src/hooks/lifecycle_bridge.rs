@@ -207,6 +207,38 @@ impl ExtensionLifecycleBridge {
         self.registry.fire(LifecycleHook::MessageUpdate, &ctx).await
     }
 
+    pub async fn fire_message_start(
+        &self,
+        session_id: &str,
+        role: &str,
+        message_id: &str,
+    ) -> HookResult {
+        let ctx = HookContext {
+            session_id: Some(session_id.to_string()),
+            event: HookEvent::MessageStart {
+                role: role.to_string(),
+                message_id: message_id.to_string(),
+            },
+        };
+        self.registry.fire(LifecycleHook::MessageStart, &ctx).await
+    }
+
+    pub async fn fire_message_end(
+        &self,
+        session_id: &str,
+        role: &str,
+        message_id: &str,
+    ) -> HookResult {
+        let ctx = HookContext {
+            session_id: Some(session_id.to_string()),
+            event: HookEvent::MessageEnd {
+                role: role.to_string(),
+                message_id: message_id.to_string(),
+            },
+        };
+        self.registry.fire(LifecycleHook::MessageEnd, &ctx).await
+    }
+
     // ── Model events ──
 
     pub async fn fire_model_select(
@@ -419,5 +451,17 @@ impl ExtensionLifecycleBridge {
         self.registry
             .fire(LifecycleHook::ThinkingLevelSelect, &ctx)
             .await
+    }
+
+    // ── User bash (#411) ──
+
+    pub async fn fire_user_bash(&self, session_id: &str, command: &str) -> HookResult {
+        let ctx = HookContext {
+            session_id: Some(session_id.to_string()),
+            event: HookEvent::UserBash {
+                command: command.to_string(),
+            },
+        };
+        self.registry.fire(LifecycleHook::UserBash, &ctx).await
     }
 }
