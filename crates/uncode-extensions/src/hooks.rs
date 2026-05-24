@@ -23,6 +23,34 @@ impl Default for HookResult {
     }
 }
 
+/// Source of user input for the `Input` hook.
+///
+/// **Pi:** `InputEvent.source` — "interactive" | "rpc" | "extension".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputSource {
+    Interactive,
+    Rpc,
+    Extension,
+}
+
+/// Input hook action — what the extension decided to do with user input.
+///
+/// Returned via `HookModification::input_action` when an `Input` hook fires.
+///
+/// **Pi:** `InputEventResult { action: "continue" | "transform" | "handled", text?, images? }`.
+#[derive(Debug, Clone)]
+pub enum InputAction {
+    /// Pass through the original input unchanged.
+    Continue,
+    /// Replace the input text and/or images.
+    Transform {
+        text: Option<String>,
+        images: Option<Vec<String>>,
+    },
+    /// Extension fully handled the input — skip normal processing.
+    Handled,
+}
+
 /// Modification payload — what an extension wants to change.
 ///
 /// **Pi:** 对照 `ContextEventResult { messages }`、`ToolResultEventResult { content, details, isError }` 等。
@@ -40,6 +68,8 @@ pub struct HookModification {
     pub terminate_override: Option<bool>,
     /// For Context: additional messages to append before LLM call.
     pub additional_messages: Option<Vec<uncode_core::message::Message>>,
+    /// For Input: transform or handle user input.
+    pub input_action: Option<InputAction>,
 }
 
 /// Agent 生命周期钩子（扩展注入点）。
@@ -88,6 +118,11 @@ pub enum LifecycleHook {
     SessionBeforeTree,
     /// After session tree navigation completed — notification with newLeafId/oldLeafId/summary.
     SessionTree,
+    // 用户输入拦截 (#396)
+    /// Before user input is processed — extensions can transform or handle it.
+    Input,
+    /// Thinking level changed notification.
+    ThinkingLevelSelect,
 }
 
 impl LifecycleHook {
@@ -120,6 +155,8 @@ impl LifecycleHook {
             Self::SessionBeforeFork => "session_before_fork",
             Self::SessionBeforeTree => "session_before_tree",
             Self::SessionTree => "session_tree",
+            Self::Input => "input",
+            Self::ThinkingLevelSelect => "thinking_level_select",
         }
     }
 }
@@ -161,6 +198,17 @@ pub enum HookEvent {
         new_leaf_id: String,
         old_leaf_id: String,
         summary: Option<String>,
+    },
+    /// User input payload — source, text, optional images.
+    Input {
+        source: InputSource,
+        text: String,
+        images: Vec<String>,
+    },
+    /// Thinking level change notification.
+    ThinkingLevelSelect {
+        level: String,
+        previous_level: Option<String>,
     },
     None,
 }
