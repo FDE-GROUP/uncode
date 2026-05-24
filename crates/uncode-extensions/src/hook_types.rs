@@ -195,4 +195,86 @@ mod tests {
         let result: Option<BashInput> = try_parse_input(&args);
         assert!(result.is_none());
     }
+
+    #[test]
+    fn parse_write_input() {
+        let args = serde_json::json!({"path": "out.rs", "content": "fn main() {}"});
+        let input: WriteInput = try_parse_input(&args).unwrap();
+        assert_eq!(input.path, "out.rs");
+        assert_eq!(input.content, "fn main() {}");
+    }
+
+    #[test]
+    fn parse_grep_input() {
+        let args = serde_json::json!({"pattern": "TODO", "path": "src/", "include": "*.rs"});
+        let input: GrepInput = try_parse_input(&args).unwrap();
+        assert_eq!(input.pattern, "TODO");
+        assert_eq!(input.path.as_deref(), Some("src/"));
+        assert_eq!(input.include.as_deref(), Some("*.rs"));
+    }
+
+    #[test]
+    fn parse_grep_input_minimal() {
+        let args = serde_json::json!({"pattern": "fn main"});
+        let input: GrepInput = try_parse_input(&args).unwrap();
+        assert_eq!(input.pattern, "fn main");
+        assert!(input.path.is_none());
+        assert!(input.include.is_none());
+    }
+
+    #[test]
+    fn parse_find_input() {
+        let args = serde_json::json!({"pattern": "*.rs", "path": "crates/"});
+        let input: FindInput = try_parse_input(&args).unwrap();
+        assert_eq!(input.pattern, "*.rs");
+        assert_eq!(input.path.as_deref(), Some("crates/"));
+    }
+
+    #[test]
+    fn parse_ls_input() {
+        let args = serde_json::json!({"path": "/home/user/project"});
+        let input: LsInput = try_parse_input(&args).unwrap();
+        assert_eq!(input.path, "/home/user/project");
+    }
+
+    #[test]
+    fn parse_web_fetch_input() {
+        let args = serde_json::json!({"url": "https://example.com"});
+        let input: WebFetchInput = try_parse_input(&args).unwrap();
+        assert_eq!(input.url, "https://example.com");
+    }
+
+    #[test]
+    fn parse_web_search_input() {
+        let args = serde_json::json!({"query": "rust async"});
+        let input: WebSearchInput = try_parse_input(&args).unwrap();
+        assert_eq!(input.query, "rust async");
+    }
+
+    #[test]
+    fn parse_bash_result() {
+        let val = serde_json::json!({"output": "hello", "exit_code": 0});
+        let result: BashResult = try_parse_input(&val).unwrap();
+        assert_eq!(result.output, "hello");
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[test]
+    fn parse_read_result() {
+        let val = serde_json::json!({"content": "file contents"});
+        let result: ReadResult = try_parse_input(&val).unwrap();
+        assert_eq!(result.content, "file contents");
+    }
+
+    #[test]
+    fn parse_edit_input_with_replace_all() {
+        let args = serde_json::json!({
+            "path": "main.rs",
+            "old_string": "old",
+            "new_string": "new",
+            "replace_all": true
+        });
+        let input: EditInput = try_parse_input(&args).unwrap();
+        assert_eq!(input.replace_all, Some(true));
+    }
 }
