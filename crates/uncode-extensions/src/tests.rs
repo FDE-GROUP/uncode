@@ -525,6 +525,12 @@ fn test_register_tool_with_callback_delegates() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     api.register_tool(Arc::new(HelloTool)).unwrap();
     assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -543,6 +549,12 @@ fn test_register_tool_callback_error_propagates() {
         registry,
         std::sync::Arc::new(crate::event_bus::EventBus::new()),
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -673,6 +685,12 @@ fn test_register_command_with_callback() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     api.register_command(CommandRegistration {
         name: "ext-cmd".into(),
@@ -748,6 +766,12 @@ fn test_register_shortcut_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -848,6 +872,12 @@ fn test_set_header_with_callback() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     api.set_header(None).unwrap();
     assert!(called.load(std::sync::atomic::Ordering::SeqCst));
@@ -886,6 +916,12 @@ fn test_set_footer_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -933,6 +969,12 @@ fn test_set_indicator_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -1008,6 +1050,12 @@ fn test_set_theme_with_callback() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     api.set_theme(crate::theme_control::ThemeControlConfig {
         theme_name: "monokai".into(),
@@ -1054,6 +1102,12 @@ fn test_set_thinking_labels_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -1352,6 +1406,12 @@ fn test_exec_empty_command_returns_error() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     let result = api.exec("");
     assert!(result.unwrap_err().contains("empty"));
@@ -1397,6 +1457,12 @@ fn test_exec_with_callback_success() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     let result = api.exec("cargo build").unwrap();
     assert_eq!(result.exit_code, 0);
@@ -1447,6 +1513,12 @@ fn test_exec_with_callback_denied() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     let result = api.exec("rm -rf /");
     assert!(result.unwrap_err().contains("denied"));
@@ -1493,6 +1565,12 @@ fn test_send_message_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
     );
@@ -1552,6 +1630,12 @@ fn test_append_entry_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
     );
 
@@ -1817,4 +1901,414 @@ fn test_extension_source_display() {
 fn test_state_tracker_default() {
     let tracker = crate::state::ExtensionStateTracker::default();
     assert!(tracker.is_empty());
+}
+
+// ── P1: Query API tests (#408) ──
+
+#[test]
+fn test_set_label_success() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let called = Arc::new(AtomicBool::new(false));
+    let called_clone = called.clone();
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::with_callbacks(
+        registry,
+        Arc::new(crate::event_bus::EventBus::new()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(Arc::new(
+            move |entry_id: String, label: String| -> Result<(), String> {
+                assert_eq!(entry_id, "entry-1");
+                assert_eq!(label, "important");
+                called_clone.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+        ) as crate::api::SetLabelCallback),
+        None,
+        None,
+        None,
+        None,
+        None,
+    );
+    api.set_label("entry-1".into(), "important".into()).unwrap();
+    assert!(called.load(Ordering::SeqCst));
+}
+
+#[test]
+fn test_set_label_empty_entry_id() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    let result = api.set_label("".into(), "label".into());
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("empty"));
+}
+
+#[test]
+fn test_set_label_no_callback() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    let result = api.set_label("entry-1".into(), "label".into());
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("no callback"));
+}
+
+#[test]
+fn test_get_label_success() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::with_callbacks(
+        registry,
+        Arc::new(crate::event_bus::EventBus::new()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(
+            Arc::new(|entry_id: &str| -> Result<Option<String>, String> {
+                if entry_id == "entry-1" {
+                    Ok(Some("my-label".into()))
+                } else {
+                    Ok(None)
+                }
+            }) as crate::api::GetLabelCallback,
+        ),
+        None,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(api.get_label("entry-1").unwrap(), Some("my-label".into()));
+    assert_eq!(api.get_label("entry-2").unwrap(), None);
+}
+
+#[test]
+fn test_get_label_empty_entry_id() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    let result = api.get_label("");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_get_label_no_callback() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    let result = api.get_label("entry-1");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_get_active_tools() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::with_callbacks(
+        registry,
+        Arc::new(crate::event_bus::EventBus::new()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(Arc::new(|| vec!["read".into(), "bash".into()]) as crate::api::GetActiveToolsCallback),
+        None,
+        None,
+        None,
+    );
+    let tools = api.get_active_tools();
+    assert_eq!(tools, vec!["read", "bash"]);
+}
+
+#[test]
+fn test_get_active_tools_no_callback() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    assert!(api.get_active_tools().is_empty());
+}
+
+#[test]
+fn test_get_all_tools() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::with_callbacks(
+        registry,
+        Arc::new(crate::event_bus::EventBus::new()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(Arc::new(|| {
+            vec![
+                crate::api::ToolInfo {
+                    name: "read".into(),
+                    description: "Read files".into(),
+                },
+                crate::api::ToolInfo {
+                    name: "bash".into(),
+                    description: "Run commands".into(),
+                },
+            ]
+        }) as crate::api::GetAllToolsCallback),
+        None,
+        None,
+    );
+    let tools = api.get_all_tools();
+    assert_eq!(tools.len(), 2);
+    assert_eq!(tools[0].name, "read");
+    assert_eq!(tools[1].description, "Run commands");
+}
+
+#[test]
+fn test_get_all_tools_no_callback() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    assert!(api.get_all_tools().is_empty());
+}
+
+// ── P2: Runtime config tests (#408) ──
+
+#[test]
+fn test_get_thinking_level() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::with_callbacks(
+        registry,
+        Arc::new(crate::event_bus::EventBus::new()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(Arc::new(|| Some("high".into())) as crate::api::GetThinkingLevelCallback),
+        None,
+    );
+    assert_eq!(api.get_thinking_level(), Some("high".into()));
+}
+
+#[test]
+fn test_get_thinking_level_no_callback() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    assert!(api.get_thinking_level().is_none());
+}
+
+#[test]
+fn test_set_thinking_level_success() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let called = Arc::new(AtomicBool::new(false));
+    let called_clone = called.clone();
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::with_callbacks(
+        registry,
+        Arc::new(crate::event_bus::EventBus::new()),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(Arc::new(move |level: String| -> Result<(), String> {
+            assert_eq!(level, "high");
+            called_clone.store(true, Ordering::SeqCst);
+            Ok(())
+        }) as crate::api::SetThinkingLevelCallback),
+    );
+    api.set_thinking_level("high".into()).unwrap();
+    assert!(called.load(Ordering::SeqCst));
+}
+
+#[test]
+fn test_set_thinking_level_empty() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    let result = api.set_thinking_level("".into());
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("empty"));
+}
+
+#[test]
+fn test_set_thinking_level_no_callback() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    let result = api.set_thinking_level("high".into());
+    assert!(result.is_err());
+    assert!(result.unwrap_err().contains("no callback"));
+}
+
+// ── P2: Feature-flag system via ExtensionApi (#408) ──
+
+#[test]
+fn test_flag_register_and_get() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    api.register_flag("dark_mode".into(), crate::flag::FlagValue::Bool(true));
+    let val = api.get_flag("dark_mode").unwrap();
+    assert_eq!(val.as_bool(), Some(true));
+}
+
+#[test]
+fn test_flag_get_unregistered() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    assert!(api.get_flag("nope").is_none());
+}
+
+#[test]
+fn test_flag_string_value() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    api.register_flag(
+        "theme".into(),
+        crate::flag::FlagValue::String("monokai".into()),
+    );
+    assert_eq!(api.get_flag("theme").unwrap().as_str(), Some("monokai"));
+}
+
+#[test]
+fn test_flag_overwrite() {
+    let registry = Arc::new(crate::hooks::HookRegistry::new());
+    let api = ExtensionApi::new(registry);
+    api.register_flag("flag".into(), crate::flag::FlagValue::Bool(false));
+    api.register_flag("flag".into(), crate::flag::FlagValue::Bool(true));
+    assert_eq!(api.get_flag("flag").unwrap().as_bool(), Some(true));
 }
