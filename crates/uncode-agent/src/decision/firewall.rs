@@ -303,24 +303,81 @@ impl ValidationRule for PermissionPolicyRule {
 
 // ── PathSafetyRule ──────────────────────────────────────
 
-/// 路径安全校验 — 确保文件操作路径在 CWD 范围内
-///
-/// 复现 `tools/mod.rs::resolve_path()` 的校验逻辑：
-/// - 相对路径基于 CWD 解析
-/// - 规范化以消除 `..` traversal
-/// - 拒绝逃逸出 CWD 的路径
+/// 路径安全模式
+enum PathSafetyMode {
+    /// 仅允许 CWD 内路径
+    CwdOnly,
+    /// CWD + allow_list 中的路径
+    AllowList {
+        allowed_dirs: Vec<std::path::PathBuf>,
+    },
+    /// 不限制（仅用于测试）
+    Unrestricted,
+}
+
+/// 路径安全校验 — 确保文件操作路径在允许范围内
 pub struct PathSafetyRule {
     cwd: std::path::PathBuf,
+    mode: PathSafetyMode,
 }
 
 impl PathSafetyRule {
     pub fn new(cwd: impl Into<std::path::PathBuf>) -> Self {
-        Self { cwd: cwd.into() }
+        Self {
+            cwd: cwd.into(),
+            mode: PathSafetyMode::CwdOnly,
+        }
+    }
+
+    pub fn with_allow_list(cwd: impl Into<std::path::PathBuf>, allow_list: &[String]) -> Self {
+        let allowed_dirs: Vec<std::path::PathBuf> = allow_list
+            .iter()
+            .map(|s| std::path::PathBuf::from(s))
+            .collect();
+        Self {
+            cwd: cwd.into(),
+            mode: PathSafetyMode::AllowList { allowed_dirs },
+        }
+    }
+
+    pub fn unrestricted() -> Self {
+        Self {
+            cwd: std::path::PathBuf::new(),
+            mode: PathSafetyMode::Unrestricted,
+        }
+    }
+
+    fn is_path_allowed(&self, resolved: &std::path::Path) -> bool {
+        match &self.mode {
+            PathSafetyMode::Unrestricted => true,
+            PathSafetyMode::CwdOnly => {
+                let canonical_cwd = self.cwd.canonicalize().unwrap_or_else(|_| self.cwd.clone());
+                resolved.starts_with(&canonical_cwd)
+            }
+            PathSafetyMode::AllowList { allowed_dirs } => {
+                let canonical_cwd = self.cwd.canonicalize().unwrap_or_else(|_| self.cwd.clone());
+                if resolved.starts_with(&canonical_cwd) {
+                    return true;
+                }
+                for dir in allowed_dirs {
+                    if let Ok(canonical_dir) = dir.canonicalize() {
+                        if resolved.starts_with(&canonical_dir) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            }
+        }
     }
 }
 
 impl ValidationRule for PathSafetyRule {
     fn validate(&self, action: &ParsedAction) -> Result<ValidationVerdict, ValidationError> {
+        if matches!(self.mode, PathSafetyMode::Unrestricted) {
+            return Ok(ValidationVerdict::approved());
+        }
+
         // 只检查有 file/path 参数的工具
         let path_key = if action.arguments.get("path").is_some() {
             "path"
@@ -362,8 +419,7 @@ impl ValidationRule for PathSafetyRule {
                 }
             };
 
-            let canonical_cwd = self.cwd.canonicalize().unwrap_or_else(|_| self.cwd.clone());
-            if !resolved.starts_with(&canonical_cwd) {
+            if !self.is_path_allowed(&resolved) {
                 return Ok(ValidationVerdict {
                     approved: false,
                     reason: Some(format!("path escapes workspace: {path_str}")),
@@ -514,12 +570,20 @@ pub fn build_firewall_from_config(
     );
     let ontology = uncode_ontology::builtin::coding_agent_ontology();
 
+    let path_rule = match &config.firewall.path_safety.mode {
+        uncode_shared::guardrails::PathSafetyMode::CwdOnly => PathSafetyRule::new(cwd),
+        uncode_shared::guardrails::PathSafetyMode::AllowList => {
+            PathSafetyRule::with_allow_list(cwd, &config.firewall.path_safety.allow_list)
+        }
+        uncode_shared::guardrails::PathSafetyMode::Unrestricted => PathSafetyRule::unrestricted(),
+    };
+
     SemanticFirewall {
         parser: Box::new(DefaultParser),
         validators: vec![
             Box::new(OntologyConstraintRule::new(ontology.clone())),
             Box::new(SchemaCoercionRule::new(Arc::clone(&registry))),
-            Box::new(PathSafetyRule::new(cwd)),
+            Box::new(path_rule),
             Box::new(PermissionPolicyRule::new(policy).with_auto_allow(auto_allow, auto_allow)),
         ],
         normalizer: Box::new(DeclarativeNormalizer::from_registry(&ontology)),
@@ -685,9 +749,35 @@ mod tests {
             arguments: serde_json::json!({"path": "src/main.rs"}),
         };
         let verdict = rule.validate(&action).unwrap();
-        // 在项目根目录下，src/main.rs 可能不存在，但规范化后仍在 CWD 内
-        // PathSafetyRule 应允许
-        // verdict.approved 取决于 src/main.rs 是否实际存在于 CWD
+        let _ = verdict;
+    }
+
+    #[test]
+    fn test_path_safety_unrestricted_allows_all() {
+        let rule = PathSafetyRule::unrestricted();
+        let action = ParsedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"path": "/etc/passwd"}),
+        };
+        let verdict = rule.validate(&action).unwrap();
+        assert!(verdict.approved, "unrestricted mode should allow any path");
+    }
+
+    #[test]
+    fn test_path_safety_allow_list() {
+        let tmp = std::env::temp_dir();
+        let allowed = vec![tmp.to_string_lossy().to_string()];
+        let rule =
+            PathSafetyRule::with_allow_list(std::path::PathBuf::from("/nonexistent"), &allowed);
+        // Path in allowed dir should pass
+        let test_path = tmp.join("test_file.txt");
+        let action = ParsedAction {
+            tool_name: "write".into(),
+            arguments: serde_json::json!({"path": test_path.to_string_lossy().to_string()}),
+        };
+        let verdict = rule.validate(&action).unwrap();
+        // May or may not pass depending on whether the temp file exists,
+        // but the allow_list logic should not immediately deny it
         let _ = verdict;
     }
 

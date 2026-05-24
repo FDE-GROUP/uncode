@@ -197,6 +197,8 @@ pub struct AgentLoop {
     extension_bridge: Option<crate::hooks::ExtensionLifecycleBridge>,
     /// 护栏配置 — 从 .uncode/guardrails.json 加载
     guardrail_config: std::sync::Mutex<uncode_shared::guardrails::GuardrailConfig>,
+    /// 事件路由器 — 治理层 sync dispatch
+    event_router: std::sync::Mutex<uncode_core::event::EventRouter>,
 }
 
 impl AgentLoop {
@@ -311,6 +313,7 @@ impl AgentLoop {
             guardrail_config: std::sync::Mutex::new(
                 uncode_shared::guardrails::GuardrailConfig::default(),
             ),
+            event_router: std::sync::Mutex::new(uncode_core::event::EventRouter::new()),
         }
     }
 
@@ -480,8 +483,12 @@ impl AgentLoop {
     }
 
     pub(crate) fn emit(&self, event: AgentEvent) {
-        if let Err(e) = self.event_tx.send(event) {
+        if let Err(e) = self.event_tx.send(event.clone()) {
             debug!("broadcast send failed (no receivers): {e}");
+        }
+        // EventRouter sync dispatch — fire-and-forget observation handlers
+        if let Ok(router) = self.event_router.lock() {
+            router.dispatch(&event);
         }
     }
 

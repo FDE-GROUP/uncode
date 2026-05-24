@@ -283,6 +283,69 @@ impl DecisionPolicy for EffectBasedPolicy {
     }
 }
 
+// ── CustomPolicy ────────────────────────────────────────
+
+/// 自定义裁决策略 — 从 AdjudicationPolicyConfig 的 rules[] 构建
+///
+/// 每条 PolicyRule 包含一个 pattern（工具名匹配）和 action（Block/Allow/AskUser）。
+/// AskUser 当前按 Block 处理，完整集成待后续迭代。
+pub struct CustomPolicy {
+    policy_name: String,
+    rules: Vec<uncode_shared::guardrails::PolicyRule>,
+}
+
+impl CustomPolicy {
+    pub fn from_config(config: &uncode_shared::guardrails::AdjudicationPolicyConfig) -> Self {
+        Self {
+            policy_name: config.name.clone(),
+            rules: config.rules.clone(),
+        }
+    }
+}
+
+impl DecisionPolicy for CustomPolicy {
+    fn evaluate(
+        &self,
+        _context: &DecisionContext,
+        action: &NormalizedAction,
+    ) -> Result<DecisionVerdict, AdjudicationError> {
+        for rule in &self.rules {
+            if action.tool_name == rule.pattern || rule.pattern == "*" {
+                match rule.action {
+                    uncode_shared::guardrails::PolicyAction::Block => {
+                        return Ok(DecisionVerdict::denied(format!(
+                            "blocked by policy '{}': tool '{}' matches rule '{}'",
+                            self.policy_name, action.tool_name, rule.pattern
+                        )));
+                    }
+                    uncode_shared::guardrails::PolicyAction::BlockAndWarn => {
+                        return Ok(DecisionVerdict::denied(format!(
+                            "blocked by policy '{}': tool '{}' (warn)",
+                            self.policy_name, action.tool_name
+                        )));
+                    }
+                    uncode_shared::guardrails::PolicyAction::AskUser => {
+                        // First version: treat as block
+                        return Ok(DecisionVerdict::denied(format!(
+                            "policy '{}' requires user approval for tool '{}'",
+                            self.policy_name, action.tool_name
+                        )));
+                    }
+                    uncode_shared::guardrails::PolicyAction::Allow => {
+                        // Explicitly allowed, continue to next rule
+                        continue;
+                    }
+                }
+            }
+        }
+        Ok(DecisionVerdict::approved())
+    }
+
+    fn name(&self) -> &'static str {
+        "custom_policy"
+    }
+}
+
 // ── Builder ─────────────────────────────────────────────
 
 /// 使用默认参数构建完整的 Adjudicator
@@ -477,5 +540,67 @@ mod tests {
         };
         let verdict = policy.evaluate(&make_context(1), &action).unwrap();
         assert!(verdict.allowed, "unknown tools should pass through");
+    }
+
+    // ── CustomPolicy ──
+
+    #[test]
+    fn test_custom_policy_blocks_matching_tool() {
+        let config = uncode_shared::guardrails::AdjudicationPolicyConfig {
+            name: "no_bash".into(),
+            enabled: true,
+            rules: vec![uncode_shared::guardrails::PolicyRule {
+                pattern: "bash".into(),
+                action: uncode_shared::guardrails::PolicyAction::Block,
+            }],
+        };
+        let policy = CustomPolicy::from_config(&config);
+        let action = NormalizedAction {
+            tool_name: "bash".into(),
+            arguments: serde_json::json!({"command": "ls"}),
+            normalized_fields: vec![],
+        };
+        let verdict = policy.evaluate(&make_context(1), &action).unwrap();
+        assert!(!verdict.allowed);
+    }
+
+    #[test]
+    fn test_custom_policy_allows_non_matching() {
+        let config = uncode_shared::guardrails::AdjudicationPolicyConfig {
+            name: "no_bash".into(),
+            enabled: true,
+            rules: vec![uncode_shared::guardrails::PolicyRule {
+                pattern: "bash".into(),
+                action: uncode_shared::guardrails::PolicyAction::Block,
+            }],
+        };
+        let policy = CustomPolicy::from_config(&config);
+        let action = NormalizedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"path": "a.rs"}),
+            normalized_fields: vec![],
+        };
+        let verdict = policy.evaluate(&make_context(1), &action).unwrap();
+        assert!(verdict.allowed);
+    }
+
+    #[test]
+    fn test_custom_policy_wildcard_blocks_all() {
+        let config = uncode_shared::guardrails::AdjudicationPolicyConfig {
+            name: "block_all".into(),
+            enabled: true,
+            rules: vec![uncode_shared::guardrails::PolicyRule {
+                pattern: "*".into(),
+                action: uncode_shared::guardrails::PolicyAction::Block,
+            }],
+        };
+        let policy = CustomPolicy::from_config(&config);
+        let action = NormalizedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"path": "a.rs"}),
+            normalized_fields: vec![],
+        };
+        let verdict = policy.evaluate(&make_context(1), &action).unwrap();
+        assert!(!verdict.allowed, "wildcard should block all tools");
     }
 }
