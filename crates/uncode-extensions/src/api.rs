@@ -110,6 +110,22 @@ pub type SendMessageCallback = Arc<dyn Fn(Message) -> Result<(), String> + Send 
 pub type AppendEntryCallback =
     Arc<dyn Fn(String, serde_json::Value) -> Result<(), String> + Send + Sync>;
 
+/// Result of a controlled shell command execution.
+///
+/// **Pi:** `pi.exec()` return type.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExecResult {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+
+/// Callback type for controlled shell execution. Injected by `uncode-cli`.
+///
+/// The host applies `PermissionPolicy` + `SAFE_COMMANDS` checks before execution.
+/// **Pi:** `pi.exec(command)`.
+pub type ExecCallback = Arc<dyn Fn(&str) -> Result<ExecResult, String> + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -141,6 +157,7 @@ pub struct ExtensionApi {
     session_callback: Option<SessionCallback>,
     send_message_callback: Option<SendMessageCallback>,
     append_entry_callback: Option<AppendEntryCallback>,
+    exec_callback: Option<ExecCallback>,
 }
 
 impl ExtensionApi {
@@ -173,6 +190,7 @@ impl ExtensionApi {
             session_callback: None,
             send_message_callback: None,
             append_entry_callback: None,
+            exec_callback: None,
         }
     }
 
@@ -206,6 +224,7 @@ impl ExtensionApi {
         session_callback: Option<SessionCallback>,
         send_message_callback: Option<SendMessageCallback>,
         append_entry_callback: Option<AppendEntryCallback>,
+        exec_callback: Option<ExecCallback>,
     ) -> Self {
         Self {
             registry,
@@ -235,6 +254,7 @@ impl ExtensionApi {
             session_callback,
             send_message_callback,
             append_entry_callback,
+            exec_callback,
         }
     }
 
@@ -633,5 +653,24 @@ impl ExtensionApi {
             .as_ref()
             .ok_or("append_entry not available: no callback configured")?;
         callback(custom_type, data)
+    }
+
+    // ── 受控 Shell 执行 (#397) ──
+
+    /// Execute a shell command through the host with permission checks.
+    ///
+    /// The host applies `PermissionPolicy` + `SAFE_COMMANDS` checks before execution.
+    /// Commands not in the safe list will be denied.
+    ///
+    /// **Pi:** `pi.exec(command)`.
+    pub fn exec(&self, command: &str) -> Result<ExecResult, String> {
+        if command.trim().is_empty() {
+            return Err("command must not be empty".into());
+        }
+        let callback = self
+            .exec_callback
+            .as_ref()
+            .ok_or("exec not available: no callback configured")?;
+        callback(command)
     }
 }
