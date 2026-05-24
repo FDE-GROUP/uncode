@@ -755,6 +755,14 @@ async fn main() -> anyhow::Result<()> {
         None,
         // exec callback — controlled shell execution (#397)
         None,
+        // P1: Query API callbacks
+        None, // set_label
+        None, // get_label
+        None, // get_active_tools
+        None, // get_all_tools
+        // P2: Runtime config callbacks
+        None, // get_thinking_level
+        None, // set_thinking_level
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::command::{CommandRegistration, ShortcutRegistration};
 use crate::event_bus::{EventBus, EventHandler, SubscriptionId};
+use crate::flag::{FlagRegistry, FlagValue, SharedFlagRegistry};
 use crate::header_footer::{FooterConfig, HeaderConfig, WorkingIndicatorConfig};
 use crate::hooks::{Extension, HookRegistry, LifecycleHook};
 use crate::message_renderer::MessageRenderConfig;
@@ -126,12 +127,54 @@ pub struct ExecResult {
 /// **Pi:** `pi.exec(command)`.
 pub type ExecCallback = Arc<dyn Fn(&str) -> Result<ExecResult, String> + Send + Sync>;
 
+// ── P1: Query API callbacks ──
+
+/// Callback type for setting a label on a session entry. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.setLabel(entryId, label)`.
+pub type SetLabelCallback = Arc<dyn Fn(String, String) -> Result<(), String> + Send + Sync>;
+
+/// Callback type for getting a label from a session entry. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.getLabel(entryId)`.
+pub type GetLabelCallback = Arc<dyn Fn(&str) -> Result<Option<String>, String> + Send + Sync>;
+
+/// Callback type for querying active tool names. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.getActiveTools()`.
+pub type GetActiveToolsCallback = Arc<dyn Fn() -> Vec<String> + Send + Sync>;
+
+/// Tool metadata returned by `getAllTools()`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ToolInfo {
+    pub name: String,
+    pub description: String,
+}
+
+/// Callback type for querying all available tools. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.getAllTools()`.
+pub type GetAllToolsCallback = Arc<dyn Fn() -> Vec<ToolInfo> + Send + Sync>;
+
+// ── P2: Runtime config callbacks ──
+
+/// Callback type for getting current thinking level. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.getThinkingLevel()`.
+pub type GetThinkingLevelCallback = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+
+/// Callback type for setting thinking level. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.setThinkingLevel(level)`.
+pub type SetThinkingLevelCallback = Arc<dyn Fn(String) -> Result<(), String> + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
 pub struct ExtensionApi {
     registry: Arc<HookRegistry>,
     event_bus: Arc<EventBus>,
+    flag_registry: SharedFlagRegistry,
     tool_callback: Option<ToolRegistrationCallback>,
     tool_unregister_callback: Option<ToolUnregisterCallback>,
     command_callback: Option<CommandRegistrationCallback>,
@@ -158,6 +201,14 @@ pub struct ExtensionApi {
     send_message_callback: Option<SendMessageCallback>,
     append_entry_callback: Option<AppendEntryCallback>,
     exec_callback: Option<ExecCallback>,
+    // P1: Query API
+    set_label_callback: Option<SetLabelCallback>,
+    get_label_callback: Option<GetLabelCallback>,
+    get_active_tools_callback: Option<GetActiveToolsCallback>,
+    get_all_tools_callback: Option<GetAllToolsCallback>,
+    // P2: Runtime config
+    get_thinking_level_callback: Option<GetThinkingLevelCallback>,
+    set_thinking_level_callback: Option<SetThinkingLevelCallback>,
 }
 
 impl ExtensionApi {
@@ -165,6 +216,7 @@ impl ExtensionApi {
         Self {
             registry,
             event_bus: Arc::new(EventBus::new()),
+            flag_registry: Arc::new(FlagRegistry::new()),
             tool_callback: None,
             tool_unregister_callback: None,
             command_callback: None,
@@ -191,6 +243,12 @@ impl ExtensionApi {
             send_message_callback: None,
             append_entry_callback: None,
             exec_callback: None,
+            set_label_callback: None,
+            get_label_callback: None,
+            get_active_tools_callback: None,
+            get_all_tools_callback: None,
+            get_thinking_level_callback: None,
+            set_thinking_level_callback: None,
         }
     }
 
@@ -225,10 +283,17 @@ impl ExtensionApi {
         send_message_callback: Option<SendMessageCallback>,
         append_entry_callback: Option<AppendEntryCallback>,
         exec_callback: Option<ExecCallback>,
+        set_label_callback: Option<SetLabelCallback>,
+        get_label_callback: Option<GetLabelCallback>,
+        get_active_tools_callback: Option<GetActiveToolsCallback>,
+        get_all_tools_callback: Option<GetAllToolsCallback>,
+        get_thinking_level_callback: Option<GetThinkingLevelCallback>,
+        set_thinking_level_callback: Option<SetThinkingLevelCallback>,
     ) -> Self {
         Self {
             registry,
             event_bus,
+            flag_registry: Arc::new(FlagRegistry::new()),
             tool_callback,
             tool_unregister_callback,
             command_callback,
@@ -255,6 +320,12 @@ impl ExtensionApi {
             send_message_callback,
             append_entry_callback,
             exec_callback,
+            set_label_callback,
+            get_label_callback,
+            get_active_tools_callback,
+            get_all_tools_callback,
+            get_thinking_level_callback,
+            set_thinking_level_callback,
         }
     }
 
@@ -672,5 +743,100 @@ impl ExtensionApi {
             .as_ref()
             .ok_or("exec not available: no callback configured")?;
         callback(command)
+    }
+
+    // ── P1: Query APIs (#408) ──
+
+    /// Set a label on a session entry.
+    ///
+    /// **Pi:** `pi.setLabel(entryId, label)`.
+    pub fn set_label(&self, entry_id: String, label: String) -> Result<(), String> {
+        if entry_id.is_empty() {
+            return Err("entry_id must not be empty".into());
+        }
+        let callback = self
+            .set_label_callback
+            .as_ref()
+            .ok_or("set_label not available: no callback configured")?;
+        callback(entry_id, label)
+    }
+
+    /// Get the label of a session entry.
+    ///
+    /// **Pi:** `pi.getLabel(entryId)`.
+    pub fn get_label(&self, entry_id: &str) -> Result<Option<String>, String> {
+        if entry_id.is_empty() {
+            return Err("entry_id must not be empty".into());
+        }
+        let callback = self
+            .get_label_callback
+            .as_ref()
+            .ok_or("get_label not available: no callback configured")?;
+        callback(entry_id)
+    }
+
+    /// Get the list of currently active (registered) tool names.
+    ///
+    /// **Pi:** `pi.getActiveTools()`.
+    pub fn get_active_tools(&self) -> Vec<String> {
+        if let Some(callback) = &self.get_active_tools_callback {
+            callback()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get metadata for all available tools.
+    ///
+    /// **Pi:** `pi.getAllTools()`.
+    pub fn get_all_tools(&self) -> Vec<ToolInfo> {
+        if let Some(callback) = &self.get_all_tools_callback {
+            callback()
+        } else {
+            Vec::new()
+        }
+    }
+
+    // ── P2: Runtime config (#408) ──
+
+    /// Get the current thinking level.
+    ///
+    /// **Pi:** `pi.getThinkingLevel()`.
+    pub fn get_thinking_level(&self) -> Option<String> {
+        if let Some(callback) = &self.get_thinking_level_callback {
+            callback()
+        } else {
+            None
+        }
+    }
+
+    /// Set the thinking level.
+    ///
+    /// **Pi:** `pi.setThinkingLevel(level)`.
+    pub fn set_thinking_level(&self, level: String) -> Result<(), String> {
+        if level.is_empty() {
+            return Err("level must not be empty".into());
+        }
+        let callback = self
+            .set_thinking_level_callback
+            .as_ref()
+            .ok_or("set_thinking_level not available: no callback configured")?;
+        callback(level)
+    }
+
+    // ── P2: Feature-flag system (#408) ──
+
+    /// Register a feature flag with a default value.
+    ///
+    /// **Pi:** `pi.registerFlag(name, defaultValue)`.
+    pub fn register_flag(&self, name: String, default: FlagValue) {
+        self.flag_registry.register(name, default);
+    }
+
+    /// Get the current value of a feature flag.
+    ///
+    /// **Pi:** `pi.getFlag(name)`.
+    pub fn get_flag(&self, name: &str) -> Option<FlagValue> {
+        self.flag_registry.get(name)
     }
 }
