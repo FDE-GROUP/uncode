@@ -67,6 +67,7 @@ async fn execute_prepared_tool_shared(
     event_tx: broadcast::Sender<AgentEvent>,
     hooks: Option<Arc<dyn ToolHooks>>,
     execution_env: Arc<dyn ExecutionEnv>,
+    timeout_secs: u64,
     id: String,
     name: String,
     prepared_args: serde_json::Value,
@@ -99,6 +100,7 @@ async fn execute_prepared_tool_shared(
     };
 
     let mut tool_result = if let Some(exec) = executor {
+        let timeout_duration = std::time::Duration::from_secs(timeout_secs);
         tokio::select! {
             _ = child.cancelled() => ToolResult::err("cancelled"),
             r = exec.execute_with_context(prepared_args, ctx) => {
@@ -106,6 +108,10 @@ async fn execute_prepared_tool_shared(
                     Ok(tr) => tr,
                     Err(e) => ToolResult::err(format!("error: {e}")),
                 }
+            }
+            _ = tokio::time::sleep(timeout_duration) => {
+                child.cancel();
+                ToolResult::err(format!("tool timed out after {timeout_secs}s"))
             }
         }
     } else {
@@ -657,12 +663,14 @@ impl AgentLoop {
         prepared_args: serde_json::Value,
         raw_args: serde_json::Value,
     ) -> ToolResult {
+        let timeout_secs = self.guardrail_config().decision.tool_timeout_seconds;
         execute_prepared_tool_shared(
             Arc::clone(&self.tool_registry),
             self.cancel_token.clone(),
             self.event_tx.clone(),
             self.tool_hooks.clone(),
             Arc::clone(&self.execution_env),
+            timeout_secs,
             id.to_string(),
             name.to_string(),
             prepared_args,
@@ -1990,6 +1998,8 @@ impl AgentLoop {
                                         let tx = self.event_tx.clone();
                                         let hooks = self.tool_hooks.clone();
                                         let exec_env = Arc::clone(&self.execution_env);
+                                        let timeout_secs =
+                                            self.guardrail_config().decision.tool_timeout_seconds;
 
                                         let executed =
                                             futures::future::join_all(ready.into_iter().map(
@@ -1999,9 +2009,10 @@ impl AgentLoop {
                                                     let etx = tx.clone();
                                                     let hk = hooks.clone();
                                                     let env = exec_env.clone();
+                                                    let ts = timeout_secs;
                                                     async move {
                                                         let tr = execute_prepared_tool_shared(
-                                                            reg, ct, etx, hk, env, id, name,
+                                                            reg, ct, etx, hk, env, ts, id, name,
                                                             prepared, raw_args,
                                                         )
                                                         .await;
