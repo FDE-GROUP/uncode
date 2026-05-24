@@ -203,46 +203,16 @@ impl AgentLoop {
         model_id: String,
     ) -> Self {
         let (event_tx, _) = broadcast::channel(256);
-        Self {
+        Self::with_event_sender(
             api_registry,
             model_registry,
-            api_keys: Arc::new(api_keys),
+            api_keys,
             tool_registry,
             session_store,
             system_prompt,
             model_id,
-            session_id: None,
             event_tx,
-            cancel_token: CancellationToken::new(),
-            tool_hooks: None,
-            execution_env: Arc::new(LocalExecutionEnv::new()),
-            message_queue: tokio::sync::Mutex::new(MessageQueue::new()),
-            should_stop_after_turn: None,
-            prepare_next_turn: None,
-            transform_context: None,
-            on_payload: None,
-            on_response: None,
-            active_run: Arc::new(AtomicBool::new(false)),
-            graph_cache: None,
-            compaction_config: CompactionConfig::default(),
-            skill_registry: None,
-            proposal_acc: std::sync::Mutex::new(
-                crate::decision::proposal::ProposalAccumulator::new(),
-            ),
-            firewall: std::sync::Mutex::new(None),
-            evolution: std::sync::Mutex::new(uncode_shared::evolution::EvolutionEngine::new(3)),
-            working_memory: std::sync::Mutex::new(
-                crate::cognition::working_memory::WorkingMemory::new(0),
-            ),
-            episode_memory: std::sync::Mutex::new(crate::cognition::episode::EpisodeMemory::new(
-                100,
-            )),
-            memory_manager: crate::cognition::memory::MemoryManager::new(
-                crate::cognition::memory::MemoryConfig::default(),
-            ),
-            adjudicator: std::sync::Mutex::new(None),
-            extension_bridge: None,
-        }
+        )
     }
 
     /// Set compaction configuration.
