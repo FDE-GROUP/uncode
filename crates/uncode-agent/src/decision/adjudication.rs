@@ -53,6 +53,10 @@ impl Adjudicator {
         Self { policies }
     }
 
+    pub fn add_policy(&mut self, policy: Box<dyn DecisionPolicy>) {
+        self.policies.push(policy);
+    }
+
     /// 对所有策略依次裁决。任一策略拒绝则立即返回。
     pub fn adjudicate(
         &self,
@@ -602,5 +606,18 @@ mod tests {
         };
         let verdict = policy.evaluate(&make_context(1), &action).unwrap();
         assert!(!verdict.allowed, "wildcard should block all tools");
+    }
+
+    #[test]
+    fn test_add_policy_appends_to_chain() {
+        let adj = Adjudicator::new(vec![]);
+        assert_eq!(adj.policies.len(), 0);
+
+        let mut adj = adj;
+        adj.add_policy(Box::new(TurnLimitPolicy::new(50)));
+        assert_eq!(adj.policies.len(), 1);
+
+        adj.add_policy(Box::new(CancellationPolicy::new(CancellationToken::new())));
+        assert_eq!(adj.policies.len(), 2);
     }
 }
