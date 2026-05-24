@@ -247,4 +247,62 @@ impl ExtensionLifecycleBridge {
             .fire(LifecycleHook::ResourcesDiscover, &ctx)
             .await
     }
+
+    // ── Session 生命周期拦截 (#395) ──
+
+    pub async fn fire_session_before_switch(&self, session_id: &str, target_session_id: &str) -> HookResult {
+        let ctx = HookContext {
+            session_id: Some(session_id.to_string()),
+            event: HookEvent::SessionSwitch {
+                session_id: target_session_id.to_string(),
+            },
+        };
+        self.registry
+            .fire(LifecycleHook::SessionBeforeSwitch, &ctx)
+            .await
+    }
+
+    pub async fn fire_session_before_fork(&self, session_id: &str, entry_id: &str) -> HookResult {
+        let ctx = HookContext {
+            session_id: Some(session_id.to_string()),
+            event: HookEvent::SessionFork {
+                entry_id: entry_id.to_string(),
+            },
+        };
+        self.registry
+            .fire(LifecycleHook::SessionBeforeFork, &ctx)
+            .await
+    }
+
+    pub async fn fire_session_before_tree(&self, session_id: &str, entry_id: &str) -> HookResult {
+        let ctx = HookContext {
+            session_id: Some(session_id.to_string()),
+            event: HookEvent::SessionTreeNav {
+                entry_id: entry_id.to_string(),
+            },
+        };
+        self.registry
+            .fire(LifecycleHook::SessionBeforeTree, &ctx)
+            .await
+    }
+
+    pub async fn fire_session_tree(
+        &self,
+        session_id: &str,
+        new_leaf_id: &str,
+        old_leaf_id: &str,
+        summary: Option<&str>,
+    ) -> HookResult {
+        let ctx = HookContext {
+            session_id: Some(session_id.to_string()),
+            event: HookEvent::SessionTreeResult {
+                new_leaf_id: new_leaf_id.to_string(),
+                old_leaf_id: old_leaf_id.to_string(),
+                summary: summary.map(|s| s.to_string()),
+            },
+        };
+        self.registry
+            .fire(LifecycleHook::SessionTree, &ctx)
+            .await
+    }
 }

@@ -79,6 +79,15 @@ pub enum LifecycleHook {
     ToolExecutionEnd,
     // 资源发现
     ResourcesDiscover,
+    // Session 生命周期拦截 (#395)
+    /// Before session switch — extensions can cancel.
+    SessionBeforeSwitch,
+    /// Before session fork — extensions can cancel or skip conversation restore.
+    SessionBeforeFork,
+    /// Before session tree navigation — extensions can cancel or provide custom summary.
+    SessionBeforeTree,
+    /// After session tree navigation completed — notification with newLeafId/oldLeafId/summary.
+    SessionTree,
 }
 
 impl LifecycleHook {
@@ -107,6 +116,10 @@ impl LifecycleHook {
             Self::ToolExecutionUpdate => "tool_execution_update",
             Self::ToolExecutionEnd => "tool_execution_end",
             Self::ResourcesDiscover => "resources_discover",
+            Self::SessionBeforeSwitch => "session_before_switch",
+            Self::SessionBeforeFork => "session_before_fork",
+            Self::SessionBeforeTree => "session_before_tree",
+            Self::SessionTree => "session_tree",
         }
     }
 }
@@ -131,6 +144,18 @@ pub enum HookEvent {
     ContextSnapshot(Vec<Message>),
     /// LLM request payload about to be sent (read-only snapshot for extensions).
     ProviderRequest(serde_json::Value),
+    /// Session switch payload — target session ID.
+    SessionSwitch { session_id: String },
+    /// Session fork payload — source entry ID.
+    SessionFork { entry_id: String },
+    /// Session tree navigation payload — target entry ID.
+    SessionTreeNav { entry_id: String },
+    /// Session tree completed notification.
+    SessionTreeResult {
+        new_leaf_id: String,
+        old_leaf_id: String,
+        summary: Option<String>,
+    },
     None,
 }
 
