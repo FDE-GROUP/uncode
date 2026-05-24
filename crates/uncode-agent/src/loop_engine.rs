@@ -171,6 +171,7 @@ pub struct AgentLoop {
     on_payload: Option<PayloadCallback>,
     on_response: Option<ResponseCallback>,
     active_run: Arc<AtomicBool>,
+    idle_notify: tokio::sync::Notify,
     graph_cache: Option<Arc<crate::workspace_graph::WorkspaceGraphCache>>,
     compaction_config: CompactionConfig,
     skill_registry: Option<uncode_core::skill::SkillRegistry>,
@@ -283,6 +284,7 @@ impl AgentLoop {
             on_payload: None,
             on_response: None,
             active_run: Arc::new(AtomicBool::new(false)),
+            idle_notify: tokio::sync::Notify::new(),
             graph_cache: None,
             compaction_config: CompactionConfig::default(),
             skill_registry: None,
@@ -459,7 +461,9 @@ impl AgentLoop {
     }
 
     pub(crate) fn emit(&self, event: AgentEvent) {
-        let _ = self.event_tx.send(event);
+        if let Err(e) = self.event_tx.send(event) {
+            debug!("broadcast send failed (no receivers): {e}");
+        }
     }
 
     /// 持久化决策审计记录到 SessionStore (#387)
@@ -644,7 +648,7 @@ impl AgentLoop {
     /// Wait until no run is active (for external synchronization)
     pub async fn wait_for_idle(&self) {
         while self.is_run_active() {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            self.idle_notify.notified().await;
         }
     }
 
@@ -671,8 +675,9 @@ impl AgentLoop {
 
         let result = self.run_inner(user_message).await;
 
-        // Always clear active_run flag
+        // Always clear active_run flag and notify waiters
         self.active_run.store(false, Ordering::Release);
+        self.idle_notify.notify_waiters();
 
         result
     }
