@@ -15,6 +15,7 @@ use crate::tool::ExtensionTool;
 use uncode_core::dialog::{DialogRequest, DialogResponse};
 use uncode_core::overlay::{OverlayAction, OverlayConfig, OverlayContent};
 use uncode_core::ui_action::{NotifyType, UiAction, WidgetConfig};
+use uncode_core::message::Message;
 
 /// Callback type for tool registration. Injected by `uncode-agent`.
 ///
@@ -102,6 +103,14 @@ pub type ResourcePathCallback =
 pub type SessionCallback =
     Arc<dyn Fn(SessionAction) -> Result<SessionResponse, String> + Send + Sync>;
 
+/// Callback type for injecting messages into the agent conversation. Injected by `uncode-cli`.
+pub type SendMessageCallback =
+    Arc<dyn Fn(Message) -> Result<(), String> + Send + Sync>;
+
+/// Callback type for appending custom session entries. Injected by `uncode-cli`.
+pub type AppendEntryCallback =
+    Arc<dyn Fn(String, serde_json::Value) -> Result<(), String> + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -131,6 +140,8 @@ pub struct ExtensionApi {
     thinking_label_callback: Option<ThinkingLabelCallback>,
     resource_path_callback: Option<ResourcePathCallback>,
     session_callback: Option<SessionCallback>,
+    send_message_callback: Option<SendMessageCallback>,
+    append_entry_callback: Option<AppendEntryCallback>,
 }
 
 impl ExtensionApi {
@@ -161,6 +172,8 @@ impl ExtensionApi {
             thinking_label_callback: None,
             resource_path_callback: None,
             session_callback: None,
+            send_message_callback: None,
+            append_entry_callback: None,
         }
     }
 
@@ -192,6 +205,8 @@ impl ExtensionApi {
         thinking_label_callback: Option<ThinkingLabelCallback>,
         resource_path_callback: Option<ResourcePathCallback>,
         session_callback: Option<SessionCallback>,
+        send_message_callback: Option<SendMessageCallback>,
+        append_entry_callback: Option<AppendEntryCallback>,
     ) -> Self {
         Self {
             registry,
@@ -219,6 +234,8 @@ impl ExtensionApi {
             thinking_label_callback,
             resource_path_callback,
             session_callback,
+            send_message_callback,
+            append_entry_callback,
         }
     }
 
@@ -570,6 +587,7 @@ impl ExtensionApi {
         }
     }
 
+<<<<<<< HEAD
     // ── 跨扩展事件总线 (#393) ──
 
     /// 发布自定义事件到指定 channel。
@@ -590,5 +608,32 @@ impl ExtensionApi {
     /// 取消事件订阅。
     pub fn unsubscribe_event(&self, id: SubscriptionId) -> bool {
         self.event_bus.unsubscribe(id)
+    }
+
+    // ── 消息注入 + 自定义条目 (#394) ──
+
+    /// 向当前 session 注入一条消息。
+    ///
+    /// **Pi:** `pi.sendMessage()` / `pi.sendUserMessage()`。
+    pub fn send_message(&self, message: Message) -> Result<(), String> {
+        let callback = self
+            .send_message_callback
+            .as_ref()
+            .ok_or("send_message not available: no callback configured")?;
+        callback(message)
+    }
+
+    /// 向 session 树追加一个自定义条目。
+    ///
+    /// **Pi:** `pi.appendEntry()`。
+    pub fn append_entry(&self, custom_type: String, data: serde_json::Value) -> Result<(), String> {
+        if custom_type.is_empty() {
+            return Err("custom_type must not be empty".into());
+        }
+        let callback = self
+            .append_entry_callback
+            .as_ref()
+            .ok_or("append_entry not available: no callback configured")?;
+        callback(custom_type, data)
     }
 }

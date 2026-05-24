@@ -749,6 +749,10 @@ async fn main() -> anyhow::Result<()> {
                     .map_err(|e| format!("session response error: {e}"))?
             },
         )),
+        // send_message callback — inject messages into agent conversation
+        None,
+        // append_entry callback — persist custom session entries
+        None,
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)
