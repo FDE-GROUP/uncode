@@ -21,5 +21,5 @@ backup/
 # Local clone for upstream comparison (not part of uncode workspace)
 pi_agent_rust/
 
-# Generated / local doc exports
-docs/**/*.pdf
+# Docs — maintained in private repo FDE-GROUP/uncode-docs
+docs/
