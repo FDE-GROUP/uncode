@@ -107,6 +107,7 @@ impl TurnFeedback {
         context_tokens: usize,
         test_output: Option<&str>,
     ) {
+        let observation = to_observation(result);
         let feedback = infer_feedback(result);
         let step = to_agent_step(
             format!("turn-{}", self.turn_number),
@@ -116,6 +117,19 @@ impl TurnFeedback {
             result,
             feedback,
         );
+
+        // Observation → WorkingMemory：成功/失败摘要注入认知层
+        if !observation.success {
+            self.observations.push(format!(
+                "[observation] tool {} failed: {}",
+                result.tool_name,
+                observation
+                    .output_summary
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            ));
+        }
 
         let eval_ctx = EvaluationContext {
             turn_number: self.turn_number,
@@ -223,10 +237,11 @@ mod tests {
         let mut tf = TurnFeedback::new(1);
         tf.record(&make_result(true, "read", "ok"), &[], 1000, None);
         tf.record(&make_result(false, "write", "fail"), &[], 1000, None);
-        assert_eq!(tf.observations.len(), 2);
+        // success → 1 observation, failure → 2 observations (observation + summary)
+        assert_eq!(tf.observations.len(), 3);
         assert_eq!(tf.agent_steps.len(), 2);
         let entries = tf.to_working_memory_entries();
-        assert!(entries[1].1, "failure should be marked important");
+        assert!(entries[1].1, "failure observation should be important");
         assert!(tf.evaluation.is_some());
     }
 }
