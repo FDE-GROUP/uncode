@@ -64,10 +64,7 @@ impl PromptManager {
         wm_hint: Option<String>,
         ep_summary: Option<String>,
     ) -> Self {
-        let parts: Vec<String> = [wm_hint, ep_summary]
-            .into_iter()
-            .flatten()
-            .collect();
+        let parts: Vec<String> = [wm_hint, ep_summary].into_iter().flatten().collect();
         if !parts.is_empty() {
             let cognition_section = format!("\n\n{}", parts.join("\n\n"));
             self.builder = self.builder.append(&cognition_section);

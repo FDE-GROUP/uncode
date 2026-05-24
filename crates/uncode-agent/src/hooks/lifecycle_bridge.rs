@@ -250,7 +250,11 @@ impl ExtensionLifecycleBridge {
 
     // ── Session 生命周期拦截 (#395) ──
 
-    pub async fn fire_session_before_switch(&self, session_id: &str, target_session_id: &str) -> HookResult {
+    pub async fn fire_session_before_switch(
+        &self,
+        session_id: &str,
+        target_session_id: &str,
+    ) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
             event: HookEvent::SessionSwitch {
@@ -301,8 +305,6 @@ impl ExtensionLifecycleBridge {
                 summary: summary.map(|s| s.to_string()),
             },
         };
-        self.registry
-            .fire(LifecycleHook::SessionTree, &ctx)
-            .await
+        self.registry.fire(LifecycleHook::SessionTree, &ctx).await
     }
 }
