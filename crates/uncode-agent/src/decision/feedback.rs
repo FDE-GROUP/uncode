@@ -80,6 +80,15 @@ fn infer_feedback(result: &ExecutionResult) -> Option<Feedback> {
     None
 }
 
+/// 决策摘要 — 记录本 turn 内的裁决结果供认知层消费
+#[derive(Debug, Clone, Default)]
+pub struct DecisionSummary {
+    pub tools_approved: Vec<String>,
+    pub tools_denied: Vec<String>,
+    pub denial_reasons: Vec<String>,
+    pub firewall_violations: Vec<String>,
+}
+
 /// 认知层反馈上下文——供 WorkingMemory 消费
 #[derive(Debug, Clone)]
 pub struct TurnFeedback {
@@ -87,6 +96,7 @@ pub struct TurnFeedback {
     pub observations: Vec<String>,
     pub agent_steps: Vec<AgentStep>,
     pub evaluation: Option<TurnEvaluation>,
+    pub decision_summary: Option<DecisionSummary>,
 }
 
 impl TurnFeedback {
@@ -96,6 +106,7 @@ impl TurnFeedback {
             observations: Vec::new(),
             agent_steps: Vec::new(),
             evaluation: None,
+            decision_summary: None,
         }
     }
 
@@ -162,16 +173,41 @@ impl TurnFeedback {
         self.agent_steps.push(step);
     }
 
-    /// 生成给 WorkingMemory 的观察条目
+    /// 生成给 WorkingMemory 的观察条目（含决策摘要）
     pub fn to_working_memory_entries(&self) -> Vec<(&str, bool)> {
-        self.observations
+        let entries: Vec<(&str, bool)> = self
+            .observations
             .iter()
             .enumerate()
             .map(|(i, obs)| {
                 let is_important = i < 3 || obs.starts_with('❌');
                 (obs.as_str(), is_important)
             })
-            .collect()
+            .collect();
+
+        // Decision summary observations are handled separately via decision_observations()
+        entries
+    }
+
+    /// Return decision summary observations (important) for WorkingMemory injection
+    pub fn decision_observations(&self) -> Vec<String> {
+        let mut obs = Vec::new();
+        if let Some(ref ds) = self.decision_summary {
+            if !ds.tools_denied.is_empty() {
+                obs.push(format!(
+                    "denied tools: {} — reasons: {}",
+                    ds.tools_denied.join(", "),
+                    ds.denial_reasons.join("; ")
+                ));
+            }
+            if !ds.firewall_violations.is_empty() {
+                obs.push(format!(
+                    "firewall violations: {}",
+                    ds.firewall_violations.join("; ")
+                ));
+            }
+        }
+        obs
     }
 }
 
@@ -243,5 +279,46 @@ mod tests {
         let entries = tf.to_working_memory_entries();
         assert!(entries[1].1, "failure observation should be important");
         assert!(tf.evaluation.is_some());
+    }
+
+    #[test]
+    fn test_decision_summary_default() {
+        let ds = DecisionSummary::default();
+        assert!(ds.tools_approved.is_empty());
+        assert!(ds.tools_denied.is_empty());
+        assert!(ds.denial_reasons.is_empty());
+        assert!(ds.firewall_violations.is_empty());
+    }
+
+    #[test]
+    fn test_decision_observations_empty() {
+        let tf = TurnFeedback::new(1);
+        assert!(tf.decision_observations().is_empty());
+    }
+
+    #[test]
+    fn test_decision_observations_with_denied() {
+        let mut tf = TurnFeedback::new(1);
+        tf.decision_summary = Some(DecisionSummary {
+            tools_denied: vec!["bash".into(), "write".into()],
+            denial_reasons: vec!["blocked by policy".into(), "path unsafe".into()],
+            ..Default::default()
+        });
+        let obs = tf.decision_observations();
+        assert_eq!(obs.len(), 1);
+        assert!(obs[0].contains("denied tools: bash, write"));
+        assert!(obs[0].contains("blocked by policy; path unsafe"));
+    }
+
+    #[test]
+    fn test_decision_observations_with_violations() {
+        let mut tf = TurnFeedback::new(1);
+        tf.decision_summary = Some(DecisionSummary {
+            firewall_violations: vec!["argument validation failed".into()],
+            ..Default::default()
+        });
+        let obs = tf.decision_observations();
+        assert_eq!(obs.len(), 1);
+        assert!(obs[0].contains("firewall violations"));
     }
 }
