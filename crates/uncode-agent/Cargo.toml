@@ -14,6 +14,7 @@ uncode-core.workspace = true
 uncode-ai.workspace = true
 uncode-shared.workspace = true
 uncode-extensions.workspace = true
+uncode-ontology.workspace = true
 
 tokio.workspace = true
 tokio-util.workspace = true
