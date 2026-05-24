@@ -36,6 +36,33 @@ impl Default for GuardrailConfig {
     }
 }
 
+impl GuardrailConfig {
+    /// Load from `.uncode/guardrails.json` in the given directory.
+    /// Returns `Self::default()` if the file does not exist or cannot be parsed.
+    pub fn load_from_dir(dir: &std::path::Path) -> Self {
+        let path = dir.join(".uncode").join("guardrails.json");
+        if !path.exists() {
+            return Self::default();
+        }
+        match std::fs::read_to_string(&path) {
+            Ok(content) => serde_json::from_str(&content).unwrap_or_else(|e| {
+                eprintln!(
+                    "warn: failed to parse {}: {e}, using defaults",
+                    path.display()
+                );
+                Self::default()
+            }),
+            Err(e) => {
+                eprintln!(
+                    "warn: failed to read {}: {e}, using defaults",
+                    path.display()
+                );
+                Self::default()
+            }
+        }
+    }
+}
+
 // ── Decision ──
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

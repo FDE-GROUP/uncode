@@ -309,6 +309,11 @@ async fn main() -> anyhow::Result<()> {
         agent.set_session_id(session_id.clone());
     }
 
+    // Load guardrail config from .uncode/guardrails.json
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let guardrail_config = uncode_shared::guardrails::GuardrailConfig::load_from_dir(&cwd);
+    agent.set_guardrail_config(guardrail_config);
+
     // --mode rpc: start JSON-RPC server on stdio
     if cli.mode == "rpc" {
         return run_rpc_mode(session_store, model_registry, agent).await;

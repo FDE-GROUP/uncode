@@ -17,6 +17,7 @@ path = "src/main.rs"
 uncode-core.workspace = true
 uncode-ai.workspace = true
 uncode-agent.workspace = true
+uncode-shared.workspace = true
 uncode-extensions.workspace = true
 uncode-tui.workspace = true
 uncode-rpc.workspace = true
