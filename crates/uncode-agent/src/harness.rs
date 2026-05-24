@@ -285,7 +285,7 @@ impl AgentHarness {
                 model_id,
                 provider,
                 &self.session_store,
-                Some(session_id),
+                Some(&session_id),
             )
             .await
         {
@@ -314,7 +314,7 @@ impl AgentHarness {
     }
 
     /// 获取当前 session ID
-    pub fn session_id(&self) -> Option<&str> {
+    pub fn session_id(&self) -> Option<String> {
         self.agent.session_id()
     }
 
@@ -374,7 +374,7 @@ impl AgentHarness {
                         }))
                     }
                 };
-                if let Err(e) = self.session_store.append_entry(session_id, &entry).await {
+                if let Err(e) = self.session_store.append_entry(&session_id, &entry).await {
                     debug!("flush pending write skipped: {e}");
                 }
             }
