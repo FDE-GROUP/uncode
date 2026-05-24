@@ -128,6 +128,7 @@ impl AgentHarness {
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         );
         agent.set_adjudicator(adjudicator);
+        agent.load_custom_policies();
 
         Self {
             agent,
