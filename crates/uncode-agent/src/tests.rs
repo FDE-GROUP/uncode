@@ -1729,4 +1729,216 @@ mod tests {
             other => panic!("Expected LlmAuth error, got: {other}"),
         }
     }
+
+    // ── PhaseStateMachine integration tests ─────────────────────────
+
+    /// Collect all PhaseTransition events from the broadcast channel.
+    fn collect_phase_transitions(
+        rx: &mut tokio::sync::broadcast::Receiver<uncode_core::event::AgentEvent>,
+    ) -> Vec<(String, String, String, u64)> {
+        let mut transitions = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let uncode_core::event::AgentEvent::PhaseTransition { data } = event {
+                transitions.push((
+                    data.from.clone(),
+                    data.to.clone(),
+                    data.trigger.clone(),
+                    data.turn,
+                ));
+            }
+        }
+        transitions
+    }
+
+    #[tokio::test]
+    async fn test_phase_transition_text_only_turn() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
+            StreamEvent::TextDelta("Hello!".into()),
+            StreamEvent::Usage(uncode_ai::LlmUsageInfo {
+                input_tokens: 10,
+                output_tokens: 5,
+            }),
+            StreamEvent::Done {
+                reason: StopReason::Stop,
+            },
+        ]]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+
+        let mut rx = agent.subscribe();
+        let _ = agent.run(Message::user("hi")).await.unwrap();
+
+        let transitions = collect_phase_transitions(&mut rx);
+
+        // Text-only turn: Init→Cognizing, Cognizing→WaitingForUser, →Terminated
+        assert!(
+            transitions.len() >= 3,
+            "expected >= 3 transitions, got {transitions:?}"
+        );
+
+        assert_eq!(&transitions[0].0, "Init");
+        assert_eq!(&transitions[0].1, "Cognizing");
+        assert_eq!(transitions[0].3, 1);
+
+        assert_eq!(&transitions[1].0, "Cognizing");
+        assert_eq!(&transitions[1].1, "WaitingForUser");
+
+        assert_eq!(&transitions[2].1, "Terminated");
+    }
+
+    #[tokio::test]
+    async fn test_phase_transition_tool_call_cycle() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallDelta {
+                    id: "tc1".into(),
+                    arguments: r#"{"text":"world"}"#.into(),
+                },
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "world"}),
+                })),
+                StreamEvent::Usage(uncode_ai::LlmUsageInfo {
+                    input_tokens: 20,
+                    output_tokens: 10,
+                }),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                StreamEvent::TextDelta("Done!".into()),
+                StreamEvent::Usage(uncode_ai::LlmUsageInfo {
+                    input_tokens: 30,
+                    output_tokens: 8,
+                }),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+
+        let mut rx = agent.subscribe();
+        let _ = agent.run(Message::user("echo hello")).await.unwrap();
+
+        let transitions = collect_phase_transitions(&mut rx);
+
+        // Tool call turn (turn 1): Init→Cognizing→Adjudicating→Executing→Cognizing
+        // Then LLM call for text response counts as turn 2: Init→Cognizing→WaitingForUser
+        // Finally: →Terminated
+        assert!(
+            transitions.len() >= 7,
+            "expected >= 7 transitions, got {transitions:?}"
+        );
+
+        let phases: Vec<&str> = transitions
+            .iter()
+            .map(|(_, to, _, _)| to.as_str())
+            .collect();
+        assert_eq!(
+            phases,
+            &[
+                "Cognizing",
+                "Adjudicating",
+                "Executing",
+                "Cognizing",
+                "Cognizing",
+                "WaitingForUser",
+                "Terminated"
+            ],
+            "phase sequence mismatch"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_phase_transition_reset_per_turn() {
+        // Two-turn test: first turn has a tool call, second is text-only
+        // Each turn should start with a fresh Init→Cognizing transition
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            // Turn 1: tool call
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "hi"}),
+                })),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            // Turn 2: text only
+            vec![
+                StreamEvent::TextDelta("All done".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+
+        // First run (turn 1)
+        let mut rx = agent.subscribe();
+        let _ = agent.run(Message::user("first")).await.unwrap();
+
+        let transitions = collect_phase_transitions(&mut rx);
+        // Turn 1: Init→Cognizing→Adjudicating→Executing→Cognizing→WaitingForUser→Terminated
+        let turn1_init_count = transitions
+            .iter()
+            .filter(|(from, _, _, _)| from == "Init")
+            .count();
+        assert!(
+            turn1_init_count >= 1,
+            "turn 1 should have at least one Init transition"
+        );
+
+        // Second run (turn 2)
+        let mut rx2 = agent.subscribe();
+        let _ = agent.run(Message::user("second")).await.unwrap();
+
+        let transitions2 = collect_phase_transitions(&mut rx2);
+        // Turn 2 should also start from Init (state machine was reset)
+        let has_init_cognizing = transitions2
+            .iter()
+            .any(|(from, to, _, _)| from == "Init" && to == "Cognizing");
+        assert!(
+            has_init_cognizing,
+            "turn 2 should have Init→Cognizing (reset), got {transitions2:?}"
+        );
+    }
 }
