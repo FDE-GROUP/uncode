@@ -15,6 +15,7 @@ pub mod context;
 pub mod context_builder;
 pub mod decision; // ★ 决策层 — 认知显化与决策驱动设计核心
 pub mod github;
+pub mod governance; // ★ 治理层 — PhaseStateMachine + EventRouter 集成
 pub mod harness;
 pub mod hooks;
 pub mod loop_engine;
