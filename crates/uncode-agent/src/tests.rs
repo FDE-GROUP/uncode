@@ -2018,4 +2018,93 @@ mod tests {
             "expected block reason, got: {result_text}"
         );
     }
+
+    #[tokio::test]
+    async fn test_sync_hook_patch_tool_result() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            // Turn 1: call "echo" tool — result should be patched
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "hello"}),
+                })),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            // Turn 2: text response
+            vec![
+                StreamEvent::TextDelta("done".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+
+        // Register sync hook that patches tool result content
+        agent.register_sync_hook(
+            "tool_call_end",
+            Box::new(|event| {
+                if let uncode_core::event::AgentEvent::ToolCallEnd { data } = event {
+                    if data.tool_name == "echo" {
+                        return uncode_core::event::HookResult::PatchToolResult {
+                            content: Some(vec![uncode_core::tool::ToolContent::Text(
+                                "patched by hook".into(),
+                            )]),
+                            terminate: None,
+                        };
+                    }
+                }
+                uncode_core::event::HookResult::Continue
+            }),
+        );
+
+        let mut rx = agent.subscribe();
+        let messages = agent.run(Message::user("use echo")).await.unwrap();
+
+        // Check that the patched content appears in the conversation messages
+        let mut found_patched = false;
+        for msg in &messages {
+            for block in &msg.content {
+                if let uncode_core::message::ContentBlock::ToolResult(tr) = block {
+                    if tr.content.contains("patched by hook") {
+                        found_patched = true;
+                    }
+                }
+            }
+        }
+
+        // Also check ToolCallEnd events
+        while let Ok(event) = rx.try_recv() {
+            if let uncode_core::event::AgentEvent::ToolCallEnd { data } = event {
+                if !data.is_error {
+                    if let Some(ref summary) = data.result_summary {
+                        if summary.contains("patched by hook") {
+                            found_patched = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        assert!(
+            found_patched,
+            "expected patched content in messages or events"
+        );
+    }
 }

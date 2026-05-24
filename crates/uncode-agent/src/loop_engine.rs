@@ -67,6 +67,7 @@ async fn execute_prepared_tool_shared(
     event_tx: broadcast::Sender<AgentEvent>,
     hooks: Option<Arc<dyn ToolHooks>>,
     execution_env: Arc<dyn ExecutionEnv>,
+    event_router: Arc<std::sync::Mutex<uncode_core::event::EventRouter>>,
     id: String,
     name: String,
     prepared_args: serde_json::Value,
@@ -131,6 +132,40 @@ async fn execute_prepared_tool_shared(
             tool_result.is_error = new_is_error;
         }
         if let Some(new_terminate) = patch.terminate {
+            tool_result.terminate = new_terminate;
+        }
+    }
+
+    // Sync hook gate for PatchToolResult — post-execution patching
+    let end_event = AgentEvent::ToolCallEnd {
+        data: Box::new(ToolCallEndEventData {
+            tool_id: id.clone(),
+            tool_name: name.clone(),
+            arguments: String::new(),
+            status: if tool_result.is_error {
+                ToolCallStatus::Failed
+            } else {
+                ToolCallStatus::Success
+            },
+            duration_ms: tool_result
+                .details
+                .as_ref()
+                .and_then(|d| d.get("duration_ms"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            output_size: None,
+            result_summary: None,
+            is_error: tool_result.is_error,
+        }),
+    };
+    let router = event_router.lock().unwrap();
+    let hook_result = router.dispatch_sync_hooks(&end_event);
+    drop(router);
+    if let uncode_core::event::HookResult::PatchToolResult { content, terminate } = hook_result {
+        if let Some(new_content) = content {
+            tool_result.content = new_content;
+        }
+        if let Some(new_terminate) = terminate {
             tool_result.terminate = new_terminate;
         }
     }
@@ -689,6 +724,7 @@ impl AgentLoop {
             self.event_tx.clone(),
             self.tool_hooks.clone(),
             Arc::clone(&self.execution_env),
+            Arc::clone(&self.event_router),
             id.to_string(),
             name.to_string(),
             prepared_args,
@@ -1265,9 +1301,27 @@ impl AgentLoop {
                     }
                 }
 
+                // Sync hook gate for PatchMessages — allow hooks to modify context
+                let patched_messages = {
+                    let msg_event = AgentEvent::MessageStart {
+                        role: Role::Assistant,
+                        message_id: String::new(),
+                    };
+                    let router = self.event_router.lock().unwrap();
+                    let hook_result = router.dispatch_sync_hooks(&msg_event);
+                    drop(router);
+                    if let uncode_core::event::HookResult::PatchMessages { messages: new_msgs } =
+                        hook_result
+                    {
+                        Some(new_msgs)
+                    } else {
+                        None
+                    }
+                };
+
                 let context = Context {
                     system_prompt: Some(self.system_prompt.clone()),
-                    messages: messages.clone(),
+                    messages: patched_messages.unwrap_or(messages.clone()),
                     tools: tools.clone(),
                 };
 
@@ -2016,6 +2070,7 @@ impl AgentLoop {
                                         let tx = self.event_tx.clone();
                                         let hooks = self.tool_hooks.clone();
                                         let exec_env = Arc::clone(&self.execution_env);
+                                        let ev_router = Arc::clone(&self.event_router);
 
                                         let executed =
                                             futures::future::join_all(ready.into_iter().map(
@@ -2025,9 +2080,10 @@ impl AgentLoop {
                                                     let etx = tx.clone();
                                                     let hk = hooks.clone();
                                                     let env = exec_env.clone();
+                                                    let er = ev_router.clone();
                                                     async move {
                                                         let tr = execute_prepared_tool_shared(
-                                                            reg, ct, etx, hk, env, id, name,
+                                                            reg, ct, etx, hk, env, er, id, name,
                                                             prepared, raw_args,
                                                         )
                                                         .await;
