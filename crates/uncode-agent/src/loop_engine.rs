@@ -737,6 +737,66 @@ impl AgentLoop {
         )
     }
 
+    /// Record turn feedback into WorkingMemory and EpisodeMemory.
+    fn record_feedback(&self, turn: u64, feedback: &crate::decision::feedback::TurnFeedback) {
+        let wm_entries = feedback.to_working_memory_entries();
+        if !wm_entries.is_empty() {
+            let mut wm = self.working_memory.lock().unwrap();
+            for (content, important) in wm_entries {
+                if important {
+                    wm.observe_important(content);
+                } else {
+                    wm.observe(content);
+                }
+            }
+        }
+        let mut ep = self.episode_memory.lock().unwrap();
+        for obs in &feedback.observations {
+            let event_type = if obs.starts_with('❌') {
+                "tool_result_failure"
+            } else {
+                "tool_result_success"
+            };
+            ep.record(event_type, obs, turn);
+        }
+    }
+
+    /// Emit session-end lifecycle events (SessionEnd + AgentSettled).
+    async fn emit_session_end(
+        &self,
+        session_id: &str,
+        total_turns: u64,
+        total_input_tokens: u64,
+        total_output_tokens: u64,
+    ) {
+        let total_usage = UsageInfo {
+            input_tokens: total_input_tokens,
+            output_tokens: total_output_tokens,
+            cost: None,
+        };
+        self.emit(AgentEvent::SessionEnd {
+            data: Box::new(SessionEndData {
+                session_id: session_id.into(),
+                total_turns,
+                total_tokens: total_usage,
+                exit_reason: (if self.cancel_token.is_cancelled() {
+                    "interrupted"
+                } else if total_turns >= MAX_TURNS {
+                    "max_turns"
+                } else {
+                    "completed"
+                })
+                .into(),
+            }),
+        });
+        if let Some(ref bridge) = self.extension_bridge {
+            bridge.fire_session_end(session_id).await;
+        }
+        self.emit(AgentEvent::AgentSettled {
+            session_id: session_id.into(),
+        });
+    }
+
     async fn run_inner(&self, mut user_message: Message) -> Result<Vec<Message>, UncodeError> {
         let cwd = std::env::current_dir().unwrap_or_default();
         let existing_id = self.session_id.lock().unwrap().clone();
@@ -1960,30 +2020,7 @@ impl AgentLoop {
                     }
 
                     // ── 认知层反馈闭环 (#385): TurnFeedback → WorkingMemory → EpisodeMemory ──
-                    {
-                        let wm_entries = turn_feedback.to_working_memory_entries();
-                        if !wm_entries.is_empty() {
-                            let mut wm = self.working_memory.lock().unwrap();
-                            for (content, important) in wm_entries {
-                                if important {
-                                    wm.observe_important(content);
-                                } else {
-                                    wm.observe(content);
-                                }
-                            }
-                        }
-
-                        // 将 turn 摘要记录到情景记忆
-                        let mut ep = self.episode_memory.lock().unwrap();
-                        for obs in &turn_feedback.observations {
-                            let event_type = if obs.starts_with('❌') {
-                                "tool_result_failure"
-                            } else {
-                                "tool_result_success"
-                            };
-                            ep.record(event_type, obs, turn);
-                        }
-                    }
+                    self.record_feedback(turn, &turn_feedback);
 
                     if !turn_phase_completed.is_empty() || !turn_phase_issues.is_empty() {
                         let heuristic = build_phase_summary_heuristic(
@@ -2104,35 +2141,8 @@ impl AgentLoop {
             break 'outer;
         }
 
-        let total_usage = UsageInfo {
-            input_tokens: total_input_tokens,
-            output_tokens: total_output_tokens,
-            cost: None,
-        };
-
-        self.emit(AgentEvent::SessionEnd {
-            data: Box::new(SessionEndData {
-                session_id: session_id.clone(),
-                total_turns: turn,
-                total_tokens: total_usage,
-                exit_reason: (if self.cancel_token.is_cancelled() {
-                    "interrupted"
-                } else if turn >= MAX_TURNS {
-                    "max_turns"
-                } else {
-                    "completed"
-                })
-                .into(),
-            }),
-        });
-
-        if let Some(ref bridge) = self.extension_bridge {
-            bridge.fire_session_end(&session_id).await;
-        }
-
-        self.emit(AgentEvent::AgentSettled {
-            session_id: session_id.clone(),
-        });
+        self.emit_session_end(&session_id, turn, total_input_tokens, total_output_tokens)
+            .await;
 
         Ok(messages)
     }
