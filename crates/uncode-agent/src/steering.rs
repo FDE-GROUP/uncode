@@ -1,4 +1,5 @@
 use tokio::sync::mpsc;
+use tracing::warn;
 use uncode_core::message::Message;
 
 const CHANNEL_CAPACITY: usize = 64;
@@ -57,15 +58,21 @@ impl MessageQueue {
     }
 
     pub async fn steer(&self, msg: Message) {
-        let _ = self.steering_tx.send(msg).await;
+        if self.steering_tx.send(msg).await.is_err() {
+            warn!("steering channel closed, message dropped");
+        }
     }
 
     pub async fn follow_up(&self, msg: Message) {
-        let _ = self.follow_up_tx.send(msg).await;
+        if self.follow_up_tx.send(msg).await.is_err() {
+            warn!("follow_up channel closed, message dropped");
+        }
     }
 
     pub async fn next_turn(&self, msg: Message) {
-        let _ = self.next_turn_tx.send(msg).await;
+        if self.next_turn_tx.send(msg).await.is_err() {
+            warn!("next_turn channel closed, message dropped");
+        }
     }
 
     pub fn drain_steering(&mut self) -> Vec<Message> {
