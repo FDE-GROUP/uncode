@@ -149,11 +149,9 @@ impl crate::hooks::Extension for WasmInstance {
 
     async fn on_hook(&self, ctx: &HookContext) -> anyhow::Result<HookResult> {
         let inner = self.inner.clone();
-        let session_id = ctx.session_id.clone();
 
-        // Serialize context.
-        let ctx_json = serde_json::json!({ "session_id": session_id });
-        let ctx_bytes = serde_json::to_vec(&ctx_json)
+        // Serialize full context including event data.
+        let ctx_bytes = serde_json::to_vec(ctx)
             .map_err(|e| WasmError::AbiViolation(format!("serialize: {e}")))?;
 
         // Run in blocking thread since wasmtime is sync.
@@ -175,7 +173,19 @@ fn parse_hook_result(json: &str) -> anyhow::Result<HookResult> {
                 .unwrap_or("blocked by extension")
                 .into(),
         }),
-        Some("modify") => Ok(HookResult::Modify(crate::hooks::HookModification::default())),
+        Some("modify") => {
+            let mut mods = crate::hooks::HookModification::default();
+            if let Some(args) = val.get("args_override") {
+                mods.args_override = Some(args.clone());
+            }
+            if let Some(b) = val.get("is_error_override").and_then(|v| v.as_bool()) {
+                mods.is_error_override = Some(b);
+            }
+            if let Some(b) = val.get("terminate_override").and_then(|v| v.as_bool()) {
+                mods.terminate_override = Some(b);
+            }
+            Ok(HookResult::Modify(mods))
+        }
         _ => Ok(HookResult::Continue),
     }
 }

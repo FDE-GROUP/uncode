@@ -151,6 +151,9 @@ pub async fn should_compact_session(
     };
     let estimated = estimate_entry_tokens(&entries);
     let effective_window = context_window.saturating_sub(config.reserve_tokens);
+    if effective_window == 0 {
+        return false;
+    }
     let threshold = effective_window * config.threshold_percent / 100;
     estimated > threshold
 }
