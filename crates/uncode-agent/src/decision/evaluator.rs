@@ -16,7 +16,7 @@
 //! 评估属于**决策层审计阶段**的职责——不是"Agent 做得好不好"的主观判断，
 //! 而是"执行结果是否满足可验证的质量标准"的系统判定。
 
-use super::execution::ExecutionResult;
+use super::types::ExecutionResult;
 
 /// H0-H3 评估级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
