@@ -202,6 +202,30 @@ pub type SetModelCallback = Arc<dyn Fn(String) -> Result<bool, String> + Send + 
 /// **Pi:** `pi.getSessionName()`.
 pub type GetSessionNameCallback = Arc<dyn Fn() -> Option<String> + Send + Sync>;
 
+// ── P3: UI capability callbacks (#412) ──
+
+/// Theme metadata returned by `getAllThemes()`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ThemeInfo {
+    pub name: String,
+    pub is_builtin: bool,
+}
+
+/// Callback type for listing all available themes. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.getAllThemes()`.
+pub type GetAllThemesCallback = Arc<dyn Fn() -> Vec<ThemeInfo> + Send + Sync>;
+
+/// Callback type for getting a theme's JSON config by name. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.getTheme(name)`.
+pub type GetThemeCallback = Arc<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+/// Callback type for querying tool output expanded state. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.getToolsExpanded()`.
+pub type GetToolsExpandedCallback = Arc<dyn Fn() -> bool + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -249,6 +273,10 @@ pub struct ExtensionApi {
     get_commands_callback: Option<GetCommandsCallback>,
     set_model_callback: Option<SetModelCallback>,
     get_session_name_callback: Option<GetSessionNameCallback>,
+    // P3: UI capabilities (#412)
+    get_all_themes_callback: Option<GetAllThemesCallback>,
+    get_theme_callback: Option<GetThemeCallback>,
+    get_tools_expanded_callback: Option<GetToolsExpandedCallback>,
 }
 
 impl ExtensionApi {
@@ -294,6 +322,9 @@ impl ExtensionApi {
             get_commands_callback: None,
             set_model_callback: None,
             get_session_name_callback: None,
+            get_all_themes_callback: None,
+            get_theme_callback: None,
+            get_tools_expanded_callback: None,
         }
     }
 
@@ -339,6 +370,9 @@ impl ExtensionApi {
         get_commands_callback: Option<GetCommandsCallback>,
         set_model_callback: Option<SetModelCallback>,
         get_session_name_callback: Option<GetSessionNameCallback>,
+        get_all_themes_callback: Option<GetAllThemesCallback>,
+        get_theme_callback: Option<GetThemeCallback>,
+        get_tools_expanded_callback: Option<GetToolsExpandedCallback>,
     ) -> Self {
         Self {
             registry,
@@ -381,6 +415,9 @@ impl ExtensionApi {
             get_commands_callback,
             set_model_callback,
             get_session_name_callback,
+            get_all_themes_callback,
+            get_theme_callback,
+            get_tools_expanded_callback,
         }
     }
 
@@ -956,5 +993,91 @@ impl ExtensionApi {
         } else {
             None
         }
+    }
+
+    // ── P3: UI capabilities (#412) ──
+
+    /// Set the terminal window title.
+    ///
+    /// **Pi:** `pi.setTitle(title)`.
+    pub fn set_title(&self, title: &str) -> Result<(), String> {
+        if title.is_empty() {
+            return Err("title must not be empty".into());
+        }
+        let callback = self
+            .ui_callback
+            .as_ref()
+            .ok_or("UI not available: no callback configured")?;
+        callback(UiAction::SetTitle {
+            title: title.into(),
+        })
+    }
+
+    /// Set the working indicator message text.
+    ///
+    /// **Pi:** `pi.setWorkingMessage(message)`.
+    pub fn set_working_message(&self, message: &str) -> Result<(), String> {
+        let callback = self
+            .ui_callback
+            .as_ref()
+            .ok_or("UI not available: no callback configured")?;
+        callback(UiAction::SetWorkingMessage {
+            message: message.into(),
+        })
+    }
+
+    /// Show or hide the working indicator.
+    ///
+    /// **Pi:** `pi.setWorkingVisible(visible)`.
+    pub fn set_working_visible(&self, visible: bool) -> Result<(), String> {
+        let callback = self
+            .ui_callback
+            .as_ref()
+            .ok_or("UI not available: no callback configured")?;
+        callback(UiAction::SetWorkingVisible { visible })
+    }
+
+    /// List all available themes.
+    ///
+    /// **Pi:** `pi.getAllThemes()`.
+    pub fn get_all_themes(&self) -> Vec<ThemeInfo> {
+        if let Some(callback) = &self.get_all_themes_callback {
+            callback()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get a theme's JSON configuration by name.
+    ///
+    /// **Pi:** `pi.getTheme(name)`.
+    pub fn get_theme(&self, name: &str) -> Option<String> {
+        if let Some(callback) = &self.get_theme_callback {
+            callback(name)
+        } else {
+            None
+        }
+    }
+
+    /// Get whether tool outputs are currently expanded.
+    ///
+    /// **Pi:** `pi.getToolsExpanded()`.
+    pub fn get_tools_expanded(&self) -> bool {
+        if let Some(callback) = &self.get_tools_expanded_callback {
+            callback()
+        } else {
+            true
+        }
+    }
+
+    /// Set whether tool outputs are expanded.
+    ///
+    /// **Pi:** `pi.setToolsExpanded(expanded)`.
+    pub fn set_tools_expanded(&self, expanded: bool) -> Result<(), String> {
+        let callback = self
+            .ui_callback
+            .as_ref()
+            .ok_or("UI not available: no callback configured")?;
+        callback(UiAction::SetToolsExpanded { expanded })
     }
 }

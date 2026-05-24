@@ -283,6 +283,8 @@ pub struct TuiEngine {
     leader_pending: bool,
     queue: MessageQueue,
     agent_busy: bool,
+    custom_working_message: Option<String>,
+    working_visible_override: Option<bool>,
     current_cancel: Option<CancellationToken>,
     permission: PermissionManager,
     permission_gate: Option<Arc<PermissionGate>>,
@@ -343,6 +345,8 @@ impl TuiEngine {
             leader_pending: false,
             queue: MessageQueue::new(),
             agent_busy: false,
+            custom_working_message: None,
+            working_visible_override: None,
             current_cancel: None,
             permission: PermissionManager::new(),
             permission_gate: None,
@@ -768,6 +772,32 @@ impl TuiEngine {
         if !self.agent_busy {
             return;
         }
+
+        // Extension override: hide working indicator
+        if self.working_visible_override == Some(false) {
+            return;
+        }
+
+        // Extension override: custom working message
+        if let Some(ref msg) = self.custom_working_message {
+            let bg_color = self.theme.tool_status.running;
+            let accent = Style::default()
+                .fg(Color::Black)
+                .bg(bg_color)
+                .add_modifier(ratatui::style::Modifier::BOLD);
+            let dim = Style::default().fg(self.theme.ui.footer_text).bg(bg_color);
+
+            let elapsed = self.footer.current_elapsed();
+            let tokens = format_tokens(self.footer.output_tokens);
+
+            let line = Line::from(vec![
+                Span::styled(format!(" * {msg} "), accent),
+                Span::styled(format!("({elapsed} | {tokens} tok)"), dim),
+            ]);
+            f.render_widget(Paragraph::new(line), area);
+            return;
+        }
+
         let label = match &self.activity {
             AgentActivity::Thinking => "Thinking…".to_string(),
             AgentActivity::RunningTool { name } => format!("Running {name}"),
@@ -1342,6 +1372,26 @@ impl TuiEngine {
                                 content: content.clone(),
                                 expanded: true,
                             });
+                            Ok(())
+                        }
+                        UiAction::SetTitle { title } => {
+                            let _ = crossterm::execute!(
+                                std::io::stdout(),
+                                crossterm::terminal::SetTitle(title)
+                            );
+                            Ok(())
+                        }
+                        UiAction::SetWorkingMessage { message } => {
+                            self.custom_working_message = Some(message.clone());
+                            Ok(())
+                        }
+                        UiAction::SetWorkingVisible { visible } => {
+                            self.working_visible_override = Some(*visible);
+                            Ok(())
+                        }
+                        UiAction::SetToolsExpanded { expanded } => {
+                            self.chat.tool_output_visible = *expanded;
+                            self.chat.set_all_expanded(*expanded);
                             Ok(())
                         }
                     };
