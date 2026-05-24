@@ -337,6 +337,7 @@ fn host_show_dialog(
     ptr: i32,
     len: i32,
     out_ptr: i32,
+    out_cap: i32,
 ) -> i32 {
     let bytes = match read_memory_bytes(&mut caller, ptr, len) {
         Some(b) => b,
@@ -371,6 +372,14 @@ fn host_show_dialog(
             };
             let response_bytes = response_json.as_bytes();
             let response_len = response_bytes.len() as i32;
+
+            if out_cap < response_len {
+                tracing::warn!(
+                    "extension {ext_name} dialog response ({response_len}B) exceeds out_cap ({out_cap}B)"
+                );
+                return -1;
+            }
+
             let memory = match caller.get_export("memory").and_then(|m| m.into_memory()) {
                 Some(m) => m,
                 None => return -1,

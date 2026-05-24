@@ -918,6 +918,14 @@ impl TuiEngine {
         F: Fn(String, CancellationToken, String, String, SubmitIntent),
     {
         let mut terminal = ratatui::init();
+
+        // Install a panic hook that restores the terminal before the process unwinds.
+        let prev_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            ratatui::restore();
+            prev_hook(info);
+        }));
+
         let _ = crossterm::execute!(
             std::io::stdout(),
             crossterm::event::EnableMouseCapture,

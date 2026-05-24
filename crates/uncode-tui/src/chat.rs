@@ -672,7 +672,7 @@ impl ChatState {
         visible_height: usize,
     ) -> Vec<Line<'static>> {
         let mut lines: Vec<Line<'static>> = Vec::with_capacity(visible_height + 4);
-        let skip_in_first = scroll_offset.saturating_sub(self.prefix_sum[first]);
+        let raw_skip = scroll_offset.saturating_sub(self.prefix_sum[first]);
 
         for idx in first..=last {
             // Add separator blank line (matching original render_lines behavior)
@@ -690,9 +690,9 @@ impl ChatState {
 
             let msg_lines = cached.unwrap_or_default();
 
-            let iter: Box<dyn Iterator<Item = Line<'static>>> = if idx == first && skip_in_first > 0
-            {
-                Box::new(msg_lines.into_iter().skip(skip_in_first))
+            let iter: Box<dyn Iterator<Item = Line<'static>>> = if idx == first && raw_skip > 0 {
+                let skip = raw_skip.min(msg_lines.len());
+                Box::new(msg_lines.into_iter().skip(skip))
             } else {
                 Box::new(msg_lines.into_iter())
             };
