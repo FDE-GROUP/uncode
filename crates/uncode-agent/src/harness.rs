@@ -130,6 +130,34 @@ impl AgentHarness {
         agent.set_adjudicator(adjudicator);
         agent.load_custom_policies();
 
+        // Register sync hook for blocked-tool enforcement (#461)
+        {
+            let blocked: Vec<String> = agent
+                .guardrail_config()
+                .firewall
+                .tool_whitelist
+                .blocked
+                .clone();
+            if !blocked.is_empty() {
+                let blocked_set: std::collections::HashSet<String> = blocked.into_iter().collect();
+                agent.register_sync_hook(
+                    "tool_call_start",
+                    Box::new(move |event| {
+                        if let uncode_core::event::AgentEvent::ToolCallStart { tool_name, .. } =
+                            event
+                        {
+                            if blocked_set.contains(tool_name) {
+                                return uncode_core::event::HookResult::Block {
+                                    reason: format!("tool '{tool_name}' is in blocked list"),
+                                };
+                            }
+                        }
+                        uncode_core::event::HookResult::Continue
+                    }),
+                );
+            }
+        }
+
         Self {
             agent,
             phase: AgentHarnessPhase::Idle,

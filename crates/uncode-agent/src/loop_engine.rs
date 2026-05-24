@@ -342,6 +342,18 @@ impl AgentLoop {
         Arc::clone(&self.event_router)
     }
 
+    /// Register a sync hook handler on the EventRouter — synchronous Block gate.
+    pub fn register_sync_hook(
+        &self,
+        event_type: &str,
+        handler: uncode_core::event::SyncHookHandler,
+    ) {
+        self.event_router
+            .lock()
+            .unwrap()
+            .on_sync_hook(event_type, handler);
+    }
+
     pub fn set_model_id(&mut self, model_id: String) {
         self.model_id = model_id;
     }
@@ -634,6 +646,20 @@ impl AgentLoop {
             Ok(a) => a,
             Err(e) => return Err(ToolResult::err(e)),
         };
+
+        // Sync hook gate — synchronous control before execution (governance Block)
+        {
+            let start_event = AgentEvent::ToolCallStart {
+                tool_id: id.to_string(),
+                tool_name: name.to_string(),
+                arguments_summary: summarize_tool_args(&prepared_args.to_string()),
+            };
+            let router = self.event_router.lock().unwrap();
+            let result = router.dispatch_sync_hooks(&start_event);
+            if let uncode_core::event::HookResult::Block { reason } = result {
+                return Err(ToolResult::err(format!("blocked by governance: {reason}")));
+            }
+        }
 
         if let Some(ref hooks) = self.tool_hooks {
             let ctx = BeforeToolCallContext {

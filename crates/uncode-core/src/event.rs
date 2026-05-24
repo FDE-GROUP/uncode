@@ -502,17 +502,22 @@ pub type SyncEventHandler = Box<dyn Fn(&AgentEvent) + Send + Sync>;
 pub type AsyncHookHandler =
     Box<dyn for<'a> Fn(&'a AgentEvent) -> BoxFuture<'a, HookResult> + Send + Sync>;
 
+/// 同步控制 hook handler — 在执行前同步调用，可返回 Block 阻止执行
+pub type SyncHookHandler = Box<dyn Fn(&AgentEvent) -> HookResult + Send + Sync>;
+
 /// EventRouter dispatches AgentEvents to type-specific handlers,
 /// aligned with Pi's `on(type, handler)` subscription pattern.
 ///
-/// 双通道设计：
+/// 三通道设计：
 /// - sync_handlers：观察型，fire-and-forget
-/// - hook_handlers：控制型，异步返回 HookResult
+/// - hook_handlers：控制型，异步返回 HookResult（后台 dispatch）
+/// - sync_hook_handlers：控制型，同步返回 HookResult（可 Block）
 ///
 /// **Pi:** 对应 `AgentHarness.on(event, handler)`；非 Pi 全套 Harness Hook 的超集实现。
 pub struct EventRouter {
     sync_handlers: std::collections::HashMap<String, Vec<SyncEventHandler>>,
     hook_handlers: std::collections::HashMap<String, Vec<AsyncHookHandler>>,
+    sync_hook_handlers: std::collections::HashMap<String, Vec<SyncHookHandler>>,
 }
 
 impl EventRouter {
@@ -520,6 +525,7 @@ impl EventRouter {
         Self {
             sync_handlers: std::collections::HashMap::new(),
             hook_handlers: std::collections::HashMap::new(),
+            sync_hook_handlers: std::collections::HashMap::new(),
         }
     }
 
@@ -537,6 +543,29 @@ impl EventRouter {
             .entry(event_type.to_string())
             .or_default()
             .push(handler);
+    }
+
+    /// Register a sync hook handler that can Block execution synchronously.
+    pub fn on_sync_hook(&mut self, event_type: &str, handler: SyncHookHandler) {
+        self.sync_hook_handlers
+            .entry(event_type.to_string())
+            .or_default()
+            .push(handler);
+    }
+
+    /// Dispatch an event to all sync hook handlers, returning the first non-Continue result.
+    /// Short-circuits on Block/PatchMessages/PatchToolResult/CancelCompaction.
+    pub fn dispatch_sync_hooks(&self, event: &AgentEvent) -> HookResult {
+        let tag = agent_event_tag(event);
+        if let Some(handlers) = self.sync_hook_handlers.get(tag) {
+            for h in handlers {
+                let result = h(event);
+                if !matches!(result, HookResult::Continue) {
+                    return result;
+                }
+            }
+        }
+        HookResult::Continue
     }
 
     /// Dispatch an event to all sync handlers (fire-and-forget).
