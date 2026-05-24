@@ -533,13 +533,18 @@ pub fn build_firewall_from_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decision::types::IntentType;
 
     fn make_proposal(tool: &str, args: serde_json::Value) -> ActionProposal {
         ActionProposal {
+            proposal_id: uuid::Uuid::new_v4(),
+            intent: IntentType::from_tool_name(tool),
             tool_name: tool.to_string(),
             raw_arguments: args,
             rationale: None,
             confidence: None,
+            alternatives: vec![],
+            trace: vec![],
         }
     }
 

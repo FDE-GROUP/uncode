@@ -13,8 +13,9 @@
 use std::collections::HashMap;
 
 use uncode_ai::StreamEvent;
+use uuid::Uuid;
 
-use super::types::ActionProposal;
+use super::types::{ActionProposal, CognitiveTrace, IntentType};
 
 /// 流式提案累积器 — 从 LLM StreamEvent 流中提取工具调用
 ///
@@ -32,6 +33,10 @@ pub struct ProposalAccumulator {
     args_pushed: HashMap<String, bool>,
     /// 最终完成的提案
     completed: Vec<ActionProposal>,
+    /// 当前 turn 编号（用于 CognitiveTrace）
+    turn: u32,
+    /// 当前 LLM model ID（用于 CognitiveTrace）
+    model_id: String,
 }
 
 impl ProposalAccumulator {
@@ -40,7 +45,14 @@ impl ProposalAccumulator {
             pending: Vec::with_capacity(8),
             args_pushed: HashMap::new(),
             completed: Vec::with_capacity(8),
+            turn: 0,
+            model_id: String::new(),
         }
+    }
+
+    pub fn set_context(&mut self, turn: u32, model_id: &str) {
+        self.turn = turn;
+        self.model_id = model_id.to_string();
     }
 
     /// 喂入一个 StreamEvent
@@ -60,11 +72,20 @@ impl ProposalAccumulator {
                 None
             }
             StreamEvent::ToolCallEnd(data) => {
+                let tool_name = data.name.clone();
                 let proposal = ActionProposal {
-                    tool_name: data.name.clone(),
+                    proposal_id: Uuid::new_v4(),
+                    intent: IntentType::from_tool_name(&tool_name),
+                    tool_name: tool_name.clone(),
                     raw_arguments: data.arguments.clone(),
-                    rationale: self.extract_rationale(&data.name, &data.arguments),
+                    rationale: self.extract_rationale(&tool_name, &data.arguments),
                     confidence: None,
+                    alternatives: vec![],
+                    trace: vec![CognitiveTrace {
+                        turn: self.turn,
+                        source: "streaming".to_string(),
+                        llm_model: self.model_id.clone(),
+                    }],
                 };
                 self.completed.push(proposal.clone());
                 // 从 pending 中移除以保持内存

@@ -15,13 +15,84 @@
 //!
 //! 参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3
 
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+/// 意图类型：LLM 调用工具的目的分类
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum IntentType {
+    FileRead,
+    FileWrite,
+    FileEdit,
+    Search,
+    Execution,
+    WebAccess,
+    Unknown,
+}
+
+impl IntentType {
+    pub fn from_tool_name(tool_name: &str) -> Self {
+        match tool_name {
+            "read" | "find" | "ls" | "grep" => Self::FileRead,
+            "write" => Self::FileWrite,
+            "edit" => Self::FileEdit,
+            "bash" => Self::Execution,
+            "web_fetch" | "web_search" => Self::WebAccess,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl std::fmt::Display for IntentType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FileRead => write!(f, "FileRead"),
+            Self::FileWrite => write!(f, "FileWrite"),
+            Self::FileEdit => write!(f, "FileEdit"),
+            Self::Search => write!(f, "Search"),
+            Self::Execution => write!(f, "Execution"),
+            Self::WebAccess => write!(f, "WebAccess"),
+            Self::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
+/// 候选动作（多路裁决时的备选方案）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Alternative {
+    pub tool_name: String,
+    pub arguments: serde_json::Value,
+    pub description: String,
+}
+
+/// 认知路径溯源
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CognitiveTrace {
+    pub turn: u32,
+    pub source: String,
+    pub llm_model: String,
+}
+
+/// 防火墙审计记录
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FirewallAudit {
+    pub passed: bool,
+    pub stage_failed: Option<String>,
+    pub violations: Vec<String>,
+    pub normalized_fields: Vec<String>,
+}
+
 /// 参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3
 #[derive(Debug, Clone)]
 pub struct ActionProposal {
+    pub proposal_id: Uuid,
     pub tool_name: String,
     pub raw_arguments: serde_json::Value,
+    pub intent: IntentType,
     pub rationale: Option<String>,
     pub confidence: Option<f32>,
+    pub alternatives: Vec<Alternative>,
+    pub trace: Vec<CognitiveTrace>,
 }
 
 /// 防火墙 Parsing 层输出——已结构化的动作
@@ -89,14 +160,18 @@ pub struct DecisionContext {
 }
 
 /// 决策记录——进入审计层的单次决策
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionRecord {
+    pub id: String,
     pub turn_id: String,
-    pub proposal: ActionProposal,
-    pub verdict: DecisionVerdict,
-    pub approved_action: Option<ApprovedAction>,
+    pub session_id: String,
+    pub tool_name: String,
+    pub intent: String,
+    pub verdict_allowed: bool,
+    pub verdict_reason: Option<String>,
+    pub firewall_result: Option<FirewallAudit>,
+    pub duration_ms: u64,
     pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub adjudication_duration_ms: u64,
 }
 
 /// 工具执行结果（由 loop_engine 构造，供 feedback 层消费）
@@ -182,19 +257,57 @@ mod tests {
     #[test]
     fn test_denied_record_has_no_action() {
         let record = DecisionRecord {
+            id: uuid::Uuid::new_v4().to_string(),
             turn_id: "t1".into(),
-            proposal: ActionProposal {
-                tool_name: "rm".into(),
-                raw_arguments: serde_json::json!({}),
-                rationale: None,
-                confidence: None,
-            },
-            verdict: DecisionVerdict::denied("dangerous"),
-            approved_action: None,
+            session_id: "s1".into(),
+            tool_name: "rm".into(),
+            intent: "Execution".into(),
+            verdict_allowed: false,
+            verdict_reason: Some("dangerous".into()),
+            firewall_result: None,
+            duration_ms: 1,
             timestamp: chrono::Utc::now(),
-            adjudication_duration_ms: 1,
         };
-        assert!(!record.verdict.allowed);
-        assert!(record.approved_action.is_none());
+        assert!(!record.verdict_allowed);
+    }
+
+    #[test]
+    fn test_intent_type_from_tool_name() {
+        assert_eq!(IntentType::from_tool_name("read"), IntentType::FileRead);
+        assert_eq!(IntentType::from_tool_name("write"), IntentType::FileWrite);
+        assert_eq!(IntentType::from_tool_name("edit"), IntentType::FileEdit);
+        assert_eq!(IntentType::from_tool_name("grep"), IntentType::FileRead);
+        assert_eq!(IntentType::from_tool_name("bash"), IntentType::Execution);
+        assert_eq!(
+            IntentType::from_tool_name("web_fetch"),
+            IntentType::WebAccess
+        );
+        assert_eq!(IntentType::from_tool_name("custom"), IntentType::Unknown);
+    }
+
+    #[test]
+    fn test_decision_record_serialization() {
+        let record = DecisionRecord {
+            id: "test-id".into(),
+            turn_id: "t1".into(),
+            session_id: "s1".into(),
+            tool_name: "read".into(),
+            intent: "FileRead".into(),
+            verdict_allowed: true,
+            verdict_reason: None,
+            firewall_result: Some(FirewallAudit {
+                passed: true,
+                stage_failed: None,
+                violations: vec![],
+                normalized_fields: vec!["filepath → path".into()],
+            }),
+            duration_ms: 5,
+            timestamp: chrono::Utc::now(),
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let back: DecisionRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tool_name, "read");
+        assert!(back.verdict_allowed);
+        assert!(back.firewall_result.unwrap().passed);
     }
 }
