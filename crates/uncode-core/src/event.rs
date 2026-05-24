@@ -231,6 +231,45 @@ pub enum AgentEvent {
         duration_ms: Option<u64>,
     },
 
+    /// 提案被接收进入决策管线
+    ProposalReceived {
+        turn_id: String,
+        proposal_id: String,
+        tool_name: String,
+        intent: String,
+    },
+
+    /// 防火墙检查完成（通过或拒绝）
+    FirewallCheck {
+        turn_id: String,
+        proposal_id: String,
+        tool_name: String,
+        passed: bool,
+        /// "parse" | "validate" | "normalize"
+        stage: String,
+        #[serde(default)]
+        violations: Vec<String>,
+        duration_ms: u64,
+    },
+
+    /// 工具执行完成
+    ActionExecuted {
+        turn_id: String,
+        proposal_id: String,
+        tool_name: String,
+        success: bool,
+        duration_ms: u64,
+    },
+
+    /// 审计记录已持久化
+    DecisionAudited {
+        turn_id: String,
+        proposal_id: String,
+        tool_name: String,
+        verdict_allowed: bool,
+        persisted: bool,
+    },
+
     // ── Evaluation (决策层审计 — H0-H3 评估阶梯) ──
     /// Emitted after turn evaluation completes.
     /// Part of the Harness Engineering evaluation framework.
@@ -539,6 +578,10 @@ pub fn agent_event_tag(event: &AgentEvent) -> &'static str {
         AgentEvent::AgentInterrupted { .. } => "agent_interrupted",
         AgentEvent::UncertaintyEncountered { .. } => "uncertainty_encountered",
         AgentEvent::DecisionMade { .. } => "decision_made",
+        AgentEvent::ProposalReceived { .. } => "proposal_received",
+        AgentEvent::FirewallCheck { .. } => "firewall_check",
+        AgentEvent::ActionExecuted { .. } => "action_executed",
+        AgentEvent::DecisionAudited { .. } => "decision_audited",
         AgentEvent::EvaluationScore { .. } => "evaluation_score",
         AgentEvent::AgentSettled { .. } => "agent_settled",
         AgentEvent::ContextInjected { .. } => "context_injected",
@@ -665,6 +708,7 @@ impl AgentEvent {
             | Self::TurnEnd { .. }
             | Self::ToolCallEnd { .. }
             | Self::DecisionMade { .. }
+            | Self::DecisionAudited { .. }
             | Self::Error { .. }
             | Self::CompactionComplete { .. }
             | Self::AgentInterrupted { .. } => EventDetailLevel::Critical,

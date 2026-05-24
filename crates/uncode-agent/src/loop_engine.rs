@@ -494,21 +494,35 @@ impl AgentLoop {
         allowed: bool,
         reason: Option<&str>,
         adjudication_duration_ms: u64,
+        proposal_id: &str,
     ) {
         let entry =
             SessionEntry::DecisionAudit(Box::new(uncode_core::session::DecisionAuditEntry {
                 id: generate_entry_id(),
                 parent_id: None,
                 timestamp: chrono::Utc::now(),
-                turn_id,
+                turn_id: turn_id.clone(),
                 tool_name: tool_name.to_string(),
                 allowed,
                 reason: reason.map(|s| s.to_string()),
                 adjudication_duration_ms,
             }));
-        if let Err(e) = self.session_store.append_entry(session_id, &entry).await {
-            debug!("decision audit persist skipped: {e}");
-        }
+        let persisted = match self.session_store.append_entry(session_id, &entry).await {
+            Ok(()) => true,
+            Err(e) => {
+                debug!("decision audit persist skipped: {e}");
+                false
+            }
+        };
+
+        // ── DecisionAudited 事件 ──
+        self.emit(AgentEvent::DecisionAudited {
+            turn_id,
+            proposal_id: proposal_id.to_string(),
+            tool_name: tool_name.to_string(),
+            verdict_allowed: allowed,
+            persisted,
+        });
     }
 
     /// 构建认知层上下文摘要 (#386)
@@ -1286,7 +1300,11 @@ impl AgentLoop {
                 let mut turn_assistant_snippet = String::new();
 
                 // ── 决策层连线 (#339): 重置提案累积器 ──
-                self.proposal_acc.lock().unwrap().reset();
+                {
+                    let mut acc = self.proposal_acc.lock().unwrap();
+                    acc.reset();
+                    acc.set_context(turn as u32, &self.model_id);
+                }
 
                 // ── 认知层连线 (#385): 初始化 turn 反馈累积器 ──
                 let mut turn_feedback = crate::decision::feedback::TurnFeedback::new(turn as u32);
@@ -1569,12 +1587,14 @@ impl AgentLoop {
 
                             // ── 决策层防火墙验证 + 裁决器 + 审计 (#339, #385, #387) ──
                             let mut denied_results: Vec<(String, String, ToolResult)> = Vec::new();
+                            #[allow(dead_code)]
                             struct PendingAudit {
                                 turn_id: String,
                                 tool_name: String,
                                 allowed: bool,
                                 reason: Option<String>,
                                 duration_ms: u64,
+                                proposal_id: String,
                             }
                             let mut pending_audits: Vec<PendingAudit> = Vec::new();
                             let denied_tool_names: HashSet<String> = {
@@ -1616,8 +1636,33 @@ impl AgentLoop {
                                         for proposal in proposals {
                                             let started_at = std::time::Instant::now();
                                             let tool_name = proposal.tool_name.clone();
+                                            let proposal_id = proposal.proposal_id.to_string();
+                                            let intent = format!("{}", proposal.intent);
+
+                                            // ── ProposalReceived 事件 ──
+                                            self.emit(AgentEvent::ProposalReceived {
+                                                turn_id: format!("turn-{turn}"),
+                                                proposal_id: proposal_id.clone(),
+                                                tool_name: tool_name.clone(),
+                                                intent: intent.clone(),
+                                            });
+
                                             match firewall.process(proposal) {
                                                 Ok(normalized) => {
+                                                    let fw_duration_ms =
+                                                        started_at.elapsed().as_millis() as u64;
+
+                                                    // ── FirewallCheck passed ──
+                                                    self.emit(AgentEvent::FirewallCheck {
+                                                        turn_id: format!("turn-{turn}"),
+                                                        proposal_id: proposal_id.clone(),
+                                                        tool_name: normalized.tool_name.clone(),
+                                                        passed: true,
+                                                        stage: "validate".into(),
+                                                        violations: vec![],
+                                                        duration_ms: fw_duration_ms,
+                                                    });
+
                                                     let (allowed, reason) =
                                                         if let Some(ref adjudicator) = *adj {
                                                             match adjudicator.adjudicate(
@@ -1657,6 +1702,7 @@ impl AgentLoop {
                                                         allowed,
                                                         reason,
                                                         duration_ms,
+                                                        proposal_id: proposal_id.clone(),
                                                     });
                                                     if !allowed {
                                                         denied.insert(tool_name);
@@ -1669,6 +1715,18 @@ impl AgentLoop {
                                                     );
                                                     let duration_ms =
                                                         started_at.elapsed().as_millis() as u64;
+
+                                                    // ── FirewallCheck failed ──
+                                                    self.emit(AgentEvent::FirewallCheck {
+                                                        turn_id: format!("turn-{turn}"),
+                                                        proposal_id: proposal_id.clone(),
+                                                        tool_name: tool_name.clone(),
+                                                        passed: false,
+                                                        stage: "validate".into(),
+                                                        violations: vec![e.to_string()],
+                                                        duration_ms,
+                                                    });
+
                                                     self.emit(AgentEvent::DecisionMade {
                                                         turn_id: format!("turn-{turn}"),
                                                         tool_name: tool_name.clone(),
@@ -1682,6 +1740,7 @@ impl AgentLoop {
                                                         allowed: false,
                                                         reason: Some(e.to_string()),
                                                         duration_ms,
+                                                        proposal_id: proposal_id.clone(),
                                                     });
                                                 }
                                             }
@@ -1690,6 +1749,16 @@ impl AgentLoop {
                                     denied
                                 }
                             };
+
+                            // Build denied-reasons map from audits (before consuming them)
+                            let denied_reasons: std::collections::HashMap<String, String> =
+                                pending_audits
+                                    .iter()
+                                    .filter(|a| !a.allowed)
+                                    .filter_map(|a| {
+                                        a.reason.as_ref().map(|r| (a.tool_name.clone(), r.clone()))
+                                    })
+                                    .collect();
 
                             // 持久化审计记录（锁已释放，可安全 await）
                             for audit in pending_audits {
@@ -1700,24 +1769,27 @@ impl AgentLoop {
                                     audit.allowed,
                                     audit.reason.as_deref(),
                                     audit.duration_ms,
+                                    &audit.proposal_id,
                                 )
                                 .await;
                             }
 
-                            // 从执行列表中移除被拒绝的工具，并生成错误 tool result
+                            // 从执行列表中移除被拒绝的工具，并生成包含拒绝原因的错误 tool result
                             if !denied_tool_names.is_empty() {
                                 let denied_executions: Vec<(String, String, serde_json::Value)> =
                                     executions
                                         .drain(..)
                                         .filter(|(id, name, _args)| {
                                             if denied_tool_names.contains(name) {
-                                                // 为被拒绝的工具生成错误结果
+                                                let reason = denied_reasons
+                                                    .get(name)
+                                                    .cloned()
+                                                    .unwrap_or_else(|| "unknown reason".into());
                                                 denied_results.push((
                                                     id.clone(),
                                                     name.clone(),
                                                     ToolResult::err(format!(
-                                                        "denied by decision policy: {}",
-                                                        name
+                                                        "Action denied by decision pipeline: {reason}"
                                                     )),
                                                 ));
                                                 false
@@ -1856,6 +1928,15 @@ impl AgentLoop {
                                             result_summary: Some(content_text.clone()),
                                             is_error,
                                         }),
+                                    });
+
+                                    // ── ActionExecuted 事件 ──
+                                    self.emit(AgentEvent::ActionExecuted {
+                                        turn_id: format!("turn-{turn}"),
+                                        proposal_id: id.clone(),
+                                        tool_name: name.clone(),
+                                        success: !is_error,
+                                        duration_ms,
                                     });
                                     if let Some(ref bridge) = self.extension_bridge {
                                         bridge
