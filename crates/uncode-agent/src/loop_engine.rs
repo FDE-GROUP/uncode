@@ -33,9 +33,9 @@ use uncode_core::error::UncodeError;
 use uncode_core::event::AgentEvent;
 use uncode_core::event::{
     CompactionReason, CompactionStartData, ContextThresholdData, LlmRequestEndData,
-    LlmRequestStartData, LlmRequestStatus, ModelChangeSource, ModelChangedData, QueueUpdateData,
-    RetryAttemptData, SessionEndData, ThinkingLevelChangedData, ToolCallEndEventData,
-    ToolCallStatus,
+    LlmRequestStartData, LlmRequestStatus, ModelChangeSource, ModelChangedData,
+    PhaseTransitionEventData, QueueUpdateData, RetryAttemptData, SessionEndData,
+    ThinkingLevelChangedData, ToolCallEndEventData, ToolCallStatus,
 };
 use uncode_core::message::{ContentBlock, Message, Role, UsageInfo};
 use uncode_core::session::{SessionEntry, ThinkingLevelChangeEntry, generate_entry_id};
@@ -199,6 +199,8 @@ pub struct AgentLoop {
     guardrail_config: std::sync::Mutex<uncode_shared::guardrails::GuardrailConfig>,
     /// 事件路由器 — 治理层 sync dispatch
     event_router: std::sync::Mutex<uncode_core::event::EventRouter>,
+    /// Turn-level phase state machine — governance observability
+    phase_sm: std::sync::Mutex<crate::governance::PhaseStateMachine>,
 }
 
 impl AgentLoop {
@@ -314,6 +316,7 @@ impl AgentLoop {
                 uncode_shared::guardrails::GuardrailConfig::default(),
             ),
             event_router: std::sync::Mutex::new(uncode_core::event::EventRouter::new()),
+            phase_sm: std::sync::Mutex::new(crate::governance::PhaseStateMachine::new()),
         }
     }
 
@@ -489,6 +492,31 @@ impl AgentLoop {
         // EventRouter sync dispatch — fire-and-forget observation handlers
         if let Ok(router) = self.event_router.lock() {
             router.dispatch(&event);
+        }
+    }
+
+    /// Attempt a phase transition. On success, emits a PhaseTransition event.
+    /// On failure, logs a warning and does NOT block execution.
+    fn try_transition_phase(&self, to: crate::governance::AgentPhase, trigger: &str, turn: u64) {
+        let mut sm = self.phase_sm.lock().unwrap();
+        match sm.transition(to, trigger) {
+            Ok(()) => {
+                let last = sm.history().last().unwrap();
+                let from_str = last.from.to_string();
+                let to_str = last.to.to_string();
+                drop(sm);
+                self.emit(AgentEvent::PhaseTransition {
+                    data: Box::new(PhaseTransitionEventData {
+                        from: from_str,
+                        to: to_str,
+                        trigger: trigger.to_string(),
+                        turn,
+                    }),
+                });
+            }
+            Err(e) => {
+                warn!("phase transition ignored: {e} (trigger={trigger}, turn={turn})");
+            }
         }
     }
 
@@ -808,6 +836,13 @@ impl AgentLoop {
         total_input_tokens: u64,
         total_output_tokens: u64,
     ) {
+        // PhaseStateMachine: → Terminated
+        self.try_transition_phase(
+            crate::governance::AgentPhase::Terminated,
+            "session_end",
+            total_turns,
+        );
+
         let total_usage = UsageInfo {
             input_tokens: total_input_tokens,
             output_tokens: total_output_tokens,
@@ -1129,6 +1164,17 @@ impl AgentLoop {
                 }
 
                 self.emit(AgentEvent::TurnStart { turn });
+
+                // PhaseStateMachine: reset at turn boundary, then Init → Cognizing
+                {
+                    let mut sm = self.phase_sm.lock().unwrap();
+                    *sm = crate::governance::PhaseStateMachine::new();
+                }
+                self.try_transition_phase(
+                    crate::governance::AgentPhase::Cognizing,
+                    "turn_start",
+                    turn,
+                );
 
                 if let Some(ref bridge) = self.extension_bridge {
                     bridge.fire_turn_start(&session_id, turn).await;
@@ -1592,6 +1638,15 @@ impl AgentLoop {
                                 .map(|(id, _, args)| (id.clone(), args.to_string()))
                                 .collect();
 
+                            // PhaseStateMachine: Cognizing → Adjudicating (only if tool calls exist)
+                            if !executions.is_empty() {
+                                self.try_transition_phase(
+                                    crate::governance::AgentPhase::Adjudicating,
+                                    "tool_calls_received",
+                                    turn,
+                                );
+                            }
+
                             // ── 决策层防火墙验证 + 裁决器 + 审计 (#339, #385, #387) ──
                             let mut denied_results: Vec<(String, String, ToolResult)> = Vec::new();
                             #[allow(dead_code)]
@@ -1811,6 +1866,12 @@ impl AgentLoop {
                             // Batch-execute buffered tool calls (same `executions` as assistant ToolCalls)
                             let has_denied = !denied_results.is_empty();
                             if !executions.is_empty() || has_denied {
+                                // PhaseStateMachine: Adjudicating → Executing
+                                self.try_transition_phase(
+                                    crate::governance::AgentPhase::Executing,
+                                    "adjudication_approved",
+                                    turn,
+                                );
                                 // Pi strategy: if ANY tool is sequential, run ALL sequentially
                                 let has_sequential = executions.iter().any(|(_, name, _)| {
                                     self.tool_registry.execution_mode(name)
@@ -2077,6 +2138,12 @@ impl AgentLoop {
                                 // Set has_more_tool_calls for inner loop control
                                 if !should_terminate {
                                     has_more_tool_calls = true;
+                                    // PhaseStateMachine: Executing → Cognizing
+                                    self.try_transition_phase(
+                                        crate::governance::AgentPhase::Cognizing,
+                                        "tool_execution_complete",
+                                        turn,
+                                    );
                                 } else {
                                     info!("all tools requested terminate, ending agent loop");
                                 }
@@ -2251,6 +2318,13 @@ impl AgentLoop {
                 pending_messages = steering_msgs;
             }
             // ── Inner turn loop exited ──
+
+            // PhaseStateMachine: → WaitingForUser
+            self.try_transition_phase(
+                crate::governance::AgentPhase::WaitingForUser,
+                "inner_loop_complete",
+                turn,
+            );
 
             // Outer loop: drain follow-up messages
             let follow_up_msgs = {
