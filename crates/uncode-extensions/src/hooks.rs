@@ -145,11 +145,17 @@ pub enum HookEvent {
     /// LLM request payload about to be sent (read-only snapshot for extensions).
     ProviderRequest(serde_json::Value),
     /// Session switch payload — target session ID.
-    SessionSwitch { session_id: String },
+    SessionSwitch {
+        session_id: String,
+    },
     /// Session fork payload — source entry ID.
-    SessionFork { entry_id: String },
+    SessionFork {
+        entry_id: String,
+    },
     /// Session tree navigation payload — target entry ID.
-    SessionTreeNav { entry_id: String },
+    SessionTreeNav {
+        entry_id: String,
+    },
     /// Session tree completed notification.
     SessionTreeResult {
         new_leaf_id: String,

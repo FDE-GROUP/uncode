@@ -13,9 +13,9 @@ use crate::theme_control::{ThemeControlConfig, ThinkingLabelConfig};
 use crate::tool::ExtensionTool;
 
 use uncode_core::dialog::{DialogRequest, DialogResponse};
+use uncode_core::message::Message;
 use uncode_core::overlay::{OverlayAction, OverlayConfig, OverlayContent};
 use uncode_core::ui_action::{NotifyType, UiAction, WidgetConfig};
-use uncode_core::message::Message;
 
 /// Callback type for tool registration. Injected by `uncode-agent`.
 ///
@@ -104,8 +104,7 @@ pub type SessionCallback =
     Arc<dyn Fn(SessionAction) -> Result<SessionResponse, String> + Send + Sync>;
 
 /// Callback type for injecting messages into the agent conversation. Injected by `uncode-cli`.
-pub type SendMessageCallback =
-    Arc<dyn Fn(Message) -> Result<(), String> + Send + Sync>;
+pub type SendMessageCallback = Arc<dyn Fn(Message) -> Result<(), String> + Send + Sync>;
 
 /// Callback type for appending custom session entries. Injected by `uncode-cli`.
 pub type AppendEntryCallback =
