@@ -13,6 +13,16 @@ uncode/
 ├── Cargo.toml              # Rust workspace 根
 ├── AGENTS.md               # 本文档（opencode 协作指引）
 ├── docs/                   # 设计文档
+│   ├── agent-archi/        #   AI Agent 架构治理系列（核心范式定义，见 README.md）
+│   │   ├── README.md       #   系列索引与阅读路径
+│   │   ├── 01-the-paradigm.md
+│   │   ├── 02-domain-first.md
+│   │   ├── 03-cognition-path.md
+│   │   ├── 04-decision-path.md
+│   │   ├── 05-firewall.md
+│   │   ├── 06-ontology.md
+│   │   ├── 07-governance.md
+│   │   └── 08-evolution.md
 │   ├── VISION.md           #   项目愿景与设计蓝图（顶层设计指引）
 │   ├── ARCHITECTURE.md     #   架构详细设计
 │   ├── TUI_DESIGN.md       #   TUI 交互设计详案
@@ -63,7 +73,7 @@ uncode/
 
 ## 架构范式：认知显化与决策驱动设计
 
-uncode 采用**认知显化与决策驱动设计**作为架构方法论。参见 [`docs/ai-agent-archi/cognition-decision-driven-design.md`](docs/ai-agent-archi/cognition-decision-driven-design.md)。
+uncode 采用**认知显化与决策驱动设计**作为架构方法论。系列定义见 [`docs/agent-archi/`](docs/agent-archi/README.md)。
 
 **四层架构**：
 
@@ -122,5 +132,7 @@ cargo api-doc-open       # 打开 core/agent/ai 文档
 - 可组合扩展宿主与 Plan 模式（Pi plan-mode 对照、uncode 演进方案；**Turn ≠ Plan 模式**，见 §2.3）→ `EXTENSION_COMPOSABLE_HARNESS_DESIGN.md`
 - 微观规划（micro-planning）能力说明：ReAct Turn 内决策 vs Plan 模式 → `docs/uncode-technologies/UNCODE_MICRO_PLANNING.md`
 - TUI 微观规划 UX 评价（Turn 边界、`agent_busy`、steering）→ `docs/uncode-technologies/UNCODE_TUI_MICRO_PLANNING_UX.md`
+
+架构范式系列定义位于 `docs/agent-archi/`（核心范式，见 `README.md`），旧版系列位于 `docs/ai-agent-archi/`（已归档，作为历史参考）。
 
 后续设计文档编写时，请读取 @docs/VISION.md 确保一致性，参考 opencode 的 AGENTS.md 规范格式。

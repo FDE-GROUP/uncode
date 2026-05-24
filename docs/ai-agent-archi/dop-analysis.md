@@ -53,7 +53,7 @@
 
 | 维度 | 认知显化与决策驱动设计 | DOP (Aporia) | 关系 |
 |:---|:---|:---|:---|
-| **"决策"的地位** | 决策 = 第一公民（决策层核心） | 决策 = 第一公民（Decision Bank 核心） | **完全一致** |
+| **"决策"的地位** | **领域 = 第一公民**；决策是服务于领域的路径终点 | 决策 = 第一公民（Decision Bank 核心） | **视角不同**——DOP 强调"决策作为可编辑对象"，本范式强调"领域是第一公民，决策是服务于领域的路径组件" |
 | **决策的记录** | `DecisionRecord` + `AuditTrail`（系统内部） | Decision Bank（用户可见 UI） | **互补**：一个对内一个对外 |
 | **决策的验证** | `Adjudicator` + `DecisionPolicy`（系统裁决） | Test suite per decision（可执行验证） | **互补**：裁决是"能做吗"，测试是"做对了吗" |
 | **决策的发现** | `ProposalAccumulator` 从 LLM stream 提取 | Question Bubbles **主动提问**程序员 | **互补**：一个提取LLM输出，一个向人类提问 |
@@ -73,7 +73,7 @@
 
 两套范式在三个根本点上一致：
 
-1. **决策应该是第一公民**。Aporia 的 Decision Bank 和我们的 DecisionRecord 是同一个概念的不同表现形式——前者面向程序员，后者面向系统。
+1. **决策应该作为路径组件与领域分离**。Aporia 的 Decision Bank 和我们的 DecisionRecord 是同一个概念的不同表现形式——前者面向程序员，后者面向系统。在我们的范式中，决策是服务于领域的路径组件，领域才是真正的第一公民。
 
 2. **决策应该脱离自然语言**。Aporia 用 Test Suites 将决策形式化；我们用 `NormalizedAction` + `ApprovedAction` 将决策结构化。手段不同，原理相同。
 
