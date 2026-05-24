@@ -168,6 +168,40 @@ pub type GetThinkingLevelCallback = Arc<dyn Fn() -> Option<String> + Send + Sync
 /// **Pi:** `pi.setThinkingLevel(level)`.
 pub type SetThinkingLevelCallback = Arc<dyn Fn(String) -> Result<(), String> + Send + Sync>;
 
+// ── P2: Missing API callbacks (#410) ──
+
+/// Callback type for sending a user message. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.sendUserMessage(content, options?)`.
+pub type SendUserMessageCallback = Arc<dyn Fn(String) -> Result<(), String> + Send + Sync>;
+
+/// Callback type for dynamically enabling/disabling tools. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.setActiveTools(toolNames)`.
+pub type SetActiveToolsCallback = Arc<dyn Fn(Vec<String>) -> Result<(), String> + Send + Sync>;
+
+/// Callback type for listing all registered commands. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.getCommands()`.
+pub type GetCommandsCallback = Arc<dyn Fn() -> Vec<CommandInfo> + Send + Sync>;
+
+/// Command metadata returned by `getCommands()`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CommandInfo {
+    pub name: String,
+    pub description: String,
+}
+
+/// Callback type for dynamically switching model. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.setModel(model)`.
+pub type SetModelCallback = Arc<dyn Fn(String) -> Result<bool, String> + Send + Sync>;
+
+/// Callback type for reading session name. Injected by `uncode-cli`.
+///
+/// **Pi:** `pi.getSessionName()`.
+pub type GetSessionNameCallback = Arc<dyn Fn() -> Option<String> + Send + Sync>;
+
 /// 扩展开发者的注册 API 入口。
 ///
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
@@ -209,6 +243,12 @@ pub struct ExtensionApi {
     // P2: Runtime config
     get_thinking_level_callback: Option<GetThinkingLevelCallback>,
     set_thinking_level_callback: Option<SetThinkingLevelCallback>,
+    // P2: Missing APIs (#410)
+    send_user_message_callback: Option<SendUserMessageCallback>,
+    set_active_tools_callback: Option<SetActiveToolsCallback>,
+    get_commands_callback: Option<GetCommandsCallback>,
+    set_model_callback: Option<SetModelCallback>,
+    get_session_name_callback: Option<GetSessionNameCallback>,
 }
 
 impl ExtensionApi {
@@ -249,6 +289,11 @@ impl ExtensionApi {
             get_all_tools_callback: None,
             get_thinking_level_callback: None,
             set_thinking_level_callback: None,
+            send_user_message_callback: None,
+            set_active_tools_callback: None,
+            get_commands_callback: None,
+            set_model_callback: None,
+            get_session_name_callback: None,
         }
     }
 
@@ -289,6 +334,11 @@ impl ExtensionApi {
         get_all_tools_callback: Option<GetAllToolsCallback>,
         get_thinking_level_callback: Option<GetThinkingLevelCallback>,
         set_thinking_level_callback: Option<SetThinkingLevelCallback>,
+        send_user_message_callback: Option<SendUserMessageCallback>,
+        set_active_tools_callback: Option<SetActiveToolsCallback>,
+        get_commands_callback: Option<GetCommandsCallback>,
+        set_model_callback: Option<SetModelCallback>,
+        get_session_name_callback: Option<GetSessionNameCallback>,
     ) -> Self {
         Self {
             registry,
@@ -326,6 +376,11 @@ impl ExtensionApi {
             get_all_tools_callback,
             get_thinking_level_callback,
             set_thinking_level_callback,
+            send_user_message_callback,
+            set_active_tools_callback,
+            get_commands_callback,
+            set_model_callback,
+            get_session_name_callback,
         }
     }
 
@@ -838,5 +893,68 @@ impl ExtensionApi {
     /// **Pi:** `pi.getFlag(name)`.
     pub fn get_flag(&self, name: &str) -> Option<FlagValue> {
         self.flag_registry.get(name)
+    }
+
+    // ── P2: Missing API methods (#410) ──
+
+    /// Send a message as the user.
+    ///
+    /// **Pi:** `pi.sendUserMessage(content)`.
+    pub fn send_user_message(&self, text: String) -> Result<(), String> {
+        if text.is_empty() {
+            return Err("text must not be empty".into());
+        }
+        let callback = self
+            .send_user_message_callback
+            .as_ref()
+            .ok_or("send_user_message not available: no callback configured")?;
+        callback(text)
+    }
+
+    /// Dynamically enable/disable tools by name.
+    ///
+    /// **Pi:** `pi.setActiveTools(toolNames)`.
+    pub fn set_active_tools(&self, tool_names: Vec<String>) -> Result<(), String> {
+        let callback = self
+            .set_active_tools_callback
+            .as_ref()
+            .ok_or("set_active_tools not available: no callback configured")?;
+        callback(tool_names)
+    }
+
+    /// List all registered slash commands.
+    ///
+    /// **Pi:** `pi.getCommands()`.
+    pub fn get_commands(&self) -> Vec<CommandInfo> {
+        if let Some(callback) = &self.get_commands_callback {
+            callback()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Dynamically switch the active model.
+    ///
+    /// **Pi:** `pi.setModel(model)`. Returns `false` if no API key available.
+    pub fn set_model(&self, model_id: String) -> Result<bool, String> {
+        if model_id.is_empty() {
+            return Err("model_id must not be empty".into());
+        }
+        let callback = self
+            .set_model_callback
+            .as_ref()
+            .ok_or("set_model not available: no callback configured")?;
+        callback(model_id)
+    }
+
+    /// Get the current session display name.
+    ///
+    /// **Pi:** `pi.getSessionName()`.
+    pub fn get_session_name(&self) -> Option<String> {
+        if let Some(callback) = &self.get_session_name_callback {
+            callback()
+        } else {
+            None
+        }
     }
 }
