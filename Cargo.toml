@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/uncode-shared",
+    "crates/uncode-ontology",
     "crates/uncode-ai",
     "crates/uncode-core",
     "crates/uncode-macros",
@@ -120,6 +121,7 @@ wasmtime = { version = "29", default-features = false, features = [
 
 # ── Internal crates ──
 uncode-shared = { path = "crates/uncode-shared" }
+uncode-ontology = { path = "crates/uncode-ontology" }
 uncode-ai = { path = "crates/uncode-ai" }
 uncode-core = { path = "crates/uncode-core" }
 uncode-macros = { path = "crates/uncode-macros" }

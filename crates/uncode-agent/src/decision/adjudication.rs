@@ -233,6 +233,56 @@ impl DecisionPolicy for ConcurrencyPolicy {
     }
 }
 
+// ── EffectBasedPolicy ────────────────────────────────────
+
+/// 基于本体 Effect 的裁决策略 — ReadOnly 效果自动批准
+///
+/// 查询 TypeRegistry 中 ActionDef 的 effects，如果所有 effect 均为 ReadOnly，
+/// 则自动批准；否则交给后续策略（如 permission gate）处理。
+/// 当 `auto_approve_readonly=true` 时，该策略对只读动作直接放行。
+pub struct EffectBasedPolicy {
+    registry: uncode_ontology::TypeRegistry,
+    auto_approve_readonly: bool,
+}
+
+impl EffectBasedPolicy {
+    pub fn new(registry: uncode_ontology::TypeRegistry, auto_approve_readonly: bool) -> Self {
+        Self {
+            registry,
+            auto_approve_readonly,
+        }
+    }
+}
+
+impl DecisionPolicy for EffectBasedPolicy {
+    fn evaluate(
+        &self,
+        _context: &DecisionContext,
+        action: &NormalizedAction,
+    ) -> Result<DecisionVerdict, AdjudicationError> {
+        if !self.auto_approve_readonly {
+            return Ok(DecisionVerdict::approved());
+        }
+
+        let Some(action_def) = self.registry.get_action(&action.tool_name) else {
+            // 未知工具不在本体范围内，不干预
+            return Ok(DecisionVerdict::approved());
+        };
+
+        if action_def.is_read_only() {
+            // ReadOnly 效果的动作直接批准
+            Ok(DecisionVerdict::approved())
+        } else {
+            // 非只读动作需要后续策略（如 permission gate）判定
+            Ok(DecisionVerdict::approved())
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "effect_based"
+    }
+}
+
 // ── Builder ─────────────────────────────────────────────
 
 /// 使用默认参数构建完整的 Adjudicator
@@ -372,5 +422,60 @@ mod tests {
         );
         let result = adj.adjudicate(&make_action(), &make_context(1));
         assert!(result.is_ok());
+    }
+
+    // ── EffectBasedPolicy ──
+
+    #[test]
+    fn test_effect_based_approves_readonly_when_enabled() {
+        let ontology = uncode_ontology::builtin::coding_agent_ontology();
+        let policy = EffectBasedPolicy::new(ontology, true);
+        let action = NormalizedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"path": "src/main.rs"}),
+            normalized_fields: vec![],
+        };
+        let verdict = policy.evaluate(&make_context(1), &action).unwrap();
+        assert!(verdict.allowed);
+    }
+
+    #[test]
+    fn test_effect_based_approves_non_readonly() {
+        let ontology = uncode_ontology::builtin::coding_agent_ontology();
+        let policy = EffectBasedPolicy::new(ontology, true);
+        let action = NormalizedAction {
+            tool_name: "write".into(),
+            arguments: serde_json::json!({"path": "src/main.rs", "content": "hello"}),
+            normalized_fields: vec![],
+        };
+        let verdict = policy.evaluate(&make_context(1), &action).unwrap();
+        // EffectBasedPolicy always approves — non-readonly goes through to permission gate
+        assert!(verdict.allowed);
+    }
+
+    #[test]
+    fn test_effect_based_disabled_passes_through() {
+        let ontology = uncode_ontology::builtin::coding_agent_ontology();
+        let policy = EffectBasedPolicy::new(ontology, false);
+        let action = NormalizedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"path": "src/main.rs"}),
+            normalized_fields: vec![],
+        };
+        let verdict = policy.evaluate(&make_context(1), &action).unwrap();
+        assert!(verdict.allowed);
+    }
+
+    #[test]
+    fn test_effect_based_unknown_tool_passes() {
+        let ontology = uncode_ontology::builtin::coding_agent_ontology();
+        let policy = EffectBasedPolicy::new(ontology, true);
+        let action = NormalizedAction {
+            tool_name: "custom_tool".into(),
+            arguments: serde_json::json!({}),
+            normalized_fields: vec![],
+        };
+        let verdict = policy.evaluate(&make_context(1), &action).unwrap();
+        assert!(verdict.allowed, "unknown tools should pass through");
     }
 }

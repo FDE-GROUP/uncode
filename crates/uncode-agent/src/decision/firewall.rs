@@ -181,70 +181,18 @@ impl DeclarativeNormalizer {
         }
     }
 
-    /// Build with default mappings for the 9 built-in tools.
-    pub fn builtin() -> Self {
-        let field_mapping: std::collections::HashMap<String, String> = [
-            // path aliases (read, write, edit, find, ls)
-            ("filepath".into(), "path".into()),
-            ("file_path".into(), "path".into()),
-            ("file".into(), "path".into()),
-            ("filename".into(), "path".into()),
-            ("dir".into(), "path".into()),
-            ("directory".into(), "path".into()),
-            ("folder".into(), "path".into()),
-            ("root".into(), "path".into()),
-            // grep aliases
-            ("query".into(), "pattern".into()),
-            ("regex".into(), "pattern".into()),
-            ("search".into(), "pattern".into()),
-            // bash aliases
-            ("cmd".into(), "command".into()),
-            ("command_line".into(), "command".into()),
-            ("script".into(), "command".into()),
-            // web_fetch aliases
-            ("uri".into(), "url".into()),
-            ("link".into(), "url".into()),
-            ("href".into(), "url".into()),
-            // web_search aliases
-            ("q".into(), "query".into()),
-            ("term".into(), "query".into()),
-            ("search".into(), "query".into()),
-            // write aliases
-            ("body".into(), "content".into()),
-        ]
-        .into_iter()
-        .collect();
-
-        let defaults: std::collections::HashMap<
-            String,
-            std::collections::HashMap<String, serde_json::Value>,
-        > = [
-            (
-                "read".into(),
-                [("offset".into(), serde_json::json!(0))]
-                    .into_iter()
-                    .collect(),
-            ),
-            (
-                "grep".into(),
-                [("case_sensitive".into(), serde_json::json!(false))]
-                    .into_iter()
-                    .collect(),
-            ),
-            (
-                "ls".into(),
-                [("show_hidden".into(), serde_json::json!(false))]
-                    .into_iter()
-                    .collect(),
-            ),
-        ]
-        .into_iter()
-        .collect();
-
+    /// Build from an ontology TypeRegistry — eliminates hardcoded mappings.
+    pub fn from_registry(registry: &uncode_ontology::TypeRegistry) -> Self {
         Self {
-            field_mapping,
-            defaults,
+            field_mapping: registry.all_field_aliases(),
+            defaults: registry.all_defaults(),
         }
+    }
+
+    /// Build with hardcoded mappings for the 9 built-in tools.
+    pub fn builtin() -> Self {
+        let registry = uncode_ontology::builtin::coding_agent_ontology();
+        Self::from_registry(&registry)
     }
 }
 
@@ -467,6 +415,71 @@ impl ValidationRule for SchemaCoercionRule {
     }
 }
 
+// ── OntologyConstraintRule ───────────────────────────────
+
+/// 本体约束校验 — 使用 TypeRegistry 的 constraint axioms 验证动作参数
+///
+/// 评估 `ActionDef::preconditions` 中的约束（RequiredField, TypeCheck, RangeCheck 等），
+/// 将 Hard 级别失败转为 firewall deny，Soft 级别失败记录为 violations 但不阻断。
+pub struct OntologyConstraintRule {
+    registry: uncode_ontology::TypeRegistry,
+}
+
+impl OntologyConstraintRule {
+    pub fn new(registry: uncode_ontology::TypeRegistry) -> Self {
+        Self { registry }
+    }
+}
+
+impl ValidationRule for OntologyConstraintRule {
+    fn validate(&self, action: &ParsedAction) -> Result<ValidationVerdict, ValidationError> {
+        let Some(action_def) = self.registry.get_action(&action.tool_name) else {
+            // 未知工具不在本体范围内，交给其他 rule 处理
+            return Ok(ValidationVerdict::approved());
+        };
+
+        let fields: std::collections::HashMap<String, serde_json::Value> =
+            if let serde_json::Value::Object(ref map) = action.arguments {
+                map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            } else {
+                return Ok(ValidationVerdict::approved());
+            };
+
+        let mut violations = Vec::new();
+        for constraint in &action_def.preconditions {
+            let result = uncode_ontology::evaluate_constraint(constraint, &fields);
+            match result {
+                uncode_ontology::ConstraintResult::Pass => {}
+                uncode_ontology::ConstraintResult::Warn { detail, .. } => {
+                    violations.push(detail);
+                }
+                uncode_ontology::ConstraintResult::Fail { detail, .. } => {
+                    return Ok(ValidationVerdict {
+                        approved: false,
+                        reason: Some(detail.clone()),
+                        violations: vec![detail],
+                    });
+                }
+            }
+        }
+
+        // Soft violations don't block, but we still report them
+        if violations.is_empty() {
+            Ok(ValidationVerdict::approved())
+        } else {
+            Ok(ValidationVerdict {
+                approved: true,
+                reason: None,
+                violations,
+            })
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "ontology_constraint"
+    }
+}
+
 // ── Composite builder ───────────────────────────────────
 
 /// 使用默认配置构建完整的 SemanticFirewall
@@ -475,14 +488,16 @@ pub fn build_default_firewall(
     registry: Arc<ToolRegistry>,
     cwd: std::path::PathBuf,
 ) -> SemanticFirewall {
+    let ontology = uncode_ontology::builtin::coding_agent_ontology();
     SemanticFirewall {
         parser: Box::new(DefaultParser),
         validators: vec![
+            Box::new(OntologyConstraintRule::new(ontology.clone())),
             Box::new(SchemaCoercionRule::new(Arc::clone(&registry))),
             Box::new(PathSafetyRule::new(cwd)),
             Box::new(PermissionPolicyRule::new(policy)),
         ],
-        normalizer: Box::new(DeclarativeNormalizer::builtin()),
+        normalizer: Box::new(DeclarativeNormalizer::from_registry(&ontology)),
     }
 }
 
@@ -497,15 +512,17 @@ pub fn build_firewall_from_config(
         config.firewall.tool_whitelist.mode,
         uncode_shared::guardrails::ToolWhitelistMode::All
     );
+    let ontology = uncode_ontology::builtin::coding_agent_ontology();
 
     SemanticFirewall {
         parser: Box::new(DefaultParser),
         validators: vec![
+            Box::new(OntologyConstraintRule::new(ontology.clone())),
             Box::new(SchemaCoercionRule::new(Arc::clone(&registry))),
             Box::new(PathSafetyRule::new(cwd)),
             Box::new(PermissionPolicyRule::new(policy).with_auto_allow(auto_allow, auto_allow)),
         ],
-        normalizer: Box::new(DeclarativeNormalizer::builtin()),
+        normalizer: Box::new(DeclarativeNormalizer::from_registry(&ontology)),
     }
 }
 
@@ -744,5 +761,43 @@ mod tests {
         assert_eq!(normalized.arguments["path"], "src/main.rs");
         assert_eq!(normalized.arguments["offset"], 0);
         assert_eq!(normalized.normalized_fields.len(), 2);
+    }
+
+    // ── OntologyConstraintRule ──
+
+    #[test]
+    fn test_ontology_constraint_blocks_missing_required_field() {
+        let ontology = uncode_ontology::builtin::coding_agent_ontology();
+        let rule = OntologyConstraintRule::new(ontology);
+        let action = ParsedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({}),
+        };
+        let verdict = rule.validate(&action).unwrap();
+        assert!(!verdict.approved, "read without path should be blocked");
+    }
+
+    #[test]
+    fn test_ontology_constraint_allows_valid_action() {
+        let ontology = uncode_ontology::builtin::coding_agent_ontology();
+        let rule = OntologyConstraintRule::new(ontology);
+        let action = ParsedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"path": "src/main.rs"}),
+        };
+        let verdict = rule.validate(&action).unwrap();
+        assert!(verdict.approved, "read with path should pass");
+    }
+
+    #[test]
+    fn test_ontology_constraint_passes_unknown_tool() {
+        let ontology = uncode_ontology::builtin::coding_agent_ontology();
+        let rule = OntologyConstraintRule::new(ontology);
+        let action = ParsedAction {
+            tool_name: "custom_tool".into(),
+            arguments: serde_json::json!({}),
+        };
+        let verdict = rule.validate(&action).unwrap();
+        assert!(verdict.approved, "unknown tool should pass through");
     }
 }
