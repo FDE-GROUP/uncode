@@ -1273,10 +1273,14 @@ impl AgentLoop {
 
                 // ── 认知层连线 (#385): 初始化 turn 反馈累积器 ──
                 let mut turn_feedback = crate::decision::feedback::TurnFeedback::new(turn as u32);
-                // 重置工作记忆的 turn 编号
+                // 重置工作记忆的 turn 编号，flush 返回的低重要性条目注入情景记忆
                 {
                     let mut cm = self.cognition_memory.lock().unwrap();
-                    cm.working.flush(turn);
+                    let flushed = cm.working.flush(turn);
+                    for entry in &flushed {
+                        cm.episode
+                            .record("working_memory_flush", entry.one_liner(), turn);
+                    }
                 }
 
                 // ── Stream processing loop ──
@@ -2022,6 +2026,14 @@ impl AgentLoop {
 
                     // ── 认知层反馈闭环 (#385): TurnFeedback → WorkingMemory → EpisodeMemory ──
                     self.record_feedback(turn, &turn_feedback);
+
+                    // agent_steps 可观测性（面向离线训练管道）
+                    if !turn_feedback.agent_steps.is_empty() {
+                        debug!(
+                            "turn {turn}: collected {} agent steps",
+                            turn_feedback.agent_steps.len()
+                        );
+                    }
 
                     if !turn_phase_completed.is_empty() || !turn_phase_issues.is_empty() {
                         let heuristic = build_phase_summary_heuristic(
