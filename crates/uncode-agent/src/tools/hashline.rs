@@ -134,12 +134,14 @@ pub fn validate_anchors(content: &str, anchors: &[(usize, &[u8; 2])]) -> Result<
             Some(idx) => {
                 let actual = compute_line_hash(lines[idx]);
                 if actual != *expected_hash {
+                    let content_preview: String = lines[idx].chars().take(40).collect();
                     return Err(format!(
-                        "hash mismatch at line {}: expected '{}', got '{}' (content: '{}')",
+                        "hash mismatch at line {}: expected '{}', got '{}' (content: '{}{}')",
                         line_num,
                         std::str::from_utf8(expected_hash).unwrap_or("??"),
                         std::str::from_utf8(&actual).unwrap_or("??"),
-                        lines[idx]
+                        content_preview,
+                        if lines[idx].len() > 40 { "..." } else { "" }
                     ));
                 }
             }
