@@ -753,6 +753,8 @@ async fn main() -> anyhow::Result<()> {
         None,
         // append_entry callback — persist custom session entries
         None,
+        // exec callback — controlled shell execution (#397)
+        None,
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)

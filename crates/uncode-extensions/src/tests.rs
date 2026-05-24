@@ -524,6 +524,7 @@ fn test_register_tool_with_callback_delegates() {
         None,
         None,
         None,
+        None,
     );
     api.register_tool(Arc::new(HelloTool)).unwrap();
     assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -542,6 +543,7 @@ fn test_register_tool_callback_error_propagates() {
         registry,
         std::sync::Arc::new(crate::event_bus::EventBus::new()),
         Some(callback),
+        None,
         None,
         None,
         None,
@@ -670,6 +672,7 @@ fn test_register_command_with_callback() {
         None,
         None,
         None,
+        None,
     );
     api.register_command(CommandRegistration {
         name: "ext-cmd".into(),
@@ -745,6 +748,7 @@ fn test_register_shortcut_with_callback() {
         None,
         None,
         Some(callback),
+        None,
         None,
         None,
         None,
@@ -843,6 +847,7 @@ fn test_set_header_with_callback() {
         None,
         None,
         None,
+        None,
     );
     api.set_header(None).unwrap();
     assert!(called.load(std::sync::atomic::Ordering::SeqCst));
@@ -881,6 +886,7 @@ fn test_set_footer_with_callback() {
         None,
         None,
         Some(callback),
+        None,
         None,
         None,
         None,
@@ -927,6 +933,7 @@ fn test_set_indicator_with_callback() {
         None,
         None,
         Some(callback),
+        None,
         None,
         None,
         None,
@@ -1000,6 +1007,7 @@ fn test_set_theme_with_callback() {
         None,
         None,
         None,
+        None,
     );
     api.set_theme(crate::theme_control::ThemeControlConfig {
         theme_name: "monokai".into(),
@@ -1046,6 +1054,7 @@ fn test_set_thinking_labels_with_callback() {
         None,
         None,
         Some(callback),
+        None,
         None,
         None,
         None,
