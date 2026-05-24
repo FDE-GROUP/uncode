@@ -209,26 +209,6 @@ impl AgentHarness {
         self.phase == AgentHarnessPhase::Idle
     }
 
-    // ── 决策反馈桥（认知显化与决策驱动设计 原则5）──
-
-    /// 将工具执行结果通过反馈桥回流到认知层
-    ///
-    /// 原则 5：事件流是双向通道。
-    /// 每次工具执行完成后调用此方法，将结果转化为
-    /// ActionObservation → AgentStep → WorkingMemory 反馈。
-    ///
-    /// 参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3
-    pub fn bridge_execution_to_cognition(
-        &self,
-        _result: &crate::decision::execution::ExecutionResult,
-        _turn_number: u32,
-        _active_tools: &[String],
-        _context_tokens: usize,
-    ) {
-        // 反馈闭环已通过 AgentLoop 内的 TurnFeedback → WorkingMemory → EpisodeMemory 实现 (#385)
-        // 此方法保留以兼容外部调用方
-    }
-
     // ── 核心方法 ──
 
     /// 开始新 turn（带 Phase 守卫）
