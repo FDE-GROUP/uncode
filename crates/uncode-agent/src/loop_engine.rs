@@ -45,7 +45,8 @@ use uncode_core::tool::{
     ToolProgress, ToolResult,
 };
 
-pub const MAX_TURNS: u64 = 50;
+/// Default maximum turns per session.
+const DEFAULT_MAX_TURNS: u64 = 50;
 const MAX_LLM_RETRIES: u32 = 3;
 const BASE_RETRY_DELAY_MS: u64 = 1000;
 const MAX_INJECTED_MESSAGES: usize = 10;
@@ -359,6 +360,31 @@ impl AgentLoop {
     /// 注入裁决器 — 决策层合法性判定 (#385)
     pub fn set_adjudicator(&mut self, adj: crate::decision::adjudication::Adjudicator) {
         *self.adjudicator.lock().unwrap() = Some(adj);
+    }
+
+    /// 读取配置的 turn limit，fallback DEFAULT_MAX_TURNS
+    fn effective_max_turns(&self) -> u64 {
+        let gc = self.guardrail_config.lock().unwrap();
+        if gc.decision.turn_limit > 0 {
+            gc.decision.turn_limit as u64
+        } else {
+            DEFAULT_MAX_TURNS
+        }
+    }
+
+    /// 从 GuardrailConfig 加载 CustomPolicy 到裁决器 (#453)
+    pub fn load_custom_policies(&self) {
+        let gc = self.guardrail_config();
+        let mut adj = self.adjudicator.lock().unwrap();
+        if let Some(ref mut adjudicator) = *adj {
+            for policy_config in &gc.adjudication.policies {
+                if policy_config.enabled {
+                    adjudicator.add_policy(Box::new(
+                        crate::decision::adjudication::CustomPolicy::from_config(policy_config),
+                    ));
+                }
+            }
+        }
     }
 
     /// 注入护栏配置 — 从 .uncode/guardrails.json 加载
@@ -855,7 +881,7 @@ impl AgentLoop {
                 total_tokens: total_usage,
                 exit_reason: (if self.cancel_token.is_cancelled() {
                     "interrupted"
-                } else if total_turns >= MAX_TURNS {
+                } else if total_turns >= self.effective_max_turns() {
                     "max_turns"
                 } else {
                     "completed"
@@ -1020,8 +1046,8 @@ impl AgentLoop {
                     break 'outer;
                 }
 
-                if turn >= MAX_TURNS {
-                    info!("max turns ({MAX_TURNS}) reached");
+                if turn >= self.effective_max_turns() {
+                    info!("max turns ({}) reached", self.effective_max_turns());
                     break 'outer;
                 }
 
@@ -1041,7 +1067,7 @@ impl AgentLoop {
 
                 has_more_tool_calls = false;
                 turn += 1;
-                debug!("turn {turn}/{}", MAX_TURNS);
+                debug!("turn {turn}/{}", self.effective_max_turns());
 
                 let model = self.model_registry.get(&self.model_id).ok_or_else(|| {
                     UncodeError::Config(format!("model not found: {}", self.model_id))
@@ -1683,7 +1709,7 @@ impl AgentLoop {
                                         let max_turns = if gc.decision.turn_limit > 0 {
                                             gc.decision.turn_limit
                                         } else {
-                                            crate::loop_engine::MAX_TURNS as u32
+                                            crate::loop_engine::DEFAULT_MAX_TURNS as u32
                                         };
                                         drop(gc);
                                         let decision_ctx =
