@@ -148,6 +148,12 @@ fn first_text(msg: &Message) -> &str {
         .unwrap_or("")
 }
 
+/// Unified cognition memory — working memory (turn scratchpad) + episode memory (importance-ranked).
+struct CognitionMemory {
+    working: crate::cognition::working_memory::WorkingMemory,
+    episode: crate::cognition::episode::EpisodeMemory,
+}
+
 /// 双层循环执行引擎（文档亦称 LoopEngine）。
 ///
 /// **Pi:** 对应 `agentLoop` 核心；公开入口为 `run` / `run_inner`。
@@ -181,10 +187,8 @@ pub struct AgentLoop {
     firewall: std::sync::Mutex<Option<crate::decision::firewall::SemanticFirewall>>,
     /// 演化引擎 — 认知显化与决策驱动设计 自适应进化 (#342)
     evolution: std::sync::Mutex<uncode_shared::evolution::EvolutionEngine>,
-    /// 工作记忆 — 认知层 turn 内 scratchpad (#385)
-    working_memory: std::sync::Mutex<crate::cognition::working_memory::WorkingMemory>,
-    /// 情景记忆 — 认知层按重要性评分的事件记忆 (#385)
-    episode_memory: std::sync::Mutex<crate::cognition::episode::EpisodeMemory>,
+    /// 认知记忆 — 工作记忆 + 情景记忆统一管理 (#385)
+    cognition_memory: std::sync::Mutex<CognitionMemory>,
     /// 认知记忆管理器 — 压缩决策 + 摘要注入 (#386)
     memory_manager: crate::cognition::memory::MemoryManager,
     /// 裁决器 — 决策层合法性判定 (#385)
@@ -293,12 +297,10 @@ impl AgentLoop {
             ),
             firewall: std::sync::Mutex::new(None),
             evolution: std::sync::Mutex::new(uncode_shared::evolution::EvolutionEngine::new(3)),
-            working_memory: std::sync::Mutex::new(
-                crate::cognition::working_memory::WorkingMemory::new(0),
-            ),
-            episode_memory: std::sync::Mutex::new(crate::cognition::episode::EpisodeMemory::new(
-                100,
-            )),
+            cognition_memory: std::sync::Mutex::new(CognitionMemory {
+                working: crate::cognition::working_memory::WorkingMemory::new(0),
+                episode: crate::cognition::episode::EpisodeMemory::new(100),
+            }),
             memory_manager: crate::cognition::memory::MemoryManager::new(
                 crate::cognition::memory::MemoryConfig::default(),
             ),
@@ -498,9 +500,11 @@ impl AgentLoop {
     /// EpisodeMemory 的摘要合并为结构化文本。
     fn build_cognition_context(&self) -> Option<String> {
         let (wm_hint, ep_summary) = {
-            let wm = self.working_memory.lock().unwrap();
-            let ep = self.episode_memory.lock().unwrap();
-            (wm.to_context_hint(), ep.build_context_summary())
+            let cm = self.cognition_memory.lock().unwrap();
+            (
+                cm.working.to_context_hint(),
+                cm.episode.build_context_summary(),
+            )
         };
         if wm_hint.is_none() && ep_summary.is_none() {
             return None;
@@ -739,25 +743,22 @@ impl AgentLoop {
 
     /// Record turn feedback into WorkingMemory and EpisodeMemory.
     fn record_feedback(&self, turn: u64, feedback: &crate::decision::feedback::TurnFeedback) {
+        let mut cm = self.cognition_memory.lock().unwrap();
         let wm_entries = feedback.to_working_memory_entries();
-        if !wm_entries.is_empty() {
-            let mut wm = self.working_memory.lock().unwrap();
-            for (content, important) in wm_entries {
-                if important {
-                    wm.observe_important(content);
-                } else {
-                    wm.observe(content);
-                }
+        for (content, important) in wm_entries {
+            if important {
+                cm.working.observe_important(content);
+            } else {
+                cm.working.observe(content);
             }
         }
-        let mut ep = self.episode_memory.lock().unwrap();
         for obs in &feedback.observations {
             let event_type = if obs.starts_with('❌') {
                 "tool_result_failure"
             } else {
                 "tool_result_success"
             };
-            ep.record(event_type, obs, turn);
+            cm.episode.record(event_type, obs, turn);
         }
     }
 
@@ -1274,8 +1275,8 @@ impl AgentLoop {
                 let mut turn_feedback = crate::decision::feedback::TurnFeedback::new(turn as u32);
                 // 重置工作记忆的 turn 编号
                 {
-                    let mut wm = self.working_memory.lock().unwrap();
-                    wm.flush(turn);
+                    let mut cm = self.cognition_memory.lock().unwrap();
+                    cm.working.flush(turn);
                 }
 
                 // ── Stream processing loop ──
@@ -1909,7 +1910,7 @@ impl AgentLoop {
                                             crate::cognition::uncertainty::UncertaintyClass::Generative(_) => "generative_uncertainty",
                                             crate::cognition::uncertainty::UncertaintyClass::Cognitive(_) => "cognitive_gap",
                                             crate::cognition::uncertainty::UncertaintyClass::Executional(e) => {
-                                                self.working_memory.lock().unwrap().observe_important(
+                                                self.cognition_memory.lock().unwrap().working.observe_important(
                                                     format!("[uncertainty] executional: {} — strategy: {:?}", e.error, e.strategy),
                                                 );
                                                 "executional_uncertainty"
