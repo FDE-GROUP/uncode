@@ -111,15 +111,20 @@ impl AgentHarness {
     pub fn new(mut agent: AgentLoop, session_store: Arc<SessionStore>) -> Self {
         let cwd = std::env::current_dir().unwrap_or_default();
 
+        // Load guardrail config from .uncode/guardrails.json
+        let guardrail_config = uncode_shared::guardrails::GuardrailConfig::load_from_dir(&cwd);
+        agent.set_guardrail_config(guardrail_config);
+
         // 构建 PhaseGuardPolicy 并注入 Adjudicator (#385)
         let phase_guard = std::sync::Arc::new(
             crate::decision::adjudication::PhaseGuardPolicy::new(AgentHarnessPhase::Idle),
         );
         let cancel_token = tokio_util::sync::CancellationToken::new();
+        let turn_limit = agent.guardrail_config().decision.turn_limit;
         let adjudicator = crate::decision::adjudication::build_default_adjudicator(
             (*phase_guard).clone(),
             cancel_token,
-            crate::loop_engine::MAX_TURNS as u32,
+            turn_limit,
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
         );
         agent.set_adjudicator(adjudicator);

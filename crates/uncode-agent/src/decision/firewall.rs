@@ -153,6 +153,141 @@ impl NormalizeStrategy for DefaultNormalizer {
     }
 }
 
+/// 声明式规范化器：字段名映射 + 默认值填充
+///
+/// 在没有完整本体 crate 的情况下，用参数化配置解决三个痛点：
+/// - LLM 输出的字段名别名统一（filepath → path）
+/// - 缺失参数的默认值填充
+/// - normalized_fields 日志输出（不再为空）
+pub struct DeclarativeNormalizer {
+    /// 字段名映射：LLM 输出字段名 → 规范字段名
+    field_mapping: std::collections::HashMap<String, String>,
+    /// 默认值：工具名 → 字段名 → 默认值
+    defaults:
+        std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
+}
+
+impl DeclarativeNormalizer {
+    pub fn new(
+        field_mapping: std::collections::HashMap<String, String>,
+        defaults: std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, serde_json::Value>,
+        >,
+    ) -> Self {
+        Self {
+            field_mapping,
+            defaults,
+        }
+    }
+
+    /// Build with default mappings for the 9 built-in tools.
+    pub fn builtin() -> Self {
+        let field_mapping: std::collections::HashMap<String, String> = [
+            // path aliases (read, write, edit, find, ls)
+            ("filepath".into(), "path".into()),
+            ("file_path".into(), "path".into()),
+            ("file".into(), "path".into()),
+            ("filename".into(), "path".into()),
+            ("dir".into(), "path".into()),
+            ("directory".into(), "path".into()),
+            ("folder".into(), "path".into()),
+            ("root".into(), "path".into()),
+            // grep aliases
+            ("query".into(), "pattern".into()),
+            ("regex".into(), "pattern".into()),
+            ("search".into(), "pattern".into()),
+            // bash aliases
+            ("cmd".into(), "command".into()),
+            ("command_line".into(), "command".into()),
+            ("script".into(), "command".into()),
+            // web_fetch aliases
+            ("uri".into(), "url".into()),
+            ("link".into(), "url".into()),
+            ("href".into(), "url".into()),
+            // web_search aliases
+            ("q".into(), "query".into()),
+            ("term".into(), "query".into()),
+            ("search".into(), "query".into()),
+            // write aliases
+            ("body".into(), "content".into()),
+        ]
+        .into_iter()
+        .collect();
+
+        let defaults: std::collections::HashMap<
+            String,
+            std::collections::HashMap<String, serde_json::Value>,
+        > = [
+            (
+                "read".into(),
+                [("offset".into(), serde_json::json!(0))]
+                    .into_iter()
+                    .collect(),
+            ),
+            (
+                "grep".into(),
+                [("case_sensitive".into(), serde_json::json!(false))]
+                    .into_iter()
+                    .collect(),
+            ),
+            (
+                "ls".into(),
+                [("show_hidden".into(), serde_json::json!(false))]
+                    .into_iter()
+                    .collect(),
+            ),
+        ]
+        .into_iter()
+        .collect();
+
+        Self {
+            field_mapping,
+            defaults,
+        }
+    }
+}
+
+impl NormalizeStrategy for DeclarativeNormalizer {
+    fn normalize(&self, action: &ValidatedAction) -> Result<NormalizedAction, NormalizeError> {
+        let mut args = action.arguments.clone();
+        let mut normalized_fields = Vec::new();
+
+        // Field name normalization
+        if let serde_json::Value::Object(ref mut map) = args {
+            let keys: Vec<String> = map.keys().cloned().collect();
+            for key in keys {
+                if let Some(canonical) = self.field_mapping.get(&key) {
+                    if canonical != &key {
+                        if let Some(val) = map.remove(&key) {
+                            map.insert(canonical.clone(), val);
+                            normalized_fields.push(format!("{key} → {canonical}"));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Default value filling
+        if let Some(tool_defaults) = self.defaults.get(&action.tool_name) {
+            if let serde_json::Value::Object(ref mut map) = args {
+                for (field, default) in tool_defaults {
+                    if !map.contains_key(field) {
+                        map.insert(field.clone(), default.clone());
+                        normalized_fields.push(format!("{field} = default"));
+                    }
+                }
+            }
+        }
+
+        Ok(NormalizedAction {
+            tool_name: action.tool_name.clone(),
+            arguments: args,
+            normalized_fields,
+        })
+    }
+}
+
 // ── FirewallError ───────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
@@ -347,7 +482,30 @@ pub fn build_default_firewall(
             Box::new(PathSafetyRule::new(cwd)),
             Box::new(PermissionPolicyRule::new(policy)),
         ],
-        normalizer: Box::new(DefaultNormalizer),
+        normalizer: Box::new(DeclarativeNormalizer::builtin()),
+    }
+}
+
+/// 从 GuardrailConfig 构建完整的 SemanticFirewall
+pub fn build_firewall_from_config(
+    config: &uncode_shared::guardrails::GuardrailConfig,
+    registry: Arc<ToolRegistry>,
+    cwd: std::path::PathBuf,
+) -> SemanticFirewall {
+    let policy = Arc::new(crate::tool_permission::PermissionPolicy::default_policy());
+    let auto_allow = matches!(
+        config.firewall.tool_whitelist.mode,
+        uncode_shared::guardrails::ToolWhitelistMode::All
+    );
+
+    SemanticFirewall {
+        parser: Box::new(DefaultParser),
+        validators: vec![
+            Box::new(SchemaCoercionRule::new(Arc::clone(&registry))),
+            Box::new(PathSafetyRule::new(cwd)),
+            Box::new(PermissionPolicyRule::new(policy).with_auto_allow(auto_allow, auto_allow)),
+        ],
+        normalizer: Box::new(DeclarativeNormalizer::builtin()),
     }
 }
 
@@ -521,5 +679,70 @@ mod tests {
         };
         let normalized = normalizer.normalize(&validated).unwrap();
         assert_eq!(normalized.tool_name, "read");
+    }
+
+    // ── DeclarativeNormalizer ──
+
+    #[test]
+    fn test_declarative_normalizer_field_alias() {
+        let normalizer = DeclarativeNormalizer::builtin();
+        let validated = ValidatedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"filepath": "src/main.rs"}),
+            applied_rules: vec![],
+        };
+        let normalized = normalizer.normalize(&validated).unwrap();
+        assert_eq!(normalized.arguments["path"], "src/main.rs");
+        assert!(
+            normalized
+                .normalized_fields
+                .contains(&"filepath → path".to_string())
+        );
+    }
+
+    #[test]
+    fn test_declarative_normalizer_default_fill() {
+        let normalizer = DeclarativeNormalizer::builtin();
+        let validated = ValidatedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"path": "src/main.rs"}),
+            applied_rules: vec![],
+        };
+        let normalized = normalizer.normalize(&validated).unwrap();
+        assert_eq!(normalized.arguments["offset"], 0);
+        assert!(
+            normalized
+                .normalized_fields
+                .contains(&"offset = default".to_string())
+        );
+    }
+
+    #[test]
+    fn test_declarative_normalizer_no_op_on_canonical() {
+        let normalizer = DeclarativeNormalizer::builtin();
+        let validated = ValidatedAction {
+            tool_name: "bash".into(),
+            arguments: serde_json::json!({"command": "ls"}),
+            applied_rules: vec![],
+        };
+        let normalized = normalizer.normalize(&validated).unwrap();
+        assert_eq!(normalized.arguments["command"], "ls");
+        // bash has no defaults, and "command" is already canonical
+        assert!(normalized.normalized_fields.is_empty());
+    }
+
+    #[test]
+    fn test_declarative_normalizer_combined() {
+        let normalizer = DeclarativeNormalizer::builtin();
+        // LLM sends "filepath" alias + missing "offset"
+        let validated = ValidatedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"filepath": "src/main.rs"}),
+            applied_rules: vec![],
+        };
+        let normalized = normalizer.normalize(&validated).unwrap();
+        assert_eq!(normalized.arguments["path"], "src/main.rs");
+        assert_eq!(normalized.arguments["offset"], 0);
+        assert_eq!(normalized.normalized_fields.len(), 2);
     }
 }

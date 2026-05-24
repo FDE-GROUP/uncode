@@ -195,6 +195,8 @@ pub struct AgentLoop {
     adjudicator: std::sync::Mutex<Option<crate::decision::adjudication::Adjudicator>>,
     /// 扩展生命周期桥接 — Extension Runtime Phase 1 (#344)
     extension_bridge: Option<crate::hooks::ExtensionLifecycleBridge>,
+    /// 护栏配置 — 从 .uncode/guardrails.json 加载
+    guardrail_config: std::sync::Mutex<uncode_shared::guardrails::GuardrailConfig>,
 }
 
 impl AgentLoop {
@@ -306,6 +308,9 @@ impl AgentLoop {
             ),
             adjudicator: std::sync::Mutex::new(None),
             extension_bridge: None,
+            guardrail_config: std::sync::Mutex::new(
+                uncode_shared::guardrails::GuardrailConfig::default(),
+            ),
         }
     }
 
@@ -348,6 +353,18 @@ impl AgentLoop {
     /// 注入裁决器 — 决策层合法性判定 (#385)
     pub fn set_adjudicator(&mut self, adj: crate::decision::adjudication::Adjudicator) {
         *self.adjudicator.lock().unwrap() = Some(adj);
+    }
+
+    /// 注入护栏配置 — 从 .uncode/guardrails.json 加载
+    pub fn set_guardrail_config(&self, config: uncode_shared::guardrails::GuardrailConfig) {
+        *self.guardrail_config.lock().unwrap() = config;
+    }
+
+    /// 获取护栏配置的快照
+    pub fn guardrail_config(
+        &self,
+    ) -> std::sync::MutexGuard<'_, uncode_shared::guardrails::GuardrailConfig> {
+        self.guardrail_config.lock().unwrap()
     }
 
     /// Fire `SessionShutdown` lifecycle hook (called from harness abort).
@@ -1568,19 +1585,29 @@ impl AgentLoop {
                                 } else {
                                     let mut fw = self.firewall.lock().unwrap();
                                     if fw.is_none() {
-                                        *fw = Some(crate::decision::firewall::build_default_firewall(
-                                            std::sync::Arc::new(crate::tool_permission::PermissionPolicy::default_policy()),
-                                            Arc::clone(&self.tool_registry),
-                                            std::env::current_dir().unwrap_or_default(),
-                                        ));
+                                        let gc = self.guardrail_config.lock().unwrap();
+                                        *fw = Some(
+                                            crate::decision::firewall::build_firewall_from_config(
+                                                &gc,
+                                                Arc::clone(&self.tool_registry),
+                                                std::env::current_dir().unwrap_or_default(),
+                                            ),
+                                        );
                                     }
                                     let mut denied = HashSet::new();
                                     if let Some(ref firewall) = *fw {
                                         let adj = self.adjudicator.lock().unwrap();
+                                        let gc = self.guardrail_config.lock().unwrap();
+                                        let max_turns = if gc.decision.turn_limit > 0 {
+                                            gc.decision.turn_limit
+                                        } else {
+                                            crate::loop_engine::MAX_TURNS as u32
+                                        };
+                                        drop(gc);
                                         let decision_ctx =
                                             crate::decision::types::DecisionContext {
                                                 turn_number: turn as u32,
-                                                max_turns: crate::loop_engine::MAX_TURNS as u32,
+                                                max_turns,
                                                 active_tools: self
                                                     .tool_registry
                                                     .active_tool_names()

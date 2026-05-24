@@ -17,7 +17,7 @@ cargo test -p uncode-agent test_name  # Run single test
 cargo test --workspace -- --test-threads=1  # Run tests single-threaded (required for tools tests)
 cargo fmt --check --all          # Format check
 cargo clippy --all-targets --no-deps  # Lint
-cargo api-doc                       # API docs (workspace, --no-deps; see docs/guides/RUSTDOC.md)
+cargo api-doc                       # API docs (workspace, --no-deps; aliases in .cargo/config.toml)
 cargo api-doc-open                  # Open uncode-core / uncode-agent / uncode-ai docs in browser
 cargo run -p uncode-cli -- --model deepseek-v3 "prompt"  # Run CLI
 cd apps/platform && bun install && bun dev   # Platform frontend dev server
@@ -48,6 +48,15 @@ uncode-cli (entry point, clap arg parsing)
 
 Cross-layer communication uses event streams. Upper layers subscribe to events, not direct calls.
 
+### Key Documentation
+
+- **Paradigm**: `docs/agent-archi/` — 9-part series on "Cognitive Explicitation & Decision-Driven Design"
+- **Refactoring plan**: `docs/technologies/UNCODE_REFACTORING_PLAN.md` — gap analysis and phased execution plan
+- **Ontology design**: `docs/technologies/UNCODE_ONTOLOGY_DESIGN.md` — Phase 1 detail spec for `uncode-ontology` crate
+- **Decision pipeline**: `docs/technologies/UNCODE_PHASE2_DECISION_PIPELINE.md` — Phase 2 detail spec
+- **Governance activation**: `docs/technologies/UNCODE_PHASE3_GOVERNANCE_ACTIVATION.md` — Phase 3 detail spec
+- **Glossary**: `docs/references/HARNESS_ENGINEERING_GLOSSARY.md`
+
 ### LLM Provider Architecture
 
 All providers implement `Api` trait (`uncode-ai/src/api.rs`). 4 API protocol implementations in `uncode-ai/src/providers/`:
@@ -68,7 +77,7 @@ New vendors are added via `ProviderPreset` declarations in `uncode-ai/src/provid
 
 ### Decision & Cognition Layers
 
-Implements the "Cognitive Explicitation & Decision-Driven Design" paradigm (`docs/ai-agent-archi/cognition-decision-driven-design.md`). Two independent top-level modules under `uncode-agent/src/`:
+Implements the "Cognitive Explicitation & Decision-Driven Design" paradigm (`docs/agent-archi/` series). Two independent top-level modules under `uncode-agent/src/`:
 
 - **`cognition/`** — answers "what can be done next?" Contains context builder, prompt manager, uncertainty classifier (three-category: generative / cognitive incompleteness / execution), and three-tier memory (working memory → episodic memory → memory manager).
 - **`decision/`** — governs "what actually happens." Four-stage pipeline: proposal → semantic firewall (parsing → validation → normalization) → adjudication → execution → audit. Independent from cognition — the core insight is that decision governance, not cognition management, is the system's strongest engineering force.
@@ -87,7 +96,7 @@ LLM responses stream as `StreamEvent` variants: `TextDelta` → `ToolCallStart` 
 
 ### Event System
 
-`AgentEvent` (`uncode-core/src/event.rs`) has 31 variants for session/turn/message/tool/compaction/decision/evaluation lifecycle. `EventRouter` dispatches via dual channels: sync_handlers (observation) and hook_handlers (control flow — can block or redirect execution). Upper layers (TUI, Platform) subscribe to events, never call agent directly.
+`AgentEvent` (`uncode-core/src/event.rs`) has 36 variants for session/turn/message/tool/compaction/decision/evaluation lifecycle. `EventRouter` dispatches via dual channels: sync_handlers (observation) and hook_handlers (control flow — can block or redirect execution). Upper layers (TUI, Platform) subscribe to events, never call agent directly.
 
 ## Key Design Decisions
 
@@ -96,7 +105,7 @@ LLM responses stream as `StreamEvent` variants: `TextDelta` → `ToolCallStart` 
 - **Error handling**: anyhow for application code, thiserror for library crate error types
 - **Async runtime**: tokio (full features)
 - **Config**: Two paths — `~/.config/uncode/config.json` (CLI: model + provider API keys) and `~/.uncode/` (extensions, skills, `config.toml`)
-- **Session format**: tree-shaped `SessionEntry` in **SurrealDB** (embedded); JSONL for import/export and migration (logical model aligned with Pi — see `docs/technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`)
+- **Session format**: tree-shaped `SessionEntry` in **SurrealDB** (embedded); JSONL for import/export and migration
 - **Platform frontend**: React 19 + TanStack Router/Query + Vite, TypeScript strict mode
 - **Cargo profiles**: dev uses `opt-level = 1` + `line-tables-only` for fast incremental builds; release uses LTO + strip
 
@@ -104,7 +113,7 @@ LLM responses stream as `StreamEvent` variants: `TextDelta` → `ToolCallStart` 
 
 **新功能开发前，必须先有对应文档和 Issue。** 设计决策先写入 `docs/` 目录下的对应文档，确认后检查 GitHub Issues 是否有对应 Issue，如果没有应当及时创建，然后再开始编码。
 
-**此原则不适用于：测试、错误修复、重构。**
+**此原则不适用于：测试、错误修复**
 
 ## Development Workflow
 
@@ -133,4 +142,4 @@ RUSTFLAGS="-D warnings" cargo test --workspace -- --test-threads=1
 
 ## Terminology Strategy (Policy C)
 
-Four layers: L0 (industry terms), L1 (mechanism names aligned with Pi), L2 (Rust API own naming), L3 (UI strings). Do NOT rename Rust public symbols to match Pi's TypeScript names. When adding/modifying L1 mechanisms, update `UNCODE_TECHNOLOGIES_GLOSSARY.md` and `UNCODE_PI_MECHANISM_MAP.md`.
+Four layers: L0 (industry terms), L1 (mechanism names aligned with Pi), L2 (Rust API own naming), L3 (UI strings). Do NOT rename Rust public symbols to match Pi's TypeScript names. Glossary reference: `docs/references/HARNESS_ENGINEERING_GLOSSARY.md`.
