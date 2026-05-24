@@ -8,6 +8,7 @@
 pub mod api;
 pub mod command;
 pub mod event_bus;
+pub mod flag;
 pub mod header_footer;
 pub mod hook_types;
 pub mod hooks;
