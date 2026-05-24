@@ -23,9 +23,7 @@
 //! `PermissionPolicy` / `PermissionGate` / 路径安全校验。
 
 pub mod adjudication;
-pub mod audit;
 pub mod evaluator; // ★ H0-H3 评估阶梯
-pub mod execution;
 pub mod feedback; // ★ 决策→认知 上行反馈通道
 pub mod firewall;
 pub mod proposal;

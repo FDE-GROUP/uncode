@@ -97,45 +97,9 @@ impl MemoryManager {
     /// 压缩后应保留的最近消息数估计
     pub fn keep_recent_count(&self, avg_message_tokens: u64) -> usize {
         if avg_message_tokens == 0 {
-            return 10; // fallback
+            return 10;
         }
         (self.config.keep_recent_tokens / avg_message_tokens) as usize
-    }
-
-    /// 基于情景记忆的智能压缩建议
-    ///
-    /// 与 `evaluate` 不同，此方法使用 EpisodeMemory 的重要性评分
-    /// 来决定哪些事件应保留在 LLM 上下文中。
-    ///
-    /// 返回 `Some(threshold)` 表示应保留重要性 >= threshold 的条目；
-    /// `None` 表示无需调整。
-    pub fn smart_retention_threshold(
-        &self,
-        current_tokens: u64,
-        max_context: u64,
-        episode_importance_ratio: f64, // 0.0-1.0: 高重要性条目占总 token 的比例
-    ) -> Option<u32> {
-        let usage = if max_context > 0 {
-            (current_tokens * 100) / max_context
-        } else {
-            0
-        };
-
-        // 仅在超过阈值时建议
-        if usage < self.config.compaction_threshold_percent as u64 {
-            return None;
-        }
-
-        // 高重要性条目占比 > 50% → 提高保留阈值（更激进驱逐）
-        if episode_importance_ratio > 0.5 {
-            return Some(7); // 只保留 HIGH 及以上
-        }
-        // 中等 → 标准阈值
-        if episode_importance_ratio > 0.3 {
-            return Some(4); // 保留 MEDIUM 及以上
-        }
-        // 低重要性 → 宽松保留
-        Some(1) // 几乎全部保留
     }
 }
 

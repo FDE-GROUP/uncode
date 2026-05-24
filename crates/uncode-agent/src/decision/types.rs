@@ -99,6 +99,37 @@ pub struct DecisionRecord {
     pub adjudication_duration_ms: u64,
 }
 
+/// 工具执行结果（由 loop_engine 构造，供 feedback 层消费）
+#[derive(Debug, Clone)]
+pub struct ExecutionResult {
+    pub tool_id: String,
+    pub tool_name: String,
+    pub success: bool,
+    pub duration_ms: u64,
+    pub output: Option<String>,
+    pub error: Option<String>,
+    pub terminate: bool,
+}
+
+impl ExecutionResult {
+    pub fn success(id: impl Into<String>, name: impl Into<String>, duration_ms: u64) -> Self {
+        Self {
+            tool_id: id.into(),
+            tool_name: name.into(),
+            success: true,
+            duration_ms,
+            output: None,
+            error: None,
+            terminate: false,
+        }
+    }
+
+    pub fn with_output(mut self, output: impl Into<String>) -> Self {
+        self.output = Some(output.into());
+        self
+    }
+}
+
 /// 面向离线训练的决策步骤
 /// Re-exported from `uncode_core::agent_step::AgentStep`.
 /// 对应 `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3 中的 AgentStep 模型

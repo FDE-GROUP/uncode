@@ -162,49 +162,6 @@ impl AgentHarness {
     // ── 决策层集成（认知显化与决策驱动设计）──
 
     /// 构建完整的决策管线：防火墙 → 裁决器 → 执行编排器
-    ///
-    /// 组合 `decision/` 模块中的 firewall、adjudication、execution 组件。
-    /// 当前用于验证新增决策层组件可与现有 AgentLoop 并行工作；
-    /// 后续 refactor 中 AgentLoop 的工具执行将逐步委托给此管线。
-    ///
-    /// 参见 `docs/uncode-technologies/UNCODE_DECISION_LAYER.md`
-    pub fn build_decision_adjudicator(
-        &self,
-        cancel_token: tokio_util::sync::CancellationToken,
-    ) -> crate::decision::adjudication::Adjudicator {
-        use crate::decision::adjudication::{PhaseGuardPolicy, build_default_adjudicator};
-        use std::sync::Arc;
-        use std::sync::atomic::AtomicBool;
-
-        let phase_policy = PhaseGuardPolicy::new(self.phase.clone());
-
-        build_default_adjudicator(
-            phase_policy,
-            cancel_token,
-            crate::loop_engine::MAX_TURNS as u32,
-            Arc::new(AtomicBool::new(true)),
-        )
-    }
-
-    /// 构建语义防火墙（包装现有 PermissionPolicy）
-    pub fn build_firewall(
-        &self,
-        _cancel_token: tokio_util::sync::CancellationToken,
-        tool_registry: std::sync::Arc<crate::tools::ToolRegistry>,
-    ) -> crate::decision::firewall::SemanticFirewall {
-        use crate::decision::firewall::build_default_firewall;
-        use crate::tool_permission::PermissionPolicy;
-        use std::sync::Arc;
-
-        let policy = Arc::new(PermissionPolicy::default_policy());
-
-        build_default_firewall(
-            policy,
-            tool_registry,
-            std::env::current_dir().unwrap_or_default(),
-        )
-    }
-
     pub fn is_idle(&self) -> bool {
         self.phase == AgentHarnessPhase::Idle
     }
