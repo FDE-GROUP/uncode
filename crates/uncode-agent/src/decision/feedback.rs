@@ -5,99 +5,79 @@
 //! 原则 5：**事件流是双向通道**。
 //! 决策层的执行结果必须以结构化事件形式回流到认知层，
 //! 形成"行动 → 观察 → 反馈 → 下次行动"的闭环。
-//!
-//! ## 数据流
-//!
-//! ```text
-//! ExecutionResult (决策层产出)
-//!   → ActionObservation (结构化观察)
-//!   → AgentStep (训练模型, uncode-core)
-//!   → WorkingMemory.observe() (认知层反馈)
-//!   → AgentEvent (可观测性)
-//! ```
 
 use uncode_core::agent_step::{
     ActionObservation, AgentStateSnapshot, AgentStep, ExecutedAction, Feedback,
 };
 
 use super::evaluator::{BasicEvaluator, EvaluationContext, Evaluator, TurnEvaluation};
-use super::execution::ExecutionResult;
+use super::types::ExecutionResult;
 
-/// 决策反馈桥 — 连接决策层产出到认知层
-pub struct FeedbackBridge;
+fn to_observation(result: &ExecutionResult) -> ActionObservation {
+    ActionObservation {
+        success: result.success,
+        output_summary: result.output.clone().unwrap_or_default(),
+        files_changed: vec![],
+        duration_ms: result.duration_ms,
+        terminate: result.terminate,
+    }
+}
 
-impl FeedbackBridge {
-    /// 从执行结果构建 ActionObservation
-    pub fn to_observation(result: &ExecutionResult) -> ActionObservation {
-        ActionObservation {
-            success: result.success,
-            output_summary: result.output.clone().unwrap_or_default(),
-            files_changed: vec![], // 由调用方从工具细节中提取
+fn to_agent_step(
+    turn_id: impl Into<String>,
+    turn_number: u32,
+    active_tools: &[String],
+    context_size_tokens: usize,
+    result: &ExecutionResult,
+    feedback: Option<Feedback>,
+) -> AgentStep {
+    AgentStep {
+        step_id: uuid::Uuid::new_v4().to_string(),
+        turn_id: turn_id.into(),
+        state_before: AgentStateSnapshot {
+            phase: "turn".into(),
+            turn_number,
+            active_tools: active_tools.to_vec(),
+            context_size_tokens,
+        },
+        action: ExecutedAction {
+            tool_name: result.tool_name.clone(),
+            arguments_summary: String::new(),
             duration_ms: result.duration_ms,
-            terminate: result.terminate,
-        }
+        },
+        observation: to_observation(result),
+        feedback,
+        timestamp: chrono::Utc::now(),
     }
+}
 
-    /// 构建 AgentStep（面向离线训练）
-    pub fn to_agent_step(
-        turn_id: impl Into<String>,
-        turn_number: u32,
-        active_tools: &[String],
-        context_size_tokens: usize,
-        result: &ExecutionResult,
-        feedback: Option<Feedback>,
-    ) -> AgentStep {
-        AgentStep {
-            step_id: uuid::Uuid::new_v4().to_string(),
-            turn_id: turn_id.into(),
-            state_before: AgentStateSnapshot {
-                phase: "turn".into(),
-                turn_number,
-                active_tools: active_tools.to_vec(),
-                context_size_tokens,
-            },
-            action: ExecutedAction {
-                tool_name: result.tool_name.clone(),
-                arguments_summary: String::new(),
-                duration_ms: result.duration_ms,
-            },
-            observation: Self::to_observation(result),
-            feedback,
-            timestamp: chrono::Utc::now(),
-        }
-    }
-
-    /// 分析执行结果，推断 feedback 信号
-    pub fn infer_feedback(result: &ExecutionResult) -> Option<Feedback> {
-        if !result.success {
-            // 失败 → 潜在的回滚信号
-            if let Some(ref err) = result.error {
-                if err.contains("test") {
-                    return Some(Feedback::TestFailed {
-                        test_name: "execution".into(),
-                        error: err.clone(),
-                    });
-                }
-            }
-            return Some(Feedback::AutoRevert {
-                reason: result
-                    .error
-                    .clone()
-                    .unwrap_or_else(|| "unknown error".into()),
-            });
-        }
-
-        // 成功场景：检查是否有显式的测试通过标记
-        if let Some(ref output) = result.output {
-            if output.contains("test result: ok") {
-                return Some(Feedback::TestPassed {
+fn infer_feedback(result: &ExecutionResult) -> Option<Feedback> {
+    if !result.success {
+        if let Some(ref err) = result.error {
+            if err.contains("test") {
+                return Some(Feedback::TestFailed {
                     test_name: "execution".into(),
+                    error: err.clone(),
                 });
             }
         }
-
-        None
+        return Some(Feedback::AutoRevert {
+            reason: result
+                .error
+                .clone()
+                .unwrap_or_else(|| "unknown error".into()),
+        });
     }
+
+    if let Some(ref output) = result.output {
+        if output.contains("test result: ok") {
+            return Some(Feedback::TestPassed {
+                test_name: "execution".into(),
+            });
+        }
+    }
+
+    None
 }
 
 /// 认知层反馈上下文——供 WorkingMemory 消费
@@ -127,9 +107,8 @@ impl TurnFeedback {
         context_tokens: usize,
         test_output: Option<&str>,
     ) {
-        let _observation = FeedbackBridge::to_observation(result);
-        let feedback = FeedbackBridge::infer_feedback(result);
-        let step = FeedbackBridge::to_agent_step(
+        let feedback = infer_feedback(result);
+        let step = to_agent_step(
             format!("turn-{}", self.turn_number),
             self.turn_number,
             active_tools,
@@ -138,7 +117,6 @@ impl TurnFeedback {
             feedback,
         );
 
-        // ── 评估 (H0-H3 阶梯) ──
         let eval_ctx = EvaluationContext {
             turn_number: self.turn_number,
             tool_name: result.tool_name.clone(),
@@ -151,7 +129,6 @@ impl TurnFeedback {
             &BasicEvaluator
         };
         let score = evaluator.evaluate(result, &eval_ctx);
-        // 累积评估分数
         let mut scores = self
             .evaluation
             .as_ref()
@@ -160,7 +137,6 @@ impl TurnFeedback {
         scores.push(score);
         self.evaluation = Some(TurnEvaluation::new(self.turn_number, scores));
 
-        // 构造人类可读的观察
         let status = if result.success { "✅" } else { "❌" };
         let summary = format!(
             "{status} [{tool}] {output}",
@@ -185,10 +161,6 @@ impl TurnFeedback {
     }
 }
 
-// ═══════════════════════════════════════════════════════════
-// 测试
-// ═══════════════════════════════════════════════════════════
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,7 +184,7 @@ mod tests {
     #[test]
     fn test_observation_from_success() {
         let result = make_result(true, "read", "file contents");
-        let obs = FeedbackBridge::to_observation(&result);
+        let obs = to_observation(&result);
         assert!(obs.success);
         assert_eq!(obs.output_summary, "file contents");
     }
@@ -220,29 +192,28 @@ mod tests {
     #[test]
     fn test_observation_from_failure() {
         let result = make_result(false, "write", "permission denied");
-        let obs = FeedbackBridge::to_observation(&result);
+        let obs = to_observation(&result);
         assert!(!obs.success);
     }
 
     #[test]
     fn test_infer_feedback_test_failed() {
         let result = make_result(false, "bash", "test failed: assertion error");
-        let fb = FeedbackBridge::infer_feedback(&result);
+        let fb = infer_feedback(&result);
         assert!(matches!(fb, Some(Feedback::TestFailed { .. })));
     }
 
     #[test]
     fn test_infer_feedback_test_passed() {
         let result = make_result(true, "bash", "running tests... test result: ok. 10 passed");
-        let fb = FeedbackBridge::infer_feedback(&result);
+        let fb = infer_feedback(&result);
         assert!(matches!(fb, Some(Feedback::TestPassed { .. })));
     }
 
     #[test]
     fn test_agent_step_generation() {
         let result = make_result(true, "read", "content");
-        let step =
-            FeedbackBridge::to_agent_step("turn-1", 1, &["read".into()], 5000, &result, None);
+        let step = to_agent_step("turn-1", 1, &["read".into()], 5000, &result, None);
         assert_eq!(step.action.tool_name, "read");
         assert!(step.observation.success);
     }
@@ -254,10 +225,8 @@ mod tests {
         tf.record(&make_result(false, "write", "fail"), &[], 1000, None);
         assert_eq!(tf.observations.len(), 2);
         assert_eq!(tf.agent_steps.len(), 2);
-        // 失败条目应标记为重要
         let entries = tf.to_working_memory_entries();
         assert!(entries[1].1, "failure should be marked important");
-        // 评估应存在
         assert!(tf.evaluation.is_some());
     }
 }

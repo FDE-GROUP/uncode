@@ -1839,7 +1839,7 @@ impl AgentLoop {
 
                                     // ── 决策层评估 + 反馈闭环 (原则5: 事件流双向通道, #385) ──
                                     {
-                                        let result = crate::decision::execution::ExecutionResult {
+                                        let result = crate::decision::types::ExecutionResult {
                                             tool_id: id.clone(),
                                             tool_name: name.clone(),
                                             success: !is_error,
