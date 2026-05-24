@@ -36,12 +36,14 @@ impl ExtensionLifecycleBridge {
         &self.registry
     }
 
-    // ── 现有 hook ──
+    // ── Session lifecycle ──
 
-    pub async fn fire_session_start(&self, session_id: &str) -> HookResult {
+    pub async fn fire_session_start(&self, session_id: &str, reason: &str) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
+            event: HookEvent::SessionStart {
+                reason: reason.to_string(),
+            },
         };
         self.registry.fire(LifecycleHook::SessionStart, &ctx).await
     }
@@ -54,21 +56,40 @@ impl ExtensionLifecycleBridge {
         self.registry.fire(LifecycleHook::SessionEnd, &ctx).await
     }
 
-    pub async fn fire_turn_start(&self, session_id: &str, _turn: u64) -> HookResult {
+    pub async fn fire_session_shutdown(&self, session_id: &str, reason: &str) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
+            event: HookEvent::SessionShutdown {
+                reason: reason.to_string(),
+            },
+        };
+        self.registry
+            .fire(LifecycleHook::SessionShutdown, &ctx)
+            .await
+    }
+
+    // ── Turn lifecycle ──
+
+    pub async fn fire_turn_start(&self, session_id: &str, turn_index: u64) -> HookResult {
+        let ctx = HookContext {
+            session_id: Some(session_id.to_string()),
+            event: HookEvent::TurnStart {
+                turn_index,
+                timestamp: chrono::Utc::now().timestamp(),
+            },
         };
         self.registry.fire(LifecycleHook::TurnStart, &ctx).await
     }
 
-    pub async fn fire_turn_end(&self, session_id: &str, _turn: u64) -> HookResult {
+    pub async fn fire_turn_end(&self, session_id: &str, turn_index: u64) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
+            event: HookEvent::TurnEnd { turn_index },
         };
         self.registry.fire(LifecycleHook::TurnEnd, &ctx).await
     }
+
+    // ── Message lifecycle ──
 
     pub async fn fire_message_received(&self, session_id: &str, msg: &Message) -> HookResult {
         let ctx = HookContext {
@@ -90,22 +111,12 @@ impl ExtensionLifecycleBridge {
             .await
     }
 
-    // ── Session 管理 ──
-
-    pub async fn fire_session_shutdown(&self, session_id: &str) -> HookResult {
-        let ctx = HookContext {
-            session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
-        };
-        self.registry
-            .fire(LifecycleHook::SessionShutdown, &ctx)
-            .await
-    }
+    // ── Session management ──
 
     pub async fn fire_session_before_compact(&self, session_id: &str) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
+            event: HookEvent::SessionBeforeCompact,
         };
         self.registry
             .fire(LifecycleHook::SessionBeforeCompact, &ctx)
@@ -122,12 +133,14 @@ impl ExtensionLifecycleBridge {
             .await
     }
 
-    // ── Agent 生命周期 ──
+    // ── Agent lifecycle ──
 
-    pub async fn fire_before_agent_start(&self, session_id: &str) -> HookResult {
+    pub async fn fire_before_agent_start(&self, session_id: &str, prompt: &str) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
+            event: HookEvent::BeforeAgentStart {
+                prompt: prompt.to_string(),
+            },
         };
         self.registry
             .fire(LifecycleHook::BeforeAgentStart, &ctx)
@@ -145,12 +158,12 @@ impl ExtensionLifecycleBridge {
     pub async fn fire_agent_end(&self, session_id: &str) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
+            event: HookEvent::AgentEnd,
         };
         self.registry.fire(LifecycleHook::AgentEnd, &ctx).await
     }
 
-    // ── LLM 交互 ──
+    // ── LLM interaction ──
 
     pub async fn fire_context(&self, session_id: &str, messages: &[Message]) -> HookResult {
         let ctx = HookContext {
@@ -174,17 +187,17 @@ impl ExtensionLifecycleBridge {
             .await
     }
 
-    pub async fn fire_after_provider_response(&self, session_id: &str) -> HookResult {
+    pub async fn fire_after_provider_response(&self, session_id: &str, status: u16) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
+            event: HookEvent::AfterProviderResponse { status },
         };
         self.registry
             .fire(LifecycleHook::AfterProviderResponse, &ctx)
             .await
     }
 
-    // ── 流式更新 ──
+    // ── Streaming ──
 
     pub async fn fire_message_update(&self, session_id: &str) -> HookResult {
         let ctx = HookContext {
@@ -194,22 +207,72 @@ impl ExtensionLifecycleBridge {
         self.registry.fire(LifecycleHook::MessageUpdate, &ctx).await
     }
 
-    // ── 模型事件 ──
+    // ── Model events ──
 
-    pub async fn fire_model_select(&self, session_id: &str) -> HookResult {
+    pub async fn fire_model_select(
+        &self,
+        session_id: &str,
+        model: &str,
+        previous_model: Option<&str>,
+    ) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
+            event: HookEvent::ModelSelect {
+                model: model.to_string(),
+                previous_model: previous_model.map(|s| s.to_string()),
+            },
         };
         self.registry.fire(LifecycleHook::ModelSelect, &ctx).await
     }
 
-    // ── 工具执行细化 ──
+    // ── Tool execution ──
 
-    pub async fn fire_tool_execution_start(&self, session_id: &str) -> HookResult {
+    pub async fn fire_tool_call_before(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        args: &serde_json::Value,
+    ) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
+            event: HookEvent::ToolCallBefore {
+                tool_name: tool_name.to_string(),
+                args: args.clone(),
+            },
+        };
+        self.registry
+            .fire(LifecycleHook::ToolCallBefore, &ctx)
+            .await
+    }
+
+    pub async fn fire_tool_call_after(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+        is_error: bool,
+    ) -> HookResult {
+        let ctx = HookContext {
+            session_id: Some(session_id.to_string()),
+            event: HookEvent::ToolCallAfter {
+                tool_name: tool_name.to_string(),
+                is_error,
+            },
+        };
+        self.registry.fire(LifecycleHook::ToolCallAfter, &ctx).await
+    }
+
+    pub async fn fire_tool_execution_start(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+        tool_name: &str,
+    ) -> HookResult {
+        let ctx = HookContext {
+            session_id: Some(session_id.to_string()),
+            event: HookEvent::ToolExecutionStart {
+                tool_call_id: tool_call_id.to_string(),
+                tool_name: tool_name.to_string(),
+            },
         };
         self.registry
             .fire(LifecycleHook::ToolExecutionStart, &ctx)
@@ -226,29 +289,41 @@ impl ExtensionLifecycleBridge {
             .await
     }
 
-    pub async fn fire_tool_execution_end(&self, session_id: &str) -> HookResult {
+    pub async fn fire_tool_execution_end(
+        &self,
+        session_id: &str,
+        tool_call_id: &str,
+        tool_name: &str,
+        is_error: bool,
+    ) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
+            event: HookEvent::ToolExecutionEnd {
+                tool_call_id: tool_call_id.to_string(),
+                tool_name: tool_name.to_string(),
+                is_error,
+            },
         };
         self.registry
             .fire(LifecycleHook::ToolExecutionEnd, &ctx)
             .await
     }
 
-    // ── 资源发现 ──
+    // ── Resource discovery ──
 
-    pub async fn fire_resources_discover(&self, session_id: &str) -> HookResult {
+    pub async fn fire_resources_discover(&self, session_id: &str, cwd: &str) -> HookResult {
         let ctx = HookContext {
             session_id: Some(session_id.to_string()),
-            event: HookEvent::None,
+            event: HookEvent::ResourcesDiscover {
+                cwd: cwd.to_string(),
+            },
         };
         self.registry
             .fire(LifecycleHook::ResourcesDiscover, &ctx)
             .await
     }
 
-    // ── Session 生命周期拦截 (#395) ──
+    // ── Session lifecycle interception (#395) ──
 
     pub async fn fire_session_before_switch(
         &self,
@@ -308,7 +383,7 @@ impl ExtensionLifecycleBridge {
         self.registry.fire(LifecycleHook::SessionTree, &ctx).await
     }
 
-    // ── 用户输入拦截 (#396) ──
+    // ── User input interception (#396) ──
 
     pub async fn fire_input(
         &self,

@@ -210,6 +210,65 @@ pub enum HookEvent {
         level: String,
         previous_level: Option<String>,
     },
+    /// Session started / loaded / reloaded.
+    SessionStart {
+        reason: String,
+    },
+    /// Session shutting down.
+    SessionShutdown {
+        reason: String,
+    },
+    /// Turn started.
+    TurnStart {
+        turn_index: u64,
+        timestamp: i64,
+    },
+    /// Turn ended.
+    TurnEnd {
+        turn_index: u64,
+    },
+    /// Before agent loop starts processing.
+    BeforeAgentStart {
+        prompt: String,
+    },
+    /// Agent loop ended.
+    AgentEnd,
+    /// After LLM provider response.
+    AfterProviderResponse {
+        status: u16,
+    },
+    /// Before tool execution — can modify args or block.
+    ToolCallBefore {
+        tool_name: String,
+        args: serde_json::Value,
+    },
+    /// After tool execution — can modify result.
+    ToolCallAfter {
+        tool_name: String,
+        is_error: bool,
+    },
+    /// Tool execution started.
+    ToolExecutionStart {
+        tool_call_id: String,
+        tool_name: String,
+    },
+    /// Tool execution ended.
+    ToolExecutionEnd {
+        tool_call_id: String,
+        tool_name: String,
+        is_error: bool,
+    },
+    /// Model selection changed.
+    ModelSelect {
+        model: String,
+        previous_model: Option<String>,
+    },
+    /// Resource discovery — working directory context.
+    ResourcesDiscover {
+        cwd: String,
+    },
+    /// Before session compaction.
+    SessionBeforeCompact,
     None,
 }
 
