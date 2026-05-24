@@ -260,7 +260,7 @@ impl AgentHarness {
         self.agent.fire_session_shutdown("quit").await;
         self.agent.cancel();
         let _ = self.agent.cancel_and_clear().await;
-        self.pending_writes.clear();
+        self.flush_pending_writes().await;
         self.exit_phase();
     }
 

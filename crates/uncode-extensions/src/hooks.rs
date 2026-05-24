@@ -26,7 +26,7 @@ impl Default for HookResult {
 /// Source of user input for the `Input` hook.
 ///
 /// **Pi:** `InputEvent.source` — "interactive" | "rpc" | "extension".
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum InputSource {
     Interactive,
     Rpc,
@@ -173,7 +173,7 @@ impl LifecycleHook {
 /// 钩子上下文 — 传递给扩展的数据。
 ///
 /// **Pi:** 对照扩展 hook 回调入参；字段集为 uncode 自有。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct HookContext {
     pub session_id: Option<String>,
     pub event: HookEvent,
@@ -182,7 +182,8 @@ pub struct HookContext {
 /// 钩子载荷：Agent 事件或消息快照。
 ///
 /// **Pi:** 无同名枚举；概念上包装 Pi 侧 extension 可见的事件子集。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
 pub enum HookEvent {
     Event(AgentEvent),
     Message(Message),
