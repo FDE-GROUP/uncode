@@ -90,6 +90,21 @@ pub fn export_html(
                     html_escape(&mc.model_id)
                 );
             }
+            SessionEntry::ThinkingLevelChange(tl) => {
+                let _ = write!(
+                    body,
+                    r#"<div class="msg system"><div class="msg-header">思考等级切换</div><div class="text">→ {:?}</div></div>"#,
+                    tl.thinking_level
+                );
+            }
+            SessionEntry::DecisionAudit(da) => {
+                let _ = write!(
+                    body,
+                    r#"<div class="msg system"><div class="msg-header">决策审计</div><div class="text"><em>{}: {}</em></div></div>"#,
+                    html_escape(&da.tool_name),
+                    html_escape(da.reason.as_deref().unwrap_or("-"))
+                );
+            }
             _ => {}
         }
     }

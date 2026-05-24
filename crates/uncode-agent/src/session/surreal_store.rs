@@ -244,6 +244,7 @@ impl SurrealSessionStore {
             SessionEntry::CustomMessage(_) => "custom_message",
             SessionEntry::Label(_) => "label",
             SessionEntry::SessionInfo(_) => "session_info",
+            SessionEntry::DecisionAudit(_) => "decision_audit",
             _ => "unknown",
         };
 
@@ -393,22 +394,21 @@ impl SurrealSessionStore {
     }
 
     async fn set_leaf_internal(&self, session_id: &str, target_id: &str) -> SessionResult<()> {
-        self.db
-            .query("DELETE leaf WHERE session_id = $sid")
-            .bind(("sid", session_id.to_string()))
-            .await
-            .map_err(db_err("delete leaf"))?;
-
-        let record = serde_json::json!({
-            "session_id": session_id,
-            "target_id": target_id,
-        });
         let _: Option<serde_json::Value> = self
             .db
-            .create("leaf")
-            .content(record)
+            .query(
+                "BEGIN TRANSACTION;
+                 DELETE leaf WHERE session_id = $sid;
+                 CREATE leaf CONTENT { session_id: $sid, target_id: $tid };
+                 COMMIT TRANSACTION;",
+            )
+            .bind(("sid", session_id.to_string()))
+            .bind(("tid", target_id.to_string()))
             .await
-            .map_err(db_err("create leaf"))?;
+            .map_err(db_err("set_leaf transaction"))?
+            .take(0)
+            .ok()
+            .flatten();
 
         Ok(())
     }

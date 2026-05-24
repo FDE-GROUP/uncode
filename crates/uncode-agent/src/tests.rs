@@ -1267,7 +1267,7 @@ mod tests {
         // a non-idle state without actually running, test the phase check directly.
         // We verify that phase transitions work correctly.
         harness.set_session_id("test-session".into());
-        assert_eq!(harness.session_id(), Some("test-session"));
+        assert_eq!(harness.session_id(), Some("test-session".to_string()));
     }
 
     #[tokio::test]

@@ -159,7 +159,7 @@ pub struct AgentLoop {
     session_store: Arc<SessionStore>,
     system_prompt: String,
     model_id: String,
-    session_id: Option<String>,
+    session_id: std::sync::Mutex<Option<String>>,
     event_tx: broadcast::Sender<AgentEvent>,
     cancel_token: CancellationToken,
     tool_hooks: Option<Arc<dyn ToolHooks>>,
@@ -271,7 +271,7 @@ impl AgentLoop {
             session_store,
             system_prompt,
             model_id,
-            session_id: None,
+            session_id: std::sync::Mutex::new(None),
             event_tx,
             cancel_token: CancellationToken::new(),
             tool_hooks: None,
@@ -314,11 +314,11 @@ impl AgentLoop {
     }
 
     pub fn set_session_id(&mut self, session_id: String) {
-        self.session_id = Some(session_id);
+        *self.session_id.lock().unwrap() = Some(session_id);
     }
 
-    pub fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
+    pub fn session_id(&self) -> Option<String> {
+        self.session_id.lock().unwrap().clone()
     }
 
     pub fn set_model_id(&mut self, model_id: String) {
@@ -349,8 +349,8 @@ impl AgentLoop {
     /// Fire `SessionShutdown` lifecycle hook (called from harness abort).
     pub async fn fire_session_shutdown(&self, reason: &str) {
         if let Some(ref bridge) = self.extension_bridge {
-            if let Some(ref sid) = self.session_id {
-                bridge.fire_session_shutdown(sid, reason).await;
+            if let Some(sid) = self.session_id() {
+                bridge.fire_session_shutdown(&sid, reason).await;
             }
         }
     }
@@ -679,8 +679,9 @@ impl AgentLoop {
 
     async fn run_inner(&self, mut user_message: Message) -> Result<Vec<Message>, UncodeError> {
         let cwd = std::env::current_dir().unwrap_or_default();
-        let session_id = match &self.session_id {
-            Some(id) => id.clone(),
+        let existing_id = self.session_id.lock().unwrap().clone();
+        let session_id = match existing_id {
+            Some(id) => id,
             None => {
                 let id = uuid::Uuid::new_v4().to_string();
                 let cwd_str = cwd.to_string_lossy().to_string();
@@ -691,6 +692,7 @@ impl AgentLoop {
                 {
                     debug!("session init skipped: {e}");
                 }
+                *self.session_id.lock().unwrap() = Some(id.clone());
                 id
             }
         };
@@ -1045,33 +1047,29 @@ impl AgentLoop {
                 self.emit(AgentEvent::TurnStart { turn });
 
                 if let Some(ref bridge) = self.extension_bridge {
-                    if let Some(ref sid) = self.session_id {
-                        bridge.fire_turn_start(sid, turn).await;
-                    }
+                    bridge.fire_turn_start(&session_id, turn).await;
                 }
 
                 if let Some(ref bridge) = self.extension_bridge {
-                    if let Some(ref sid) = self.session_id {
-                        bridge.fire_agent_start(sid).await;
-                        let ctx_result = bridge.fire_context(sid, &messages).await;
-                        match ctx_result {
-                            uncode_extensions::hooks::HookResult::Modify(modification) => {
-                                if let Some(additional) = modification.additional_messages {
-                                    let count = additional.len().min(MAX_INJECTED_MESSAGES);
-                                    for msg in additional.into_iter().take(MAX_INJECTED_MESSAGES) {
-                                        messages.push(msg);
-                                    }
-                                    self.emit(AgentEvent::ContextInjected {
-                                        extension_name: "extension".into(),
-                                        count,
-                                    });
+                    bridge.fire_agent_start(&session_id).await;
+                    let ctx_result = bridge.fire_context(&session_id, &messages).await;
+                    match ctx_result {
+                        uncode_extensions::hooks::HookResult::Modify(modification) => {
+                            if let Some(additional) = modification.additional_messages {
+                                let count = additional.len().min(MAX_INJECTED_MESSAGES);
+                                for msg in additional.into_iter().take(MAX_INJECTED_MESSAGES) {
+                                    messages.push(msg);
                                 }
+                                self.emit(AgentEvent::ContextInjected {
+                                    extension_name: "extension".into(),
+                                    count,
+                                });
                             }
-                            uncode_extensions::hooks::HookResult::Block { reason } => {
-                                tracing::warn!("extension blocked context hook: {reason}");
-                            }
-                            uncode_extensions::hooks::HookResult::Continue => {}
                         }
+                        uncode_extensions::hooks::HookResult::Block { reason } => {
+                            tracing::warn!("extension blocked context hook: {reason}");
+                        }
+                        uncode_extensions::hooks::HookResult::Continue => {}
                     }
                 }
 
@@ -1083,7 +1081,7 @@ impl AgentLoop {
 
                 // Build on_payload callback that bridges to extension hooks.
                 let ext_registry = self.extension_bridge.as_ref().map(|b| b.registry().clone());
-                let session_id_for_payload = self.session_id.clone();
+                let session_id_for_payload = Some(session_id.clone());
                 let existing_on_payload = self.on_payload.clone();
                 let on_payload_cb: Option<PayloadCallback> =
                     if ext_registry.is_some() && session_id_for_payload.is_some() {
@@ -1118,7 +1116,7 @@ impl AgentLoop {
                     temperature: Some(0.7),
                     max_tokens: Some(8192),
                     thinking_level,
-                    session_id: self.session_id.clone(),
+                    session_id: Some(session_id.clone()),
                     on_payload: on_payload_cb,
                     on_response: self.on_response.clone(),
                     ..StreamOptions::default()
@@ -1313,9 +1311,7 @@ impl AgentLoop {
                                 content_index: None,
                             });
                             if let Some(ref bridge) = self.extension_bridge {
-                                if let Some(ref sid) = self.session_id {
-                                    bridge.fire_message_update(sid).await;
-                                }
+                                bridge.fire_message_update(&session_id).await;
                             }
                         }
                         StreamEvent::ToolCallStart { id, name } => {
@@ -1326,9 +1322,9 @@ impl AgentLoop {
                                 arguments_summary: String::new(),
                             });
                             if let Some(ref bridge) = self.extension_bridge {
-                                if let Some(ref sid) = self.session_id {
-                                    bridge.fire_tool_execution_start(sid, &id, &name).await;
-                                }
+                                bridge
+                                    .fire_tool_execution_start(&session_id, &id, &name)
+                                    .await;
                             }
                             tool_start_times.insert(id.clone(), std::time::Instant::now());
                             pending_tool_calls.push((id, name, String::new()));
@@ -1350,9 +1346,7 @@ impl AgentLoop {
                                 }
                             }
                             if let Some(ref bridge) = self.extension_bridge {
-                                if let Some(ref sid) = self.session_id {
-                                    bridge.fire_tool_execution_update(sid).await;
-                                }
+                                bridge.fire_tool_execution_update(&session_id).await;
                             }
                         }
                         StreamEvent::ToolCallEnd(data) => {
@@ -1785,11 +1779,14 @@ impl AgentLoop {
                                         }),
                                     });
                                     if let Some(ref bridge) = self.extension_bridge {
-                                        if let Some(ref sid) = self.session_id {
-                                            bridge
-                                                .fire_tool_execution_end(sid, id, name, is_error)
-                                                .await;
-                                        }
+                                        bridge
+                                            .fire_tool_execution_end(
+                                                &session_id,
+                                                id,
+                                                name,
+                                                is_error,
+                                            )
+                                            .await;
                                     }
 
                                     // ── 决策层评估 + 反馈闭环 (原则5: 事件流双向通道, #385) ──
@@ -1941,9 +1938,7 @@ impl AgentLoop {
                 });
 
                 if let Some(ref bridge) = self.extension_bridge {
-                    if let Some(ref sid) = self.session_id {
-                        bridge.fire_after_provider_response(sid, 200).await;
-                    }
+                    bridge.fire_after_provider_response(&session_id, 200).await;
                 }
 
                 // TurnEnd
@@ -1973,10 +1968,8 @@ impl AgentLoop {
                         usage: turn_usage.clone(),
                     });
                     if let Some(ref bridge) = self.extension_bridge {
-                        if let Some(ref sid) = self.session_id {
-                            bridge.fire_turn_end(sid, turn).await;
-                            bridge.fire_agent_end(sid).await;
-                        }
+                        bridge.fire_turn_end(&session_id, turn).await;
+                        bridge.fire_agent_end(&session_id).await;
                     }
 
                     // ── 认知层反馈闭环 (#385): TurnFeedback → WorkingMemory → EpisodeMemory ──
@@ -2050,12 +2043,14 @@ impl AgentLoop {
                                     }),
                                 });
                                 if let Some(ref bridge) = self.extension_bridge {
-                                    if let Some(ref sid) = self.session_id {
-                                        let previous_model = self.model_id.as_str();
-                                        bridge
-                                            .fire_model_select(sid, new_model, Some(previous_model))
-                                            .await;
-                                    }
+                                    let previous_model = self.model_id.as_str();
+                                    bridge
+                                        .fire_model_select(
+                                            &session_id,
+                                            new_model,
+                                            Some(previous_model),
+                                        )
+                                        .await;
                                 }
                             }
                         }
@@ -2068,18 +2063,16 @@ impl AgentLoop {
                                     }),
                                 });
                                 if let Some(ref bridge) = self.extension_bridge {
-                                    if let Some(ref sid) = self.session_id {
-                                        bridge
-                                            .fire_thinking_level_select(
-                                                sid,
-                                                &format!("{new_tl:?}"),
-                                                effective_thinking_level
-                                                    .as_ref()
-                                                    .map(|tl| format!("{tl:?}"))
-                                                    .as_deref(),
-                                            )
-                                            .await;
-                                    }
+                                    bridge
+                                        .fire_thinking_level_select(
+                                            &session_id,
+                                            &format!("{new_tl:?}"),
+                                            effective_thinking_level
+                                                .as_ref()
+                                                .map(|tl| format!("{tl:?}"))
+                                                .as_deref(),
+                                        )
+                                        .await;
                                 }
                             }
                         }

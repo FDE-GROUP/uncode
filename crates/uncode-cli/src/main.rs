@@ -925,8 +925,7 @@ async fn main() -> anyhow::Result<()> {
                             }
                             let a = agent.read().await;
                             if let Err(e) = a.run(Message::user(expanded)).await {
-                                let session_id =
-                                    a.session_id().map(|s| s.to_string()).unwrap_or_default();
+                                let session_id = a.session_id().unwrap_or_default();
                                 let _ = tx.send(AgentEvent::Error {
                                     category: ErrorCategory::Llm,
                                     message: format!("{e}"),
