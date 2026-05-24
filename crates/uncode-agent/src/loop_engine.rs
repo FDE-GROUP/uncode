@@ -377,10 +377,10 @@ impl AgentLoop {
     }
 
     /// Fire `SessionShutdown` lifecycle hook (called from harness abort).
-    pub async fn fire_session_shutdown(&self) {
+    pub async fn fire_session_shutdown(&self, reason: &str) {
         if let Some(ref bridge) = self.extension_bridge {
             if let Some(ref sid) = self.session_id {
-                bridge.fire_session_shutdown(sid).await;
+                bridge.fire_session_shutdown(sid, reason).await;
             }
         }
     }
@@ -793,7 +793,9 @@ impl AgentLoop {
         });
 
         if let Some(ref bridge) = self.extension_bridge {
-            bridge.fire_before_agent_start(&session_id).await;
+            bridge
+                .fire_before_agent_start(&session_id, &input_text)
+                .await;
         }
 
         self.emit(AgentEvent::SessionStart {
@@ -802,8 +804,10 @@ impl AgentLoop {
         });
 
         if let Some(ref bridge) = self.extension_bridge {
-            bridge.fire_session_start(&session_id).await;
-            bridge.fire_resources_discover(&session_id).await;
+            bridge.fire_session_start(&session_id, "new").await;
+            bridge
+                .fire_resources_discover(&session_id, &cwd.to_string_lossy())
+                .await;
         }
 
         // Build context from session store (picks up all previous messages for resume)
@@ -1352,7 +1356,7 @@ impl AgentLoop {
                             });
                             if let Some(ref bridge) = self.extension_bridge {
                                 if let Some(ref sid) = self.session_id {
-                                    bridge.fire_tool_execution_start(sid).await;
+                                    bridge.fire_tool_execution_start(sid, &id, &name).await;
                                 }
                             }
                             tool_start_times.insert(id.clone(), std::time::Instant::now());
@@ -1811,7 +1815,9 @@ impl AgentLoop {
                                     });
                                     if let Some(ref bridge) = self.extension_bridge {
                                         if let Some(ref sid) = self.session_id {
-                                            bridge.fire_tool_execution_end(sid).await;
+                                            bridge
+                                                .fire_tool_execution_end(sid, id, name, is_error)
+                                                .await;
                                         }
                                     }
 
@@ -1965,7 +1971,7 @@ impl AgentLoop {
 
                 if let Some(ref bridge) = self.extension_bridge {
                     if let Some(ref sid) = self.session_id {
-                        bridge.fire_after_provider_response(sid).await;
+                        bridge.fire_after_provider_response(sid, 200).await;
                     }
                 }
 
@@ -2074,7 +2080,10 @@ impl AgentLoop {
                                 });
                                 if let Some(ref bridge) = self.extension_bridge {
                                     if let Some(ref sid) = self.session_id {
-                                        bridge.fire_model_select(sid).await;
+                                        let previous_model = self.model_id.as_str();
+                                        bridge
+                                            .fire_model_select(sid, new_model, Some(previous_model))
+                                            .await;
                                     }
                                 }
                             }
