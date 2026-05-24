@@ -60,6 +60,13 @@ pub struct NextTurnDecision {
     pub thinking_level: Option<ThinkingLevel>,
 }
 
+/// Tool execution config — groups timeout + resource limits from GuardrailConfig.
+#[derive(Debug, Clone)]
+struct ToolExecutionConfig {
+    timeout_secs: u64,
+    resource_limits: uncode_shared::guardrails::ResourceLimitConfig,
+}
+
 /// Execute + after-hook for parallel batch phase (shared state cloned per future).
 async fn execute_prepared_tool_shared(
     registry: Arc<ToolRegistry>,
@@ -67,7 +74,7 @@ async fn execute_prepared_tool_shared(
     event_tx: broadcast::Sender<AgentEvent>,
     hooks: Option<Arc<dyn ToolHooks>>,
     execution_env: Arc<dyn ExecutionEnv>,
-    timeout_secs: u64,
+    exec_config: ToolExecutionConfig,
     id: String,
     name: String,
     prepared_args: serde_json::Value,
@@ -100,7 +107,7 @@ async fn execute_prepared_tool_shared(
     };
 
     let mut tool_result = if let Some(exec) = executor {
-        let timeout_duration = std::time::Duration::from_secs(timeout_secs);
+        let timeout_duration = std::time::Duration::from_secs(exec_config.timeout_secs);
         tokio::select! {
             _ = child.cancelled() => ToolResult::err("cancelled"),
             r = exec.execute_with_context(prepared_args, ctx) => {
@@ -111,7 +118,7 @@ async fn execute_prepared_tool_shared(
             }
             _ = tokio::time::sleep(timeout_duration) => {
                 child.cancel();
-                ToolResult::err(format!("tool timed out after {timeout_secs}s"))
+                ToolResult::err(format!("tool timed out after {}s", exec_config.timeout_secs))
             }
         }
     } else {
@@ -119,6 +126,9 @@ async fn execute_prepared_tool_shared(
     };
 
     tool_result = tool_result.with_duration_ms(started.elapsed().as_millis() as u64);
+
+    // Resource limit enforcement
+    enforce_resource_limits(&mut tool_result, &exec_config.resource_limits);
 
     if let Some(ref h) = hooks {
         let after_ctx = AfterToolCallContext {
@@ -142,6 +152,48 @@ async fn execute_prepared_tool_shared(
     }
 
     tool_result
+}
+
+/// Enforce resource limits on tool output — truncate if exceeded.
+fn enforce_resource_limits(
+    tool_result: &mut ToolResult,
+    limits: &uncode_shared::guardrails::ResourceLimitConfig,
+) {
+    let text = tool_result
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            uncode_core::tool::ToolContent::Text(t) => Some(t.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Byte size check
+    let max_bytes = (limits.max_file_size_mb as usize) * 1024 * 1024;
+    if text.len() > max_bytes {
+        tool_result.content = vec![uncode_core::tool::ToolContent::Text(format!(
+            "[output truncated: {} bytes exceeds {}MB limit]",
+            text.len(),
+            limits.max_file_size_mb
+        ))];
+        tool_result.is_error = true;
+        return;
+    }
+
+    // Line count check
+    let line_count = text.lines().count();
+    let max_lines = limits.max_bash_output_lines as usize;
+    if line_count > max_lines {
+        let kept: String = text
+            .lines()
+            .take(max_lines)
+            .collect::<Vec<&str>>()
+            .join("\n");
+        tool_result.content = vec![uncode_core::tool::ToolContent::Text(format!(
+            "{kept}\n\n[truncated: {line_count} lines exceeded limit of {max_lines}]"
+        ))];
+    }
 }
 
 /// Extract the first text block from a message, or "" if none.
@@ -663,20 +715,28 @@ impl AgentLoop {
         prepared_args: serde_json::Value,
         raw_args: serde_json::Value,
     ) -> ToolResult {
-        let timeout_secs = self.guardrail_config().decision.tool_timeout_seconds;
+        let exec_config = self.build_exec_config();
         execute_prepared_tool_shared(
             Arc::clone(&self.tool_registry),
             self.cancel_token.clone(),
             self.event_tx.clone(),
             self.tool_hooks.clone(),
             Arc::clone(&self.execution_env),
-            timeout_secs,
+            exec_config,
             id.to_string(),
             name.to_string(),
             prepared_args,
             raw_args,
         )
         .await
+    }
+
+    fn build_exec_config(&self) -> ToolExecutionConfig {
+        let gc = self.guardrail_config();
+        ToolExecutionConfig {
+            timeout_secs: gc.decision.tool_timeout_seconds,
+            resource_limits: gc.firewall.resource_limits.clone(),
+        }
     }
 
     /// Execute a single tool with full lifecycle: hooks, prepare, execute, finalize
@@ -1998,8 +2058,7 @@ impl AgentLoop {
                                         let tx = self.event_tx.clone();
                                         let hooks = self.tool_hooks.clone();
                                         let exec_env = Arc::clone(&self.execution_env);
-                                        let timeout_secs =
-                                            self.guardrail_config().decision.tool_timeout_seconds;
+                                        let exec_cfg = self.build_exec_config();
 
                                         let executed =
                                             futures::future::join_all(ready.into_iter().map(
@@ -2009,10 +2068,10 @@ impl AgentLoop {
                                                     let etx = tx.clone();
                                                     let hk = hooks.clone();
                                                     let env = exec_env.clone();
-                                                    let ts = timeout_secs;
+                                                    let ec = exec_cfg.clone();
                                                     async move {
                                                         let tr = execute_prepared_tool_shared(
-                                                            reg, ct, etx, hk, env, ts, id, name,
+                                                            reg, ct, etx, hk, env, ec, id, name,
                                                             prepared, raw_args,
                                                         )
                                                         .await;
