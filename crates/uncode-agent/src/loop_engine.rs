@@ -398,14 +398,15 @@ impl AgentLoop {
 
     pub async fn steer(&self, msg: Message) {
         let msg = self.expand_skill_in_message(msg);
-        if let Some(text) = msg.content.first().and_then(|b| match b {
+        let text = msg.content.first().and_then(|b| match b {
             uncode_core::message::ContentBlock::Text { text } => Some(text.clone()),
             _ => None,
-        }) {
+        });
+        let mq = self.message_queue.lock().await;
+        mq.steer(msg).await;
+        if let Some(text) = text {
             self.emit(AgentEvent::MessageQueued { text });
         }
-        let mq = self.message_queue.lock().await;
-        let _ = mq.steer(msg).await;
         let (s, f, n) = mq.queue_counts();
         self.emit(AgentEvent::QueueUpdate {
             data: Box::new(QueueUpdateData {
@@ -418,14 +419,15 @@ impl AgentLoop {
 
     pub async fn follow_up(&self, msg: Message) {
         let msg = self.expand_skill_in_message(msg);
-        if let Some(text) = msg.content.first().and_then(|b| match b {
+        let text = msg.content.first().and_then(|b| match b {
             uncode_core::message::ContentBlock::Text { text } => Some(text.clone()),
             _ => None,
-        }) {
+        });
+        let mq = self.message_queue.lock().await;
+        mq.follow_up(msg).await;
+        if let Some(text) = text {
             self.emit(AgentEvent::MessageQueued { text });
         }
-        let mq = self.message_queue.lock().await;
-        let _ = mq.follow_up(msg).await;
         let (s, f, n) = mq.queue_counts();
         self.emit(AgentEvent::QueueUpdate {
             data: Box::new(QueueUpdateData {
@@ -1099,11 +1101,10 @@ impl AgentLoop {
                                     ),
                                 };
                                 let reg = registry.clone();
-                                let _ = tokio::task::block_in_place(|| {
-                                    tokio::runtime::Handle::current().block_on(reg.fire(
-                                            uncode_extensions::hooks::LifecycleHook::BeforeProviderRequest,
-                                            &ctx,
-                                        ))
+                                let hook = uncode_extensions::hooks::LifecycleHook::BeforeProviderRequest;
+                                // Fire the extension hook asynchronously without blocking the stream.
+                                tokio::spawn(async move {
+                                    let _ = reg.fire(hook, &ctx).await;
                                 });
                             }
                         }
@@ -1386,8 +1387,8 @@ impl AgentLoop {
                             pending_executions.push((id, name, arguments));
                         }
                         StreamEvent::Usage(usage) => {
-                            turn_input_tokens = usage.input_tokens;
-                            turn_output_tokens = usage.output_tokens;
+                            turn_input_tokens += usage.input_tokens;
+                            turn_output_tokens += usage.output_tokens;
                             total_input_tokens += usage.input_tokens;
                             total_output_tokens += usage.output_tokens;
                         }
@@ -1414,7 +1415,7 @@ impl AgentLoop {
                                     "stream ended with {} pending tool calls (missing ToolCallEnd)",
                                     pending_tool_calls.len()
                                 );
-                                pending_tool_calls.clear();
+                                // Do NOT clear — let the merge below attempt to parse delta args.
                             }
                             let mut assistant_content: Vec<ContentBlock> =
                                 Vec::with_capacity(pending_tool_calls.len() + 2);
