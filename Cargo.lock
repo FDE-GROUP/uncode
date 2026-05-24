@@ -6403,6 +6403,7 @@ dependencies = [
  "uncode-ai",
  "uncode-core",
  "uncode-extensions",
+ "uncode-ontology",
  "uncode-shared",
  "uuid",
  "walkdir",
@@ -6503,6 +6504,14 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "uncode-ontology"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
