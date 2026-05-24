@@ -21,14 +21,18 @@ pub enum Approval {
     Deny,
 }
 
+struct PendingState {
+    waiters: HashMap<String, oneshot::Sender<Approval>>,
+    early: HashMap<String, Approval>,
+}
+
 /// Shared gate between `AgentLoop` hooks and TUI confirmation UI.
 pub struct PermissionGate {
     auto_allow_readonly: bool,
     auto_allow_bash_safe: bool,
     policy: Option<std::sync::Arc<PermissionPolicy>>,
     tool_registry: Option<std::sync::Arc<ToolRegistry>>,
-    waiters: Mutex<HashMap<String, oneshot::Sender<Approval>>>,
-    early: Mutex<HashMap<String, Approval>>,
+    state: Mutex<PendingState>,
     event_tx: Option<broadcast::Sender<AgentEvent>>,
 }
 
@@ -54,8 +58,10 @@ impl PermissionGate {
             auto_allow_bash_safe: true,
             policy: None,
             tool_registry,
-            waiters: Mutex::new(HashMap::new()),
-            early: Mutex::new(HashMap::new()),
+            state: Mutex::new(PendingState {
+                waiters: HashMap::new(),
+                early: HashMap::new(),
+            }),
             event_tx: Some(event_tx),
         }
     }
@@ -79,8 +85,10 @@ impl PermissionGate {
             auto_allow_bash_safe: true,
             policy: None,
             tool_registry: None,
-            waiters: Mutex::new(HashMap::new()),
-            early: Mutex::new(HashMap::new()),
+            state: Mutex::new(PendingState {
+                waiters: HashMap::new(),
+                early: HashMap::new(),
+            }),
             event_tx: None,
         }
     }
@@ -105,14 +113,12 @@ impl PermissionGate {
 
     /// Called from TUI when user allows or denies (may arrive before or after the waiter registers).
     pub async fn resolve(&self, tool_call_id: &str, approval: Approval) {
-        if let Some(tx) = self.waiters.lock().await.remove(tool_call_id) {
+        let mut state = self.state.lock().await;
+        if let Some(tx) = state.waiters.remove(tool_call_id) {
             let _ = tx.send(approval);
-            return;
+        } else {
+            state.early.insert(tool_call_id.to_string(), approval);
         }
-        self.early
-            .lock()
-            .await
-            .insert(tool_call_id.to_string(), approval);
     }
 
     /// Block until allowed or denied; emits [`AgentEvent::ToolCallAwaitingApproval`] when waiting.
@@ -122,15 +128,14 @@ impl PermissionGate {
             return None;
         }
 
-        if let Some(approval) = self.early.lock().await.remove(&ctx.tool_call_id) {
-            return block_reason(approval);
-        }
-
         let (tx, rx) = oneshot::channel();
-        self.waiters
-            .lock()
-            .await
-            .insert(ctx.tool_call_id.clone(), tx);
+        {
+            let mut state = self.state.lock().await;
+            if let Some(approval) = state.early.remove(&ctx.tool_call_id) {
+                return block_reason(approval);
+            }
+            state.waiters.insert(ctx.tool_call_id.clone(), tx);
+        }
 
         if let Some(ref event_tx) = self.event_tx {
             let registry_description = self

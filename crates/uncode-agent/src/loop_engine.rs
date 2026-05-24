@@ -444,7 +444,7 @@ impl AgentLoop {
 
     pub async fn next_turn(&self, msg: Message) {
         let mq = self.message_queue.lock().await;
-        let _ = mq.next_turn(msg).await;
+        mq.next_turn(msg).await;
         let (s, f, n) = mq.queue_counts();
         self.emit(AgentEvent::QueueUpdate {
             data: Box::new(QueueUpdateData {

@@ -147,18 +147,25 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(args.timeout_secs);
 
     let mut stdout_lines = BufReader::new(stdout).lines();
+    let mut stderr_buf = Some(BufReader::new(stderr));
     loop {
         if ctx.cancel_token.is_cancelled() {
+            drop(stderr_buf.take());
             kill_process_group(pgid);
+            let _ = child.wait().await;
             return bash_cancelled_result();
         }
         if remaining_until(deadline).is_zero() {
+            drop(stderr_buf.take());
             kill_process_group(pgid);
+            let _ = child.wait().await;
             return bash_timeout_result();
         }
         tokio::select! {
             _ = ctx.cancel_token.cancelled() => {
+                drop(stderr_buf.take());
                 kill_process_group(pgid);
+                let _ = child.wait().await;
                 return bash_cancelled_result();
             }
             line = tokio::time::timeout(remaining_until(deadline), stdout_lines.next_line()) => {
@@ -188,25 +195,30 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
         }
     }
 
-    let mut stderr_lines = BufReader::new(stderr).lines();
+    let mut stderr_lines =
+        BufReader::new(stderr_buf.take().expect("stderr already consumed")).lines();
     loop {
         if ctx.cancel_token.is_cancelled() {
             kill_process_group(pgid);
+            let _ = child.wait().await;
             return bash_cancelled_result();
         }
         if remaining_until(deadline).is_zero() {
             kill_process_group(pgid);
+            let _ = child.wait().await;
             return bash_timeout_result();
         }
         tokio::select! {
             _ = ctx.cancel_token.cancelled() => {
                 kill_process_group(pgid);
+                let _ = child.wait().await;
                 return bash_cancelled_result();
             }
             line = tokio::time::timeout(remaining_until(deadline), stderr_lines.next_line()) => {
                 match line {
                     Err(_) => {
                         kill_process_group(pgid);
+                        let _ = child.wait().await;
                         return bash_timeout_result();
                     }
                     Ok(Ok(Some(l))) => {
