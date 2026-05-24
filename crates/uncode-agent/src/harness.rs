@@ -174,10 +174,51 @@ impl AgentHarness {
 
     // ── 核心方法 ──
 
-    /// 开始新 turn（带 Phase 守卫）
+    /// 开始新 turn（带 Phase 守卫 + async hook dispatch）
     pub async fn prompt(&mut self, user_message: Message) -> Result<Vec<Message>, UncodeError> {
         self.enter_phase(AgentHarnessPhase::Turn)?;
+
+        // Async hook dispatcher: consume events in background during run (#457)
+        // Handlers are collected under lock, then dispatched lock-free to satisfy Send.
+        let rx = self.agent.subscribe();
+        let event_router = self.agent.event_router_arc();
+        let hook_handle = tokio::spawn(async move {
+            let mut rx = rx;
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        // Collect handlers under lock, release before await
+                        let tag = uncode_core::event::agent_event_tag(&event);
+                        let handlers = {
+                            let router = event_router.lock().unwrap();
+                            router.get_arc_hook_handlers(tag)
+                        };
+                        // Dispatch without holding the lock
+                        for h in handlers {
+                            let result = h(&event).await;
+                            match result {
+                                uncode_core::event::HookResult::Block { reason } => {
+                                    tracing::warn!("hook blocked: {reason}");
+                                }
+                                _ => {
+                                    tracing::trace!("hook result: {:?}", result);
+                                }
+                            }
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::debug!("hook dispatcher lagged {n} events");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+
         let result = self.agent.run(user_message).await;
+
+        // Cleanup: abort hook dispatcher (run() has finished emitting)
+        hook_handle.abort();
+
         self.flush_pending_writes().await;
         self.exit_phase();
         result
