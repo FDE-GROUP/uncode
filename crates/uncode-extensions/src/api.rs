@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::command::{CommandRegistration, ShortcutRegistration};
+use crate::event_bus::{EventBus, EventHandler, SubscriptionId};
 use crate::header_footer::{FooterConfig, HeaderConfig, WorkingIndicatorConfig};
 use crate::hooks::{Extension, HookRegistry, LifecycleHook};
 use crate::message_renderer::MessageRenderConfig;
@@ -106,6 +107,7 @@ pub type SessionCallback =
 /// **Pi:** 对照扩展安装/注册门面；无同名 TS 类型。
 pub struct ExtensionApi {
     registry: Arc<HookRegistry>,
+    event_bus: Arc<EventBus>,
     tool_callback: Option<ToolRegistrationCallback>,
     tool_unregister_callback: Option<ToolUnregisterCallback>,
     command_callback: Option<CommandRegistrationCallback>,
@@ -135,6 +137,7 @@ impl ExtensionApi {
     pub fn new(registry: Arc<HookRegistry>) -> Self {
         Self {
             registry,
+            event_bus: Arc::new(EventBus::new()),
             tool_callback: None,
             tool_unregister_callback: None,
             command_callback: None,
@@ -165,6 +168,7 @@ impl ExtensionApi {
     #[allow(clippy::too_many_arguments)]
     pub fn with_callbacks(
         registry: Arc<HookRegistry>,
+        event_bus: Arc<EventBus>,
         tool_callback: Option<ToolRegistrationCallback>,
         tool_unregister_callback: Option<ToolUnregisterCallback>,
         command_callback: Option<CommandRegistrationCallback>,
@@ -191,6 +195,7 @@ impl ExtensionApi {
     ) -> Self {
         Self {
             registry,
+            event_bus,
             tool_callback,
             tool_unregister_callback,
             command_callback,
@@ -563,5 +568,27 @@ impl ExtensionApi {
             SessionResponse::Ok => Ok(()),
             other => Err(format!("unexpected response for set_name: {other:?}")),
         }
+    }
+
+    // ── 跨扩展事件总线 (#393) ──
+
+    /// 发布自定义事件到指定 channel。
+    ///
+    /// **Pi:** `pi.events.emit(channel, data)`。
+    pub fn emit_event(&self, channel: &str, data: serde_json::Value) {
+        self.event_bus.emit(channel, data);
+    }
+
+    /// 订阅指定 channel 的自定义事件。
+    ///
+    /// **Pi:** `pi.events.on(channel, handler)`。
+    /// 返回的 `SubscriptionId` 可用于 `unsubscribe_event()` 取消订阅。
+    pub fn subscribe_event(&self, channel: &str, handler: EventHandler) -> SubscriptionId {
+        self.event_bus.subscribe(channel, handler)
+    }
+
+    /// 取消事件订阅。
+    pub fn unsubscribe_event(&self, id: SubscriptionId) -> bool {
+        self.event_bus.unsubscribe(id)
     }
 }

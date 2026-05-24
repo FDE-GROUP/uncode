@@ -498,6 +498,7 @@ fn test_register_tool_with_callback_delegates() {
 
     let api = ExtensionApi::with_callbacks(
         registry,
+        std::sync::Arc::new(crate::event_bus::EventBus::new()),
         Some(callback),
         None,
         None,
@@ -537,6 +538,7 @@ fn test_register_tool_callback_error_propagates() {
 
     let api = ExtensionApi::with_callbacks(
         registry,
+        std::sync::Arc::new(crate::event_bus::EventBus::new()),
         Some(callback),
         None,
         None,
@@ -638,6 +640,7 @@ fn test_register_command_with_callback() {
     });
     let api = ExtensionApi::with_callbacks(
         registry,
+        std::sync::Arc::new(crate::event_bus::EventBus::new()),
         None,
         None,
         Some(callback),
@@ -730,6 +733,7 @@ fn test_register_shortcut_with_callback() {
     );
     let api = ExtensionApi::with_callbacks(
         registry,
+        std::sync::Arc::new(crate::event_bus::EventBus::new()),
         None,
         None,
         None,
@@ -805,6 +809,7 @@ fn test_set_header_with_callback() {
     );
     let api = ExtensionApi::with_callbacks(
         registry,
+        std::sync::Arc::new(crate::event_bus::EventBus::new()),
         None,
         None,
         None,
@@ -847,6 +852,7 @@ fn test_set_footer_with_callback() {
     );
     let api = ExtensionApi::with_callbacks(
         registry,
+        std::sync::Arc::new(crate::event_bus::EventBus::new()),
         None,
         None,
         None,
@@ -889,6 +895,7 @@ fn test_set_indicator_with_callback() {
     );
     let api = ExtensionApi::with_callbacks(
         registry,
+        std::sync::Arc::new(crate::event_bus::EventBus::new()),
         None,
         None,
         None,
@@ -953,6 +960,7 @@ fn test_set_theme_with_callback() {
     );
     let api = ExtensionApi::with_callbacks(
         registry,
+        std::sync::Arc::new(crate::event_bus::EventBus::new()),
         None,
         None,
         None,
@@ -1000,6 +1008,7 @@ fn test_set_thinking_labels_with_callback() {
     labels.insert("high".into(), "deep".into());
     let api = ExtensionApi::with_callbacks(
         registry,
+        std::sync::Arc::new(crate::event_bus::EventBus::new()),
         None,
         None,
         None,
