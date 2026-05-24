@@ -141,8 +141,14 @@ impl ToolExecutor for WebSearchTool {
         let status = response.status();
         if !status.is_success() {
             let text = response.text().await.unwrap_or_default();
+            // Truncate error response to avoid leaking sensitive data in logs/UI
+            let _truncated = if text.len() > 200 {
+                format!("{}...", &text.chars().take(200).collect::<String>())
+            } else {
+                text
+            };
             return Err(uncode_core::error::UncodeError::Tool(format!(
-                "Tavily API error: HTTP {status} — {text}"
+                "search API error: HTTP {status}"
             )));
         }
 

@@ -83,9 +83,14 @@ fn normalize_path(full: &std::path::Path) -> Result<std::path::PathBuf, String> 
     }
     let canonical_base = existing
         .canonicalize()
-        .map_err(|e| format!("resolve path {}: {e}", full.display()))?;
+        .map_err(|e| format!("resolve path: {e}"))?;
     let mut result = canonical_base;
     for name in suffix.into_iter().rev() {
+        // Reject path traversal components in the non-existing suffix
+        let name_str = name.to_string_lossy();
+        if name_str == ".." || name_str == "." {
+            return Err(format!("path traversal rejected: {name_str}"));
+        }
         result.push(name);
     }
     Ok(result)

@@ -66,6 +66,11 @@ fn parse_host(url: &str) -> Option<String> {
         .or_else(|| url.strip_prefix("http://"))?;
     let authority = rest.split('/').next()?;
     let host_port = authority.rsplit('@').next()?;
+    // Handle IPv6 bracket notation: [::1]:8080
+    if let Some(end) = host_port.find(']') {
+        let bracketed = &host_port[..=end];
+        return Some(bracketed.to_string());
+    }
     let host = host_port.split(':').next()?;
     if host.is_empty() {
         None
@@ -100,6 +105,13 @@ fn is_blocked_ipv4_octets(ip: [u8; 4]) -> bool {
             | [192, 168, _, _]
             | [255, 255, 255, 255]
     ) || (ip[0] == 172 && (16..=31).contains(&ip[1]))
+        // CGNAT / Shared address space (RFC 6598)
+        || (ip[0] == 100 && (64..=127).contains(&ip[1]))
+        // IETF Protocol Assignments, TEST-NET-1/2/3, IPv6-to-IPv4 relay
+        || matches!(ip, [192, 0, 0, _] | [192, 0, 2, _] | [198, 51, 100, _] | [203, 0, 113, _] | [192, 88, 99, _])
+        // Multicast, Reserved, Limited Broadcast
+        || (224..=239).contains(&ip[0])
+        || ip[0] >= 240
 }
 
 fn check_ipv6_literal(host: &str) -> Result<(), String> {
@@ -108,11 +120,26 @@ fn check_ipv6_literal(host: &str) -> Result<(), String> {
         .and_then(|s| s.strip_suffix(']'))
         .unwrap_or(host);
     let h = inner.to_ascii_lowercase();
+    // Loopback
     if h == "::1" || h == "0:0:0:0:0:0:0:1" {
         return Err(format!("blocked host (loopback): {host}"));
     }
+    // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1)
+    if let Some(ipv4_part) = h.strip_prefix("::ffff:") {
+        if is_blocked_ipv4(ipv4_part) {
+            return Err(format!("blocked host (private/reserved): {host}"));
+        }
+    }
+    // Unique local, link-local
     if h.starts_with("fc") || h.starts_with("fd") || h.starts_with("fe80") {
         return Err(format!("blocked host (private/link-local): {host}"));
+    }
+    // IPv4-compatible IPv6 (::a.b.c.d)
+    if h.starts_with("::") && !h.starts_with("::ffff:") && h.len() > 2 {
+        let rest = &h[2..];
+        if is_blocked_ipv4(rest) {
+            return Err(format!("blocked host (private/reserved): {host}"));
+        }
     }
     Ok(())
 }
@@ -142,5 +169,34 @@ mod tests {
         assert!(ensure_public_http_url("http://10.0.0.1/").is_err());
         assert!(ensure_public_http_url("http://192.168.1.1/").is_err());
         assert!(ensure_public_http_url("http://172.16.0.1/").is_err());
+    }
+
+    #[test]
+    fn blocks_cgnat() {
+        assert!(ensure_public_http_url("http://100.64.0.1/").is_err());
+    }
+
+    #[test]
+    fn blocks_test_nets() {
+        assert!(ensure_public_http_url("http://192.0.2.1/").is_err());
+        assert!(ensure_public_http_url("http://198.51.100.1/").is_err());
+        assert!(ensure_public_http_url("http://203.0.113.1/").is_err());
+    }
+
+    #[test]
+    fn blocks_multicast_and_reserved() {
+        assert!(ensure_public_http_url("http://224.0.0.1/").is_err());
+        assert!(ensure_public_http_url("http://240.0.0.1/").is_err());
+    }
+
+    #[test]
+    fn blocks_ipv4_mapped_ipv6_loopback() {
+        assert!(ensure_public_http_url("http://[::ffff:127.0.0.1]/").is_err());
+    }
+
+    #[test]
+    fn blocks_ipv4_mapped_ipv6_private() {
+        assert!(ensure_public_http_url("http://[::ffff:10.0.0.1]/").is_err());
+        assert!(ensure_public_http_url("http://[::ffff:192.168.1.1]/").is_err());
     }
 }

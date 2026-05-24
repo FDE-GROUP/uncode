@@ -85,9 +85,20 @@ pub fn extract_command(args: &str) -> String {
     args.to_string()
 }
 
+/// Shell metacharacters that indicate command chaining or substitution.
+const SHELL_META_CHARS: &[char] = &[';', '|', '&', '$', '`', '>', '<', '(', ')', '\n', '\r'];
+
+/// Check if a command contains shell metacharacters for chaining/substitution.
+fn contains_shell_metacharacters(cmd: &str) -> bool {
+    cmd.chars().any(|c| SHELL_META_CHARS.contains(&c))
+}
+
 /// 检查命令是否在白名单中
 pub fn is_safe_command(command: &str) -> bool {
     let cmd = command.trim();
+    if contains_shell_metacharacters(cmd) {
+        return false;
+    }
     SAFE_COMMANDS.iter().any(|safe| {
         cmd == *safe
             || cmd.starts_with(&format!("{safe} "))
@@ -273,6 +284,24 @@ mod tests {
         let args = serde_json::json!({ "command": "ls" });
         let desc = approval_description("bash", &args, Some("sandbox note".into()));
         assert_eq!(desc.as_deref(), Some("sandbox note"));
+    }
+
+    #[test]
+    fn test_safe_command_blocks_shell_injection() {
+        assert!(!is_safe_command("ls; rm -rf /"));
+        assert!(!is_safe_command("ls | malicious"));
+        assert!(!is_safe_command("ls && rm -rf /"));
+        assert!(!is_safe_command("ls $(cat /etc/passwd)"));
+        assert!(!is_safe_command("cat /etc/passwd > /tmp/out"));
+        assert!(!is_safe_command("ls\nrm -rf /"));
+    }
+
+    #[test]
+    fn test_safe_command_allows_legitimate() {
+        assert!(is_safe_command("ls"));
+        assert!(is_safe_command("ls /tmp"));
+        assert!(is_safe_command("cat README.md"));
+        assert!(is_safe_command("pwd"));
     }
 }
 
