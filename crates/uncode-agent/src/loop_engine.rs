@@ -1085,33 +1085,33 @@ impl AgentLoop {
                 let ext_registry = self.extension_bridge.as_ref().map(|b| b.registry().clone());
                 let session_id_for_payload = self.session_id.clone();
                 let existing_on_payload = self.on_payload.clone();
-                let on_payload_cb: Option<PayloadCallback> = if ext_registry.is_some()
-                    && session_id_for_payload.is_some()
-                {
-                    Some(Arc::new(move |body: &mut serde_json::Value| {
-                        if let Some(ref cb) = existing_on_payload {
-                            cb(body);
-                        }
-                        if let Some(ref registry) = ext_registry {
-                            if let Some(ref sid) = session_id_for_payload {
-                                let ctx = uncode_extensions::hooks::HookContext {
-                                    session_id: Some(sid.clone()),
-                                    event: uncode_extensions::hooks::HookEvent::ProviderRequest(
-                                        body.clone(),
-                                    ),
-                                };
-                                let reg = registry.clone();
-                                let hook = uncode_extensions::hooks::LifecycleHook::BeforeProviderRequest;
-                                // Fire the extension hook asynchronously without blocking the stream.
-                                tokio::spawn(async move {
-                                    let _ = reg.fire(hook, &ctx).await;
-                                });
+                let on_payload_cb: Option<PayloadCallback> =
+                    if ext_registry.is_some() && session_id_for_payload.is_some() {
+                        Some(Arc::new(move |body: &mut serde_json::Value| {
+                            if let Some(ref cb) = existing_on_payload {
+                                cb(body);
                             }
-                        }
-                    }))
-                } else {
-                    existing_on_payload
-                };
+                            if let Some(ref registry) = ext_registry {
+                                if let Some(ref sid) = session_id_for_payload {
+                                    let ctx = uncode_extensions::hooks::HookContext {
+                                        session_id: Some(sid.clone()),
+                                        event: uncode_extensions::hooks::HookEvent::ProviderRequest(
+                                            body.clone(),
+                                        ),
+                                    };
+                                    let reg = registry.clone();
+                                    let hook =
+                                    uncode_extensions::hooks::LifecycleHook::BeforeProviderRequest;
+                                    // Fire the extension hook asynchronously without blocking the stream.
+                                    tokio::spawn(async move {
+                                        let _ = reg.fire(hook, &ctx).await;
+                                    });
+                                }
+                            }
+                        }))
+                    } else {
+                        existing_on_payload
+                    };
 
                 let options = StreamOptions {
                     api_key,
