@@ -844,6 +844,11 @@ impl AgentLoop {
                 cm.working.observe(content);
             }
         }
+        // Decision summary — denied tools and firewall violations → WorkingMemory (important)
+        for obs in feedback.decision_observations() {
+            cm.working.observe_important(&obs);
+            cm.episode.record("decision_denied", &obs, turn);
+        }
         for obs in &feedback.observations {
             let event_type = if obs.starts_with('❌') {
                 "tool_result_failure"
@@ -1891,6 +1896,39 @@ impl AgentLoop {
 
                             // Batch-execute buffered tool calls (same `executions` as assistant ToolCalls)
                             let has_denied = !denied_results.is_empty();
+
+                            // Populate decision summary for cognition feedback (#455)
+                            if has_denied {
+                                let ds = crate::decision::feedback::DecisionSummary {
+                                    tools_denied: denied_results
+                                        .iter()
+                                        .map(|(_, name, _)| name.clone())
+                                        .collect(),
+                                    denial_reasons: denied_results
+                                        .iter()
+                                        .map(|(_, _, tr)| {
+                                            tr.content
+                                                .iter()
+                                                .filter_map(|c| match c {
+                                                    uncode_core::tool::ToolContent::Text(t) => {
+                                                        Some(t.as_str())
+                                                    }
+                                                    _ => None,
+                                                })
+                                                .collect::<Vec<&str>>()
+                                                .join("; ")
+                                        })
+                                        .collect(),
+                                    ..Default::default()
+                                };
+                                if let Some(ref mut existing) = turn_feedback.decision_summary {
+                                    existing.tools_denied.extend(ds.tools_denied);
+                                    existing.denial_reasons.extend(ds.denial_reasons);
+                                } else {
+                                    turn_feedback.decision_summary = Some(ds);
+                                }
+                            }
+
                             if !executions.is_empty() || has_denied {
                                 // PhaseStateMachine: Adjudicating → Executing
                                 self.try_transition_phase(
