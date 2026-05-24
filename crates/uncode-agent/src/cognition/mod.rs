@@ -12,7 +12,6 @@
 //!
 //! | 模块 | 职责 | 状态 |
 //! |:---|:---|:---|
-//! | `context_builder` | 从事件流重建认知上下文 | re-export（已有） |
 //! | `prompt_manager` | 系统提示词 + 工具描述生成 | ★ 已实现 |
 //! | `uncertainty` | 不确定性三分类显式建模 | ★ 已实现 |
 //! | `memory` | 压缩边界管理 + 摘要注入策略 | ★ 已实现 |
@@ -51,7 +50,6 @@
 //! 参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3
 //! "认知层回答'接下来可以做什么'，决策层回答'哪些可以做、做了什么、结果怎样'"
 
-pub mod context_builder;
 pub mod episode; // ★ 情景记忆
 pub mod memory;
 pub mod prompt_manager;

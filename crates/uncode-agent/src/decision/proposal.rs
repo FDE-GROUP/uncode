@@ -15,7 +15,6 @@ use std::collections::HashMap;
 use uncode_ai::StreamEvent;
 
 use super::types::ActionProposal;
-use crate::decision::firewall::SemanticFirewall;
 
 /// 流式提案累积器 — 从 LLM StreamEvent 流中提取工具调用
 ///
@@ -97,20 +96,6 @@ impl ProposalAccumulator {
             None
         }
     }
-}
-
-/// 将累积的 ActionProposal 通过防火墙处理为可裁决的提案
-pub async fn process_proposals(
-    proposals: Vec<ActionProposal>,
-    firewall: &SemanticFirewall,
-) -> Result<Vec<crate::decision::types::NormalizedAction>, crate::decision::firewall::FirewallError>
-{
-    let mut results = Vec::with_capacity(proposals.len());
-    for proposal in &proposals {
-        let normalized = firewall.process(proposal)?;
-        results.push(normalized);
-    }
-    Ok(results)
 }
 
 // ═══════════════════════════════════════════════════════════
