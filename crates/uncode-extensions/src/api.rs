@@ -587,7 +587,6 @@ impl ExtensionApi {
         }
     }
 
-<<<<<<< HEAD
     // ── 跨扩展事件总线 (#393) ──
 
     /// 发布自定义事件到指定 channel。
