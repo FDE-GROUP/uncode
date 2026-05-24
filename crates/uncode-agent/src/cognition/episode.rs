@@ -261,7 +261,10 @@ impl EpisodeMemory {
 
     /// 估算总 token 数（4 字符 ≈ 1 token）
     fn estimate_tokens(&self) -> usize {
-        self.entries.iter().map(|e| self.estimate_entry_tokens(e)).sum()
+        self.entries
+            .iter()
+            .map(|e| self.estimate_entry_tokens(e))
+            .sum()
     }
 
     fn estimate_entry_tokens(&self, entry: &EpisodeEntry) -> usize {
@@ -356,12 +359,15 @@ mod tests {
 
     #[test]
     fn test_token_budget_eviction() {
-        let mut mem = EpisodeMemory::new(100)
-            .with_token_budget(50); // 50 tokens budget
+        let mut mem = EpisodeMemory::new(100).with_token_budget(50); // 50 tokens budget
 
         // Insert many low-importance entries (~100 chars each ≈ 25 tokens each)
         for i in 0..10 {
-            mem.record("content_delta", format!("chunk_{i}_padding_text_to_add_length_here"), 1);
+            mem.record(
+                "content_delta",
+                format!("chunk_{i}_padding_text_to_add_length_here"),
+                1,
+            );
         }
 
         // Should have evicted down to stay within budget
@@ -374,8 +380,7 @@ mod tests {
 
     #[test]
     fn test_token_budget_preserves_critical() {
-        let mut mem = EpisodeMemory::new(100)
-            .with_token_budget(20);
+        let mut mem = EpisodeMemory::new(100).with_token_budget(20);
 
         // Fill with low-importance
         for i in 0..5 {
