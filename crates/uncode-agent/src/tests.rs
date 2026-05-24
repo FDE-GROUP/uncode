@@ -2135,4 +2135,77 @@ mod tests {
             "should mention 2000 lines vs 100 limit, got: {result_text}"
         );
     }
+
+    #[tokio::test]
+    async fn test_sync_hook_blocks_tool_execution() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                },
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
+                    id: "tc1".into(),
+                    name: "echo".into(),
+                    arguments: serde_json::json!({"text": "hello"}),
+                })),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            vec![
+                StreamEvent::TextDelta("recovered".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+
+        agent.register_sync_hook(
+            "tool_call_start",
+            Box::new(|event| {
+                if let uncode_core::event::AgentEvent::ToolCallStart { tool_name, .. } = event {
+                    if tool_name == "echo" {
+                        return uncode_core::event::HookResult::Block {
+                            reason: "echo is blocked for testing".into(),
+                        };
+                    }
+                }
+                uncode_core::event::HookResult::Continue
+            }),
+        );
+
+        let mut rx = agent.subscribe();
+        let _ = agent.run(Message::user("use echo")).await.unwrap();
+
+        let mut result_text = String::new();
+        while let Ok(event) = rx.try_recv() {
+            if let uncode_core::event::AgentEvent::ToolCallEnd { data } = event {
+                if data.is_error {
+                    if let Some(ref summary) = data.result_summary {
+                        result_text = summary.clone();
+                    }
+                }
+            }
+        }
+
+        assert!(
+            result_text.contains("blocked by governance"),
+            "expected block error, got: {result_text}"
+        );
+        assert!(
+            result_text.contains("echo is blocked for testing"),
+            "expected block reason, got: {result_text}"
+        );
+    }
 }
