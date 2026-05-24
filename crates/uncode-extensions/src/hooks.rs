@@ -101,6 +101,10 @@ pub enum LifecycleHook {
     AfterProviderResponse,
     // 流式更新
     MessageUpdate,
+    /// Message started generating.
+    MessageStart,
+    /// Message finished generating.
+    MessageEnd,
     // 模型事件
     ModelSelect,
     // 工具执行细化
@@ -123,6 +127,8 @@ pub enum LifecycleHook {
     Input,
     /// Thinking level changed notification.
     ThinkingLevelSelect,
+    /// User executed a bash command via ! or !! prefix.
+    UserBash,
 }
 
 impl LifecycleHook {
@@ -146,6 +152,8 @@ impl LifecycleHook {
             Self::BeforeProviderRequest => "before_provider_request",
             Self::AfterProviderResponse => "after_provider_response",
             Self::MessageUpdate => "message_update",
+            Self::MessageStart => "message_start",
+            Self::MessageEnd => "message_end",
             Self::ModelSelect => "model_select",
             Self::ToolExecutionStart => "tool_execution_start",
             Self::ToolExecutionUpdate => "tool_execution_update",
@@ -157,6 +165,7 @@ impl LifecycleHook {
             Self::SessionTree => "session_tree",
             Self::Input => "input",
             Self::ThinkingLevelSelect => "thinking_level_select",
+            Self::UserBash => "user_bash",
         }
     }
 }
@@ -269,6 +278,20 @@ pub enum HookEvent {
     },
     /// Before session compaction.
     SessionBeforeCompact,
+    /// Message started generating.
+    MessageStart {
+        role: String,
+        message_id: String,
+    },
+    /// Message finished generating.
+    MessageEnd {
+        role: String,
+        message_id: String,
+    },
+    /// User executed a bash command.
+    UserBash {
+        command: String,
+    },
     None,
 }
 
