@@ -889,7 +889,8 @@ impl AgentLoop {
                 } else if let Ok(entries) = self.session_store.load_entries(&session_id).await {
                     let estimated = crate::compaction::estimate_entry_tokens(&entries);
                     matches!(
-                        self.memory_manager.evaluate(estimated, model.context_window as u64),
+                        self.memory_manager
+                            .evaluate(estimated, model.context_window as u64),
                         crate::cognition::memory::CompactionDecision::ShouldCompact { .. }
                             | crate::cognition::memory::CompactionDecision::ForceCompact { .. }
                     )
