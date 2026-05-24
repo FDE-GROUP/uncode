@@ -1,138 +1,158 @@
-# uncode — Rust-native Agent Coding System
+# CLAUDE.md
 
-## 项目概述
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-uncode 是一个使用 Rust 开发的终端 AI Agent Coding 系统。参考 [earendil-works/pi](https://github.com/earendil-works/pi) 的设计理念和框架，使用 Rust 重构，不涉及 Pi 的 web-ui 部分。
+## Project Overview
 
-**架构对齐策略**：核心模块的设计对齐 Pi 的架构哲学；与 Pi 的分层映射、哲学条款（如不做 MCP 主路径等）及工程取舍的**权威对照**见 [`docs/technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`](technologies/UNCODE_PI_ALIGNMENT_AND_EVALUATION.md)。LLM 驱动层采用 **API-first 架构**（参考 `@docs/technologies/LLM_DRIVER_UPGRADE_FEASIBILITY.md`），以 API 协议为核心组织供应商，而非为每个供应商编写独立驱动实现。
+uncode is a Rust-native AI Agent Coding system with two user-facing components: a TUI for front-line deployment engineers and a web Platform for software engineers. It supports 11 LLM providers (GLM, DeepSeek, Ollama, OpenAI, Anthropic, Gemini, OpenRouter, Groq, Cerebras, Mistral, xAI) across 4 API protocols with streaming-first architecture.
 
-## 项目结构
-
-```
-uncode/
-├── Cargo.toml              # Rust workspace 根
-├── AGENTS.md               # 本文档（opencode 协作指引）
-├── docs/                   # 设计文档
-│   ├── agent-archi/        #   AI Agent 架构治理系列（核心范式定义，见 README.md）
-│   │   ├── README.md       #   系列索引与阅读路径
-│   │   ├── 01-the-paradigm.md
-│   │   ├── 02-domain-first.md
-│   │   ├── 03-cognition-path.md
-│   │   ├── 04-decision-path.md
-│   │   ├── 05-firewall.md
-│   │   ├── 06-ontology.md
-│   │   ├── 07-governance.md
-│   │   └── 08-evolution.md
-│   ├── VISION.md           #   项目愿景与设计蓝图（顶层设计指引）
-│   ├── ARCHITECTURE.md     #   架构详细设计
-│   ├── TUI_DESIGN.md       #   TUI 交互设计详案
-│   ├── PLATFORM_DESIGN.md  #   Platform 设计详案
-│   ├── SESSION_SCHEMA.md   #   会话条目逻辑模型（导出 JSONL 见 docs/uncode-technologies）
-│   ├── FDE_INSIGHT.md      #   FDE 角色深度解读
-│   ├── technologies/       #   技术分析与方案文档
-│   │   ├── UNCODE_PI_ALIGNMENT_AND_EVALUATION.md  # uncode 对 Pi 的复刻：深度对比与评价
-│   │   ├── EXTENSION_COMPOSABLE_HARNESS_DESIGN.md  # 可组合扩展与 Plan 模式：设计理念与技术方案
-│   │   ├── AGENT_CODING_FUNDAMENTALS.md
-│   │   ├── LLM_DRIVER_DESIGN.md
-│   │   ├── LLM_DRIVER_COMPARISON_PI.md
-│   │   └── LLM_DRIVER_UPGRADE_FEASIBILITY.md
-│   ├── opencode-technologies/  #   OpenCode 上游实现层文档（基于 ~/EA/opencode 源码）
-│   │   ├── OPENCODE_OVERVIEW.md
-│   │   └── …
-│   └── uncode-technologies/  #   实现层技术文档（与源码同步）
-│       ├── UNCODE_OVERVIEW.md
-│       ├── UNCODE_SESSION_MODEL.md
-│       └── …
-├── crates/                 # Rust workspace 成员
-│   ├── uncode-shared/      #   错误类型 + 配置（叶子 crate）
-│   ├── uncode-macros/      #   过程宏（#[tool] 等）
-│   ├── uncode-ai/          #   LLM 驱动层（Api trait + 4 个协议实现）
-│   ├── uncode-core/        #   共享类型、ToolExecutor、AgentEvent、SessionEntry 等
-│   ├── uncode-extensions/  #   扩展系统（WASM 运行时 + 生命周期钩子）
-│   ├── uncode-agent/       #   循环 + SurrealDB 会话 + 工具 + 压缩 + skills
-│   ├── uncode-tui/         #   终端 UI
-│   ├── uncode-rpc/         #   JSON-RPC 外部接口（规划中）
-│   ├── uncode-platform/    #   Platform 服务端
-│   └── uncode-cli/         #   命令行入口
-├── apps/                   # 前端应用
-│   └── platform/           #   Platform 前端（TypeScript + React 19 + TanStack）
-├── tests/                  # 集成测试
-└── .github/workflows/      # CI/CD
-```
-
-## 技术栈
-
-- **语言**：Rust（edition 2024，MSRV 1.85）
-- **框架/库**：tokio（异步）、ratatui + crossterm（TUI）、clap（CLI）、reqwest（HTTP）、serde（序列化）
-- **LLM 协议**（API-first）：
-  - `openai-completions` — OpenAI、DeepSeek、GLM、Groq、Cerebras、xAI、Mistral 等所有 OpenAI Chat Completions 兼容供应商
-  - `anthropic-messages` — Anthropic、Fireworks、Kimi 等
-  - `google-generative-ai` — Gemini
-  - `ollama-native` — Ollama 原生 API
-- **Platform 前端**：TypeScript（React 19 + TanStack 全家桶）
-
-## 架构范式：认知显化与决策驱动设计
-
-uncode 采用**认知显化与决策驱动设计**作为架构方法论。系列定义见 [`docs/agent-archi/`](docs/agent-archi/README.md)。
-
-**四层架构**：
-
-| 层 | Crate/模块 | 职责 |
-|:---|:---|:---|
-| **认知层** | `crates/uncode-agent/src/cognition/` + `crates/uncode-ai/` | LLM 生成可能性：上下文构建、提示词管理、不确定性管理 |
-| **语义防火墙** | `crates/uncode-agent/src/decision/firewall.rs` | Parsing → Validation → Normalization 三层管线 |
-| **决策层** | `crates/uncode-agent/src/decision/` | 系统约束可能性：提案接收、裁决、执行、审计 |
-| **治理层** | `crates/uncode-shared/src/guardrails.rs` + `uncode-core` 事件系统 + Harness Engineering（编排·工具·记忆·观测·进化） | 事件驱动、事件溯源、约束设计、状态机；Harness Engineering 为工程实践子层 |
-
-**核心公式**："LLM 负责认知与生成，系统架构负责决策与治理。"
-
-## 构建与验证
+## Build & Development Commands
 
 ```bash
-cargo build              # 构建所有 crate
-cargo build -p uncode-cli # 仅构建 CLI 入口
-cargo test               # 运行所有测试
-cargo test -p uncode-core # 运行单个 crate 测试
-cargo fmt --check        # 格式检查
-cargo clippy             # lint 检查
-cargo api-doc            # API 文档（见 docs/guides/RUSTDOC.md）
-cargo api-doc-open       # 打开 core/agent/ai 文档
+cargo build --workspace          # Build all crates
+cargo build -p uncode-cli        # Build CLI only
+cargo test --workspace           # Run all tests
+cargo test -p uncode-agent        # Run single crate tests
+cargo test -p uncode-agent test_name  # Run single test
+cargo test --workspace -- --test-threads=1  # Run tests single-threaded (required for tools tests)
+cargo fmt --check --all          # Format check
+cargo clippy --all-targets --no-deps  # Lint
+cargo api-doc                       # API docs (workspace, --no-deps; aliases in .cargo/config.toml)
+cargo api-doc-open                  # Open uncode-core / uncode-agent / uncode-ai docs in browser
+cargo run -p uncode-cli -- --model deepseek-v3 "prompt"  # Run CLI
+cd apps/platform && bun install && bun dev   # Platform frontend dev server
+cd apps/platform && bun run build           # Platform frontend build
+cd apps/platform && bun run lint            # Platform frontend lint (Biome)
 ```
 
-## 开发约定
+CI runs: `cargo fmt --check`, `cargo clippy --all-targets --no-deps`, `cargo build --workspace`, `cargo doc --workspace --no-deps`, `cargo test --workspace -- --test-threads=1` with `RUSTFLAGS="-D warnings"` (rustdoc uses `RUSTDOCFLAGS="-D warnings"` via `.cargo/config.toml`). CI also uses `--test-threads=1` because tools tests require it.
 
-- 设计决策先写入 @docs/ 目录下的对应文档，确认后需要检查github issues 是否有对应的issues，如果没有应当及时创建，然后再开始编码
-- 文档使用中文书写
-- 架构分层严格遵守：core → llm/session/tools/extensions → agent → tui/platform → cli
-- 跨层通信通过事件流，上层不直接依赖下层实现
-- LLM 驱动层以 API 协议为组织单位，新增供应商通过 Model 声明接入，不新增驱动实现
-- 技术对标 Pi 时，架构哲学优先对齐（API-first），工程细节次之（具体字段/选项）
-- **术语（策略 C）**：L0 用 Harness 综述表；L1 机制与 Pi 对齐（见 `UNCODE_PI_MECHANISM_MAP.md`）；L2 Rust API 自有命名；文档写「同 Pi 的 X」而非批量改 API 名
+## Architecture
 
-## 外部规则引用
+Three-layer dependency graph aligned with Pi architecture:
 
-当需要了解项目定位、目标用户、TUI 设计理念、Platform 功能、Issues 同步策略等详细设计时，请读取 @docs/VISION.md。
+```
+uncode-cli (entry point, clap arg parsing)
+├── uncode-tui (ratatui + crossterm, conversation-driven terminal UI)
+├── uncode-platform (axum REST backend)
+└── uncode-rpc (JSON-RPC, planned)
+        │
+    uncode-agent (full-stack engine: loop + harness + session + tools + compaction + skills)
+        ├── uncode-ai (LLM abstraction: Api trait + 4 providers + models + messages + streaming)
+        ├── uncode-core (shared agent types: events, tool traits, session types, skills, templates)
+        ├── uncode-extensions (WASM extension runtime)
+        └── uncode-ontology (planned: type registry, constraint axioms, action metadata)
+                │
+            uncode-shared (error types + config — leaf crate)
+            uncode-macros (proc macros: #[tool], #[derive(Event)] — compile-time only)
+```
 
-技术方案文档位于 @docs/technologies/；uncode **实现层**细节见 @docs/uncode-technologies/（与源码同步，含会话 SurrealDB 与 Pi 对齐说明）。
+Cross-layer communication uses event streams. Upper layers subscribe to events, not direct calls.
 
-- 基本功能模块分析 → `AGENT_CODING_FUNDAMENTALS.md`
-- LLM 驱动层技术方案 → `LLM_DRIVER_DESIGN.md`
-- 与 Pi 的技术比对 → `LLM_DRIVER_COMPARISON_PI.md`
-- 对齐 Pi 的升级方案 → `LLM_DRIVER_UPGRADE_FEASIBILITY.md`
-- Harness Engineering 行业综述 → `HARNESS_ENGINEERING.md`
-- Harness Engineering 术语索引（中英） → `HARNESS_ENGINEERING_GLOSSARY.md`
-- Coding Agent 工具开发指南 → `CODING_AGENT_TOOL_DEVELOPMENT.md`
-- OpenCode 与 Pi 架构/功能/哲学对比（独立技术分析） → `OPENCODE_VS_PI.md`
-- OpenCode 上游实现层文档（`~/EA/opencode` 源码） → `docs/opencode-technologies/OPENCODE_OVERVIEW.md` 系列
-- 术语是否与 Pi/OpenCode 趋同或引用 → `TERMINOLOGY_ALIGNMENT_STRATEGY.md`
-- 术语分层重构（策略 C 落地）→ `TERMINOLOGY_LAYERED_REFACTOR_PLAN.md`
-- uncode 实现层术语表（含 Pi/OpenCode 列）→ `docs/uncode-technologies/UNCODE_TECHNOLOGIES_GLOSSARY.md`
-- uncode ↔ Pi 机制对照（L1）→ `docs/uncode-technologies/UNCODE_PI_MECHANISM_MAP.md`
-- uncode 对 Pi 的 Rust 复刻：哲学/机制/存储/扩展深度评价 → `UNCODE_PI_ALIGNMENT_AND_EVALUATION.md`
-- 可组合扩展宿主与 Plan 模式（Pi plan-mode 对照、uncode 演进方案；**Turn ≠ Plan 模式**，见 §2.3）→ `EXTENSION_COMPOSABLE_HARNESS_DESIGN.md`
-- 微观规划（micro-planning）能力说明：ReAct Turn 内决策 vs Plan 模式 → `docs/uncode-technologies/UNCODE_MICRO_PLANNING.md`
-- TUI 微观规划 UX 评价（Turn 边界、`agent_busy`、steering）→ `docs/uncode-technologies/UNCODE_TUI_MICRO_PLANNING_UX.md`
+### LLM Provider Architecture
 
-架构范式系列定义位于 `docs/agent-archi/`（核心范式，见 `README.md`），旧版系列位于 `docs/ai-agent-archi/`（已归档，作为历史参考）。
+All providers implement `Api` trait (`uncode-ai/src/api.rs`). 4 API protocol implementations in `uncode-ai/src/providers/`:
+- `openai-completions` — covers DeepSeek, GLM, OpenAI, OpenRouter, Groq, Cerebras, Mistral, xAI
+- `anthropic-messages` — Anthropic
+- `google-generative-ai` — Gemini
+- `ollama-native` — Ollama
 
-后续设计文档编写时，请读取 @docs/VISION.md 确保一致性，参考 opencode 的 AGENTS.md 规范格式。
+New vendors are added via `ProviderPreset` declarations in `uncode-ai/src/provider_preset.rs` — no new protocol driver needed unless the API protocol is genuinely different. Tool calls follow a three-stage protocol: `ToolCallStart` → `ToolCallDelta` → `ToolCallEnd`. Every stream must end with `StreamEvent::Done`.
+
+### Tool System
+
+9 tools in `uncode-agent/src/tools/`: read, write, edit, grep, find, ls, bash, web_fetch, web_search. Each implements `ToolExecutor` trait. File tools use `normalize_path()` + `resolve_path()` for sandbox enforcement — paths must resolve within CWD. Tools are registered via `ToolRegistry` with `ToolHooks` (before/after) for permission gating and result patching.
+
+### Agent Loop
+
+`AgentHarness` (`uncode-agent/src/harness.rs`) orchestrates phases, session persistence, and compaction triggers. `AgentLoop` (`uncode-agent/src/loop_engine.rs`) is the core ReAct execution engine with a double-layer loop: outer loop handles follow-up injection; inner loop processes LLM streaming responses and tool calls. Three message queues: Steering (interrupt), Follow-up (within-turn), Next-turn (user input). `MAX_TURNS=50` hard limit prevents runaway loops.
+
+### Paradigm: Cognition-Explicitization & Decision-Driven Design
+
+Implements the paradigm defined in [`docs/agent-archi/`](docs/agent-archi/README.md). Four layers:
+
+| Layer | Module | Status |
+|:---|:---|:---:|
+| **认知层** | `uncode-agent/src/cognition/` (WM → EM → memory manager) | ✅ 实现 |
+| **语义防火墙** | `uncode-agent/src/decision/firewall.rs` (P→V→N) | ⚠️ 已实现但 Normalizer 是空操作，需等 `uncode-ontology` 提供字段映射 |
+| **决策层** | `uncode-agent/src/decision/` (proposal → adjudication → execution → audit) | ⚠️ 管线已是前门控模式，但 ActionProposal 缺少上下文字段，需补全并发射细粒度事件 |
+| **治理层** | `uncode-shared/src/guardrails.rs` + `uncode-core/src/event.rs` + `AgentHarness` | ⚠️ GuardrailConfig 已定义但未运行时加载；EventRouter 未接入主循环 |
+
+**核心缺口**：缺少 `uncode-ontology` crate，导致语义防火墙的 Normalizer 层输出 `normalized_fields: vec![]`（空操作）。工具权限仍基于 `tool_permission.rs` 中的硬编码工具名匹配，而非本体声明的 `ExecutionCategory`。详见重构计划和技术方案。
+
+### Compaction
+
+`uncode-agent/src/compaction.rs` handles automatic context compression when token usage approaches context window limits (default 80% threshold). Triggered by the harness at turn boundaries. Preserves decision-relevant content while condensing verbose tool output.
+
+### Streaming Protocol
+
+LLM responses stream as `StreamEvent` variants: `TextDelta` → `ToolCallStart` → `ToolCallDelta` → `ToolCallEnd` → `Done`. The loop processes each event to update UI in real-time via `AgentEvent` broadcast.
+
+### Permission Gate
+
+`PermissionGate` (`uncode-agent/src/permission_gate.rs`) blocks tool execution pending TUI user confirmation. Policy in `uncode-agent/src/tool_permission.rs`: read-only tools auto-allowed when `auto_allow_readonly=true`; write/edit/bash require approval. `SAFE_COMMANDS` array whitelists low-risk bash commands.
+
+### Event System
+
+`AgentEvent` (`uncode-core/src/event.rs`) has 36 variants for session/turn/message/tool/compaction/decision/evaluation lifecycle. `EventRouter` dispatches via dual channels: sync_handlers (observation) and hook_handlers (control flow — can block or redirect execution). Upper layers (TUI, Platform) subscribe to events, never call agent directly.
+
+## 文档结构
+
+重要文档位置：
+
+| 文档 | 位置 | 用途 |
+|:---|:---|:---|
+| 架构范式系列 | `docs/agent-archi/README.md` | AI Agent 架构治理范式（8 篇核心 + 1 篇回顾） |
+| 重构技术方案 | `docs/technologies/UNCODE_REFACTORING_PLAN.md` | 范式→代码的差距分析 + 四阶段重构路线图 |
+| 本体设计方案 | `docs/technologies/UNCODE_ONTOLOGY_DESIGN.md` | `uncode-ontology` crate 的完整设计：TypeRegistry / Constraint / Effect / LinkDef / GT-OT 二元模型 |
+| 决策管线设计 | `docs/technologies/UNCODE_PHASE2_DECISION_PIPELINE.md` | Phase 2：ActionProposal 扩展、细粒度事件、审计持久化 |
+| 治理激活设计 | `docs/technologies/UNCODE_PHASE3_GOVERNANCE_ACTIVATION.md` | Phase 3：EventRouter 接入、PhaseStateMachine、GuardrailConfig 运行时生效 |
+| 旧版系列（归档） | `docs/references/` | 旧 `docs/ai-agent-archi/` 和 `docs/others/` 的历史文档，保留作为参考 |
+| 技术方案文档 | `docs/technologies/` | LLM 驱动层、Pi 对照、Harness Engineering 等 |
+| 实现层文档 | `docs/uncode-technologies/` | 与源码同步：会话模型、术语表、Pi 机制对照 |
+
+## Key Design Decisions
+
+- **Language**: Rust edition 2024, MSRV 1.91
+- **Unsafe code**: denied (`unsafe_code = "deny"` in workspace lints)
+- **Error handling**: anyhow for application code, thiserror for library crate error types
+- **Async runtime**: tokio (full features)
+- **Config**: Two paths — `~/.config/uncode/config.json` (CLI: model + provider API keys) and `~/.uncode/` (extensions, skills, `config.toml`)
+- **Session format**: tree-shaped `SessionEntry` in **SurrealDB** (embedded); JSONL for import/export and migration
+- **Platform frontend**: React 19 + TanStack Router/Query + Vite, TypeScript strict mode
+- **Cargo profiles**: dev uses `opt-level = 1` + `line-tables-only` for fast incremental builds; release uses LTO + strip
+
+## 重要约定（文档及 Issues 优先原则）
+
+**新功能开发前，必须先有对应文档和 Issue。** 设计决策先写入 `docs/` 目录下的对应文档，确认后检查 GitHub Issues 是否有对应 Issue，如果没有应当及时创建，然后再开始编码。
+
+**此原则不适用于：测试、错误修复
+
+## Development Workflow
+
+- **GitHub Flow**: main ← PR ← feature-branch, PR body references issues with `closes #N`
+- **Branch naming**: `feat/N-desc`, `fix/N-desc`, `refactor/N-desc`, `docs/N-desc`, `test/N-desc`, `perf/N-desc`
+- **Documentation language**: Chinese (中文)
+- **Keep main green**: main branch must always build and pass all tests
+- **Commit format**: `type: description (refs #N)` — types: feat, fix, docs, refactor, test, perf, chore
+- **PR format**: title uses `(refs #N)`，body contains `closes #N` for auto-close on merge
+
+### 推送前必须本地执行 CI 预检测
+
+推送代码或创建 PR 前，**必须**在本地运行以下五项检查，全部通过后才能推送：
+
+```bash
+RUSTFLAGS="-D warnings" cargo fmt --check --all
+RUSTFLAGS="-D warnings" cargo clippy --all-targets --no-deps
+RUSTFLAGS="-D warnings" cargo build --workspace
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+RUSTFLAGS="-D warnings" cargo test --workspace -- --test-threads=1
+```
+
+## Test Caveats
+
+`uncode-agent/src/tools/` tests use `set_current_dir()` for sandbox isolation, which is process-global. These tests **must** run single-threaded: `cargo test --workspace -- --test-threads=1`. Running `cargo test --workspace` with default parallelism may cause intermittent failures in tools tests. CI also uses `--test-threads=1`.
+
+## Terminology Strategy (Policy C)
+
+Four layers: L0 (industry terms), L1 (mechanism names aligned with Pi), L2 (Rust API own naming), L3 (UI strings). Do NOT rename Rust public symbols to match Pi's TypeScript names. Glossary reference: `docs/references/HARNESS_ENGINEERING_GLOSSARY.md`.
