@@ -198,8 +198,8 @@ pub struct AgentLoop {
     extension_bridge: Option<crate::hooks::ExtensionLifecycleBridge>,
     /// 护栏配置 — 从 .uncode/guardrails.json 加载
     guardrail_config: std::sync::Mutex<uncode_shared::guardrails::GuardrailConfig>,
-    /// 事件路由器 — 治理层 sync dispatch
-    event_router: std::sync::Mutex<uncode_core::event::EventRouter>,
+    /// 事件路由器 — 治理层 sync dispatch + async hook dispatch
+    event_router: Arc<std::sync::Mutex<uncode_core::event::EventRouter>>,
     /// Turn-level phase state machine — governance observability
     phase_sm: std::sync::Mutex<crate::governance::PhaseStateMachine>,
 }
@@ -316,7 +316,7 @@ impl AgentLoop {
             guardrail_config: std::sync::Mutex::new(
                 uncode_shared::guardrails::GuardrailConfig::default(),
             ),
-            event_router: std::sync::Mutex::new(uncode_core::event::EventRouter::new()),
+            event_router: Arc::new(std::sync::Mutex::new(uncode_core::event::EventRouter::new())),
             phase_sm: std::sync::Mutex::new(crate::governance::PhaseStateMachine::new()),
         }
     }
@@ -335,6 +335,11 @@ impl AgentLoop {
 
     pub fn session_id(&self) -> Option<String> {
         self.session_id.lock().unwrap().clone()
+    }
+
+    /// 获取 event_router Arc — 用于 async hook dispatch (#457)
+    pub fn event_router_arc(&self) -> Arc<std::sync::Mutex<uncode_core::event::EventRouter>> {
+        Arc::clone(&self.event_router)
     }
 
     pub fn set_model_id(&mut self, model_id: String) {

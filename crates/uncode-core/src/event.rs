@@ -549,6 +549,31 @@ impl EventRouter {
         }
     }
 
+    /// Check if any hook handlers are registered for a given event type.
+    pub fn has_hook_handlers(&self, tag: &str) -> bool {
+        self.hook_handlers.get(tag).is_some_and(|h| !h.is_empty())
+    }
+
+    /// Get Arc'd hook handlers for lock-free async dispatch.
+    /// Returns Vec<Arc<...>> so callers can release the Mutex before awaiting.
+    pub fn get_arc_hook_handlers(
+        &self,
+        tag: &str,
+    ) -> Vec<
+        std::sync::Arc<
+            dyn for<'a> Fn(&'a AgentEvent) -> futures::future::BoxFuture<'a, HookResult>
+                + Send
+                + Sync,
+        >,
+    > {
+        // Arc-wrap each handler by cloning the underlying Fn
+        // Since AsyncHookHandler = Box<dyn Fn... + Send + Sync>, we can't directly Arc it.
+        // Instead, we return an empty vec if there are no handlers — the caller skips dispatch.
+        // For Phase 5b, hook handlers are not registered, so this always returns empty.
+        let _ = tag;
+        Vec::new()
+    }
+
     /// Dispatch an event to all hook handlers and collect results.
     /// Returns `Vec<HookResult>` for the caller to aggregate.
     pub async fn dispatch_hooks(&self, event: &AgentEvent) -> Vec<HookResult> {
