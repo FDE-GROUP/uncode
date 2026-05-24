@@ -677,6 +677,61 @@ impl AgentLoop {
         result
     }
 
+    /// Build context from session store and inject workspace graph + system prompt + cognition.
+    async fn rebuild_context_with_injections(
+        &self,
+        session_id: &str,
+        cwd: &std::path::Path,
+    ) -> Result<crate::context_builder::BuiltContext, UncodeError> {
+        let mut built = crate::context_builder::build_context(&self.session_store, session_id)
+            .await
+            .map_err(|e| {
+                UncodeError::Harness(uncode_core::error::HarnessError::Other {
+                    message: e.to_string(),
+                    code: 5099,
+                })
+            })?;
+        if let Some(ref cache) = self.graph_cache {
+            let graph = cache.get_or_build(cwd).await;
+            if !graph.nodes.is_empty() {
+                let bundle = crate::workspace_graph::select_bundle(&graph, &[], "", cache.config());
+                if !bundle.is_empty() {
+                    built.messages.insert(0, bundle.to_system_message());
+                }
+            }
+        }
+        built
+            .messages
+            .insert(0, Message::system(self.system_prompt.clone()));
+        if let Some(ctx) = self.build_cognition_context() {
+            built.messages.insert(1, Message::system(ctx));
+        }
+        Ok(built)
+    }
+
+    /// Check whether compaction should run (threshold + MemoryManager).
+    async fn should_compact(&self, session_id: &str, context_window: u64) -> bool {
+        if crate::compaction::should_compact_session(
+            &self.session_store,
+            session_id,
+            context_window,
+            &self.compaction_config,
+        )
+        .await
+        {
+            return true;
+        }
+        let Ok(entries) = self.session_store.load_entries(session_id).await else {
+            return false;
+        };
+        let estimated = crate::compaction::estimate_entry_tokens(&entries);
+        matches!(
+            self.memory_manager.evaluate(estimated, context_window),
+            crate::cognition::memory::CompactionDecision::ShouldCompact { .. }
+                | crate::cognition::memory::CompactionDecision::ForceCompact { .. }
+        )
+    }
+
     async fn run_inner(&self, mut user_message: Message) -> Result<Vec<Message>, UncodeError> {
         let cwd = std::env::current_dir().unwrap_or_default();
         let existing_id = self.session_id.lock().unwrap().clone();
@@ -784,40 +839,12 @@ impl AgentLoop {
                 .await;
         }
 
-        // Build context from session store (picks up all previous messages for resume)
-        let built = crate::context_builder::build_context(&self.session_store, &session_id)
-            .await
-            .map_err(|e| {
-                UncodeError::Harness(uncode_core::error::HarnessError::Other {
-                    message: e.to_string(),
-                    code: 5099,
-                })
-            })?;
+        // Build context from session store with workspace + cognition injections
+        let built = self
+            .rebuild_context_with_injections(&session_id, &cwd)
+            .await?;
         let mut messages = built.messages;
         let mut effective_thinking_level = built.effective_thinking_level;
-
-        // Inject workspace context bundle
-        if let Some(ref cache) = self.graph_cache {
-            let graph = cache.get_or_build(&cwd).await;
-            if !graph.nodes.is_empty() {
-                let bundle = crate::workspace_graph::select_bundle(
-                    &graph,
-                    &[],
-                    first_text(&user_message),
-                    cache.config(),
-                );
-                if !bundle.is_empty() {
-                    messages.insert(0, bundle.to_system_message());
-                }
-            }
-        }
-
-        messages.insert(0, Message::system(self.system_prompt.clone()));
-
-        // ── 认知层上下文注入 (#386): WorkingMemory + EpisodeMemory → system prompt ──
-        if let Some(ctx) = self.build_cognition_context() {
-            messages.insert(1, Message::system(ctx));
-        }
 
         let tools = self.tool_registry.definitions();
 
@@ -904,28 +931,10 @@ impl AgentLoop {
                 }
 
                 // Session-aware compaction check (MemoryManager + should_compact_session)
-                let should_compact = if crate::compaction::should_compact_session(
-                    &self.session_store,
-                    &session_id,
-                    model.context_window as u64,
-                    &self.compaction_config,
-                )
-                .await
+                if self
+                    .should_compact(&session_id, model.context_window as u64)
+                    .await
                 {
-                    true
-                } else if let Ok(entries) = self.session_store.load_entries(&session_id).await {
-                    let estimated = crate::compaction::estimate_entry_tokens(&entries);
-                    matches!(
-                        self.memory_manager
-                            .evaluate(estimated, model.context_window as u64),
-                        crate::cognition::memory::CompactionDecision::ShouldCompact { .. }
-                            | crate::cognition::memory::CompactionDecision::ForceCompact { .. }
-                    )
-                } else {
-                    false
-                };
-
-                if should_compact {
                     if let Some(ref bridge) = self.extension_bridge {
                         bridge.fire_session_before_compact(&session_id).await;
                     }
@@ -947,17 +956,6 @@ impl AgentLoop {
                     .await
                     {
                         Ok(Some(summary)) => {
-                            let rebuilt = crate::context_builder::build_context(
-                                &self.session_store,
-                                &session_id,
-                            )
-                            .await
-                            .map_err(|e| {
-                                UncodeError::Harness(uncode_core::error::HarnessError::Other {
-                                    message: e.to_string(),
-                                    code: 5099,
-                                })
-                            })?;
                             let tokens_before = summary.tokens_before;
                             let summary_text = summary.summary.clone();
                             let entries_before = {
@@ -968,30 +966,12 @@ impl AgentLoop {
                                     .unwrap_or_default();
                                 all.len()
                             };
+                            let rebuilt = self
+                                .rebuild_context_with_injections(&session_id, &cwd)
+                                .await?;
                             messages = rebuilt.messages;
                             effective_thinking_level = rebuilt.effective_thinking_level;
 
-                            // Re-inject workspace context bundle after compaction
-                            if let Some(ref cache) = self.graph_cache {
-                                let graph = cache.get_or_build(&cwd).await;
-                                if !graph.nodes.is_empty() {
-                                    let bundle = crate::workspace_graph::select_bundle(
-                                        &graph,
-                                        &[],
-                                        "",
-                                        cache.config(),
-                                    );
-                                    if !bundle.is_empty() {
-                                        messages.insert(0, bundle.to_system_message());
-                                    }
-                                }
-                            }
-
-                            messages.insert(0, Message::system(self.system_prompt.clone()));
-                            // 认知层上下文注入（压缩后重建）
-                            if let Some(ctx) = self.build_cognition_context() {
-                                messages.insert(1, Message::system(ctx));
-                            }
                             self.emit(AgentEvent::CompactionComplete {
                                 messages_replaced: entries_before,
                                 tokens_before,
@@ -1171,16 +1151,19 @@ impl AgentLoop {
                                             summary_text: overflow_summary.summary.clone(),
                                             reason: CompactionReason::Overflow,
                                         });
-                                        match crate::context_builder::build_context(
-                                            &self.session_store,
-                                            &session_id,
-                                        )
-                                        .await
+                                        match self
+                                            .rebuild_context_with_injections(
+                                                &session_id,
+                                                &cwd,
+                                            )
+                                            .await
                                         {
                                             Ok(rebuilt) => {
                                                 messages = rebuilt.messages;
                                                 let compacted_ctx = Context {
-                                                    system_prompt: Some(self.system_prompt.clone()),
+                                                    system_prompt: Some(
+                                                        self.system_prompt.clone(),
+                                                    ),
                                                     messages: messages.clone(),
                                                     tools: tools.clone(),
                                                 };
@@ -1188,15 +1171,14 @@ impl AgentLoop {
                                                     _ = self.cancel_token.cancelled() => {
                                                         break 'outer;
                                                     }
-                                                    r = self.stream_with_retry(&model, &compacted_ctx, &options) => r?,
+                                                    r = self.stream_with_retry(
+                                                        &model,
+                                                        &compacted_ctx,
+                                                        &options,
+                                                    ) => r?,
                                                 }
                                             }
-                                            Err(e) => return Err(UncodeError::Harness(
-                                                uncode_core::error::HarnessError::Other {
-                                                    message: e.to_string(),
-                                                    code: 5099,
-                                                },
-                                            )),
+                                            Err(e) => return Err(e),
                                         }
                                     }
                                     _ => return Err(e),
