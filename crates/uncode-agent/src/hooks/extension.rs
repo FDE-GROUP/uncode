@@ -23,10 +23,13 @@ impl ExtensionToolHooks {
 
 #[async_trait]
 impl ToolHooks for ExtensionToolHooks {
-    async fn before_tool_call(&self, _ctx: &BeforeToolCallContext) -> BeforeToolCallResult {
+    async fn before_tool_call(&self, ctx: &BeforeToolCallContext) -> BeforeToolCallResult {
         let hook_ctx = HookContext {
             session_id: None,
-            event: HookEvent::None,
+            event: HookEvent::ToolCallBefore {
+                tool_name: ctx.tool_name.clone(),
+                args: ctx.args.clone(),
+            },
         };
         match self
             .registry
@@ -34,19 +37,29 @@ impl ToolHooks for ExtensionToolHooks {
             .await
         {
             HookResult::Continue => None,
-            HookResult::Modify(_) => None,
+            HookResult::Modify(modification) => {
+                // Return the args override as the reason string to signal modification.
+                // The caller (PermissionToolHooks chain) interprets Some(reason) as a block.
+                // For proper args modification, the caller needs to check modification.args_override.
+                modification.args_override.map(|_| {
+                    "[extension-modified]".to_string()
+                })
+            }
             HookResult::Block { reason } => Some(reason),
         }
     }
 
     async fn after_tool_call(
         &self,
-        _ctx: &AfterToolCallContext,
+        ctx: &AfterToolCallContext,
         _result: &mut uncode_core::tool::ToolResult,
     ) -> AfterToolCallResult {
         let hook_ctx = HookContext {
             session_id: None,
-            event: HookEvent::None,
+            event: HookEvent::ToolCallAfter {
+                tool_name: ctx.tool_name.clone(),
+                is_error: false,
+            },
         };
         match self
             .registry
