@@ -114,6 +114,31 @@ mod tests {
         }
     }
 
+    // Tool that returns many lines — used for resource limit testing
+    struct VerboseTool;
+
+    #[async_trait]
+    impl uncode_core::tool::ToolExecutor for VerboseTool {
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: "verbose".into(),
+                description: "returns lots of lines".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": { "text": {"type": "string"} },
+                    "required": ["text"]
+                }),
+                label: None,
+                execution_mode: ExecutionMode::default(),
+            }
+        }
+
+        async fn execute(&self, _arguments: serde_json::Value) -> Result<String, UncodeError> {
+            let lines: Vec<String> = (0..2000).map(|i| format!("line {i}")).collect();
+            Ok(lines.join("\n"))
+        }
+    }
+
     // Hook that sets terminate=true on every tool result
     struct TerminateHook;
 
@@ -163,6 +188,12 @@ mod tests {
     fn make_tool_registry_with_slow() -> Arc<ToolRegistry> {
         let reg = make_tool_registry();
         reg.register("slow".to_string(), Arc::new(SlowTool));
+        reg
+    }
+
+    fn make_tool_registry_with_verbose() -> Arc<ToolRegistry> {
+        let reg = make_tool_registry();
+        reg.register("verbose".to_string(), Arc::new(VerboseTool));
         reg
     }
 
@@ -2037,5 +2068,71 @@ mod tests {
 
         // Agent should still complete successfully (recovery turn)
         assert!(!messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_tool_resource_limits_truncates_output() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            // Turn 1: call "verbose" tool which returns 2000 lines
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "verbose".into(),
+                },
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
+                    id: "tc1".into(),
+                    name: "verbose".into(),
+                    arguments: serde_json::json!({"text": "go"}),
+                })),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            // Turn 2: after truncated result, LLM responds
+            vec![
+                StreamEvent::TextDelta("done".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let mut gc = uncode_shared::guardrails::GuardrailConfig::default();
+        gc.firewall.resource_limits.max_bash_output_lines = 100; // truncate at 100 lines
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry_with_verbose(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+        agent.set_guardrail_config(gc);
+
+        let mut rx = agent.subscribe();
+        let _ = agent.run(Message::user("use verbose tool")).await.unwrap();
+
+        // Collect ToolCallEnd — result should be truncated
+        let mut result_text = String::new();
+        while let Ok(event) = rx.try_recv() {
+            if let uncode_core::event::AgentEvent::ToolCallEnd { data } = event {
+                if let Some(ref summary) = data.result_summary {
+                    result_text = summary.clone();
+                }
+            }
+        }
+
+        assert!(
+            result_text.contains("truncated"),
+            "expected truncation notice, got: {result_text}"
+        );
+        // Should contain the first 100 lines but not line 100+
+        assert!(result_text.contains("line 0"), "should contain first line");
+        assert!(
+            result_text.contains("2000 lines exceeded limit of 100"),
+            "should mention 2000 lines vs 100 limit, got: {result_text}"
+        );
     }
 }
