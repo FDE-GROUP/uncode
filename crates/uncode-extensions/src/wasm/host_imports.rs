@@ -185,8 +185,10 @@ fn host_register_command(mut caller: Caller<'_, HostState>, _handle: i32, ptr: i
     match std::str::from_utf8(&bytes) {
         Ok(json_str) => {
             match serde_json::from_str::<crate::command::CommandRegistration>(json_str) {
-                Ok(_cmd) => {
-                    tracing::debug!("extension {ext_name} registers command via host import");
+                Ok(cmd) => {
+                    if let Err(e) = caller.data().ext_api.register_command(cmd) {
+                        tracing::warn!("extension {ext_name} command registration failed: {e}");
+                    }
                 }
                 Err(e) => {
                     tracing::warn!("extension {ext_name} sent invalid command: {e}");
@@ -209,8 +211,10 @@ fn host_register_shortcut(mut caller: Caller<'_, HostState>, _handle: i32, ptr: 
     match std::str::from_utf8(&bytes) {
         Ok(json_str) => {
             match serde_json::from_str::<crate::command::ShortcutRegistration>(json_str) {
-                Ok(_shortcut) => {
-                    tracing::debug!("extension {ext_name} registers shortcut via host import");
+                Ok(shortcut) => {
+                    if let Err(e) = caller.data().ext_api.register_shortcut(shortcut) {
+                        tracing::warn!("extension {ext_name} shortcut registration failed: {e}");
+                    }
                 }
                 Err(e) => {
                     tracing::warn!("extension {ext_name} sent invalid shortcut: {e}");
