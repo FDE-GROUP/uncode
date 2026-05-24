@@ -530,6 +530,7 @@ async fn main() -> anyhow::Result<()> {
 
     let ext_api = uncode_extensions::api::ExtensionApi::with_callbacks(
         ext_registry.clone(),
+        std::sync::Arc::new(uncode_extensions::event_bus::EventBus::new()),
         // Tool registration callback
         Some(Arc::new(
             move |name: String,
