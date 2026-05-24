@@ -41,9 +41,9 @@ impl ToolHooks for ExtensionToolHooks {
                 // Return the args override as the reason string to signal modification.
                 // The caller (PermissionToolHooks chain) interprets Some(reason) as a block.
                 // For proper args modification, the caller needs to check modification.args_override.
-                modification.args_override.map(|_| {
-                    "[extension-modified]".to_string()
-                })
+                modification
+                    .args_override
+                    .map(|_| "[extension-modified]".to_string())
             }
             HookResult::Block { reason } => Some(reason),
         }
