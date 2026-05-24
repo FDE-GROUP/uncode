@@ -769,6 +769,10 @@ async fn main() -> anyhow::Result<()> {
         None, // get_commands
         None, // set_model
         None, // get_session_name
+        // P3: UI capability callbacks (#412)
+        None, // get_all_themes
+        None, // get_theme
+        None, // get_tools_expanded
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)

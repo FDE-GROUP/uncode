@@ -45,6 +45,18 @@ pub enum UiAction {
         message_type: String,
         content: String,
     },
+    SetTitle {
+        title: String,
+    },
+    SetWorkingMessage {
+        message: String,
+    },
+    SetWorkingVisible {
+        visible: bool,
+    },
+    SetToolsExpanded {
+        expanded: bool,
+    },
 }
 
 impl WidgetConfig {
@@ -124,6 +136,42 @@ mod tests {
             message_type: "data_table".into(),
             content: "row1\nrow2".into(),
         };
+        let json = serde_json::to_string(&action).unwrap();
+        let back: UiAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(action, back);
+    }
+
+    #[test]
+    fn set_title_roundtrip() {
+        let action = UiAction::SetTitle {
+            title: "My Project".into(),
+        };
+        let json = serde_json::to_string(&action).unwrap();
+        let back: UiAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(action, back);
+    }
+
+    #[test]
+    fn set_working_message_roundtrip() {
+        let action = UiAction::SetWorkingMessage {
+            message: "Compiling...".into(),
+        };
+        let json = serde_json::to_string(&action).unwrap();
+        let back: UiAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(action, back);
+    }
+
+    #[test]
+    fn set_working_visible_roundtrip() {
+        let action = UiAction::SetWorkingVisible { visible: false };
+        let json = serde_json::to_string(&action).unwrap();
+        let back: UiAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(action, back);
+    }
+
+    #[test]
+    fn set_tools_expanded_roundtrip() {
+        let action = UiAction::SetToolsExpanded { expanded: true };
         let json = serde_json::to_string(&action).unwrap();
         let back: UiAction = serde_json::from_str(&json).unwrap();
         assert_eq!(action, back);
