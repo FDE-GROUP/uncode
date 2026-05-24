@@ -88,6 +88,32 @@ mod tests {
         }
     }
 
+    // Tool that sleeps for a long time — used for timeout testing
+    struct SlowTool;
+
+    #[async_trait]
+    impl uncode_core::tool::ToolExecutor for SlowTool {
+        fn definition(&self) -> ToolDefinition {
+            ToolDefinition {
+                name: "slow".into(),
+                description: "sleeps then returns".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": { "text": {"type": "string"} },
+                    "required": ["text"]
+                }),
+                label: None,
+                execution_mode: ExecutionMode::default(),
+            }
+        }
+
+        async fn execute(&self, arguments: serde_json::Value) -> Result<String, UncodeError> {
+            let _ = arguments;
+            tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+            Ok("should not reach".into())
+        }
+    }
+
     // Hook that sets terminate=true on every tool result
     struct TerminateHook;
 
@@ -131,6 +157,12 @@ mod tests {
     fn make_tool_registry() -> Arc<ToolRegistry> {
         let reg = Arc::new(ToolRegistry::new());
         reg.register("echo".to_string(), Arc::new(EchoTool));
+        reg
+    }
+
+    fn make_tool_registry_with_slow() -> Arc<ToolRegistry> {
+        let reg = make_tool_registry();
+        reg.register("slow".to_string(), Arc::new(SlowTool));
         reg
     }
 
@@ -1940,5 +1972,70 @@ mod tests {
             has_init_cognizing,
             "turn 2 should have Init→Cognizing (reset), got {transitions2:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_tool_timeout_returns_error() {
+        let (api_reg, model_reg, api_keys) = make_registries(vec![
+            // Turn 1: call "slow" tool which sleeps 300s
+            vec![
+                StreamEvent::ToolCallStart {
+                    id: "tc1".into(),
+                    name: "slow".into(),
+                },
+                StreamEvent::ToolCallEnd(Box::new(ToolCallEndData {
+                    id: "tc1".into(),
+                    name: "slow".into(),
+                    arguments: serde_json::json!({"text": "delay"}),
+                })),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+            // Turn 2: after timeout error, LLM responds
+            vec![
+                StreamEvent::TextDelta("recovered".into()),
+                StreamEvent::Done {
+                    reason: StopReason::Stop,
+                },
+            ],
+        ]);
+
+        let mut gc = uncode_shared::guardrails::GuardrailConfig::default();
+        gc.decision.tool_timeout_seconds = 1; // 1-second timeout
+
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            api_keys,
+            make_tool_registry_with_slow(),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "system".into(),
+            "mock".into(),
+        );
+        agent.set_guardrail_config(gc);
+
+        let mut rx = agent.subscribe();
+        let messages = agent.run(Message::user("use slow tool")).await.unwrap();
+
+        // Tool should have timed out — collect ToolCallEnd events
+        let mut tool_error = String::new();
+        while let Ok(event) = rx.try_recv() {
+            if let uncode_core::event::AgentEvent::ToolCallEnd { data } = event {
+                if data.is_error {
+                    if let Some(ref summary) = data.result_summary {
+                        tool_error.push_str(summary);
+                    }
+                }
+            }
+        }
+
+        assert!(
+            tool_error.contains("timed out"),
+            "expected timeout error, got: {tool_error}"
+        );
+
+        // Agent should still complete successfully (recovery turn)
+        assert!(!messages.is_empty());
     }
 }
