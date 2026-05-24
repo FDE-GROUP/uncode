@@ -87,11 +87,17 @@ fn value_to_header(v: &serde_json::Value) -> SessionResult<SessionHeader> {
     let created_at = v["created_at"]
         .as_str()
         .and_then(|s| s.parse().ok())
-        .unwrap_or_else(chrono::Utc::now);
+        .unwrap_or_else(|| {
+            tracing::warn!("session created_at parse failed, using epoch");
+            chrono::DateTime::UNIX_EPOCH
+        });
     let updated_at = v["updated_at"]
         .as_str()
         .and_then(|s| s.parse().ok())
-        .unwrap_or_else(chrono::Utc::now);
+        .unwrap_or_else(|| {
+            tracing::warn!("session updated_at parse failed, using epoch");
+            chrono::DateTime::UNIX_EPOCH
+        });
     let model = v["model"].as_str().unwrap_or_default().to_string();
     let title = v["title"].as_str().map(|s| s.to_string());
     let working_dir = v["working_dir"].as_str().unwrap_or_default().to_string();
@@ -489,13 +495,14 @@ impl SurrealSessionStore {
         match record {
             Some(v) => {
                 let header = value_to_header(&v)?;
-                if !std::path::Path::new(&header.working_dir).exists() {
-                    tracing::warn!(
-                        "session {} working_dir '{}' no longer exists",
-                        session_id,
-                        header.working_dir
-                    );
-                }
+                let wd = header.working_dir.clone();
+                tokio::spawn(async move {
+                    if !std::path::Path::new(&wd).exists() {
+                        tracing::warn!("session working_dir '{}' no longer exists", wd);
+                    }
+                })
+                .await
+                .ok();
                 Ok(header)
             }
             None => Err(SessionError::NotFound(session_id.to_string())),

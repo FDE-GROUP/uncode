@@ -6,6 +6,8 @@ use uncode_core::tool::{ExecutionMode, ToolContext, ToolDefinition, ToolExecutor
 
 use super::diff::unified_diff;
 
+const MAX_WRITE_BYTES: usize = 10 * 1024 * 1024;
+
 #[derive(Default)]
 pub struct WriteTool;
 
@@ -77,6 +79,14 @@ impl ToolExecutor for WriteTool {
             .as_str()
             .ok_or_else(|| uncode_core::error::UncodeError::Tool("content required".into()))?
             .to_string();
+
+        if content.len() > MAX_WRITE_BYTES {
+            return Err(uncode_core::error::UncodeError::Tool(format!(
+                "content exceeds maximum write size ({} MB)",
+                MAX_WRITE_BYTES / (1024 * 1024)
+            )));
+        }
+
         let bytes_written = content.len();
 
         let resolved = super::resolve_path(raw, &ctx.allowed_paths)
