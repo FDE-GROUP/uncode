@@ -307,4 +307,42 @@ impl ExtensionLifecycleBridge {
         };
         self.registry.fire(LifecycleHook::SessionTree, &ctx).await
     }
+
+    // ── 用户输入拦截 (#396) ──
+
+    pub async fn fire_input(
+        &self,
+        session_id: &str,
+        source: uncode_extensions::hooks::InputSource,
+        text: &str,
+        images: &[String],
+    ) -> HookResult {
+        let ctx = HookContext {
+            session_id: Some(session_id.to_string()),
+            event: HookEvent::Input {
+                source,
+                text: text.to_string(),
+                images: images.to_vec(),
+            },
+        };
+        self.registry.fire(LifecycleHook::Input, &ctx).await
+    }
+
+    pub async fn fire_thinking_level_select(
+        &self,
+        session_id: &str,
+        level: &str,
+        previous_level: Option<&str>,
+    ) -> HookResult {
+        let ctx = HookContext {
+            session_id: Some(session_id.to_string()),
+            event: HookEvent::ThinkingLevelSelect {
+                level: level.to_string(),
+                previous_level: previous_level.map(|s| s.to_string()),
+            },
+        };
+        self.registry
+            .fire(LifecycleHook::ThinkingLevelSelect, &ctx)
+            .await
+    }
 }

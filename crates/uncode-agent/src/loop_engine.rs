@@ -705,7 +705,7 @@ impl AgentLoop {
         result
     }
 
-    async fn run_inner(&self, user_message: Message) -> Result<Vec<Message>, UncodeError> {
+    async fn run_inner(&self, mut user_message: Message) -> Result<Vec<Message>, UncodeError> {
         let cwd = std::env::current_dir().unwrap_or_default();
         let session_id = match &self.session_id {
             Some(id) => id.clone(),
@@ -722,6 +722,55 @@ impl AgentLoop {
                 id
             }
         };
+
+        // Fire Input hook — extensions can transform or handle user input
+        let input_text: String = user_message
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                uncode_ai::message::ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<&str>>()
+            .join("\n");
+        if let Some(ref bridge) = self.extension_bridge {
+            let hook_result = bridge
+                .fire_input(
+                    &session_id,
+                    uncode_extensions::hooks::InputSource::Interactive,
+                    &input_text,
+                    &[],
+                )
+                .await;
+            match &hook_result {
+                uncode_extensions::hooks::HookResult::Modify(modification) => {
+                    if let Some(ref action) = modification.input_action {
+                        match action {
+                            uncode_extensions::hooks::InputAction::Handled => {
+                                tracing::info!("input handled by extension, skipping normal flow");
+                                return Ok(vec![]);
+                            }
+                            uncode_extensions::hooks::InputAction::Transform { text, .. } => {
+                                if let Some(new_text) = text {
+                                    for block in &mut user_message.content {
+                                        if let ContentBlock::Text { text } = block {
+                                            *text = new_text.clone();
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            uncode_extensions::hooks::InputAction::Continue => {}
+                        }
+                    }
+                }
+                uncode_extensions::hooks::HookResult::Block { reason } => {
+                    tracing::info!("input blocked by extension: {reason}");
+                    return Ok(vec![]);
+                }
+                uncode_extensions::hooks::HookResult::Continue => {}
+            }
+        }
 
         // Persist user message
         if let Err(e) = self
@@ -2038,6 +2087,20 @@ impl AgentLoop {
                                         to: *new_tl,
                                     }),
                                 });
+                                if let Some(ref bridge) = self.extension_bridge {
+                                    if let Some(ref sid) = self.session_id {
+                                        bridge
+                                            .fire_thinking_level_select(
+                                                sid,
+                                                &format!("{new_tl:?}"),
+                                                effective_thinking_level
+                                                    .as_ref()
+                                                    .map(|tl| format!("{tl:?}"))
+                                                    .as_deref(),
+                                            )
+                                            .await;
+                                    }
+                                }
                             }
                         }
                     }
