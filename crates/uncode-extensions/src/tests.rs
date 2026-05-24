@@ -531,6 +531,11 @@ fn test_register_tool_with_callback_delegates() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     api.register_tool(Arc::new(HelloTool)).unwrap();
     assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
@@ -549,6 +554,11 @@ fn test_register_tool_callback_error_propagates() {
         registry,
         std::sync::Arc::new(crate::event_bus::EventBus::new()),
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -691,6 +701,11 @@ fn test_register_command_with_callback() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     api.register_command(CommandRegistration {
         name: "ext-cmd".into(),
@@ -766,6 +781,11 @@ fn test_register_shortcut_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -878,6 +898,11 @@ fn test_set_header_with_callback() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     api.set_header(None).unwrap();
     assert!(called.load(std::sync::atomic::Ordering::SeqCst));
@@ -916,6 +941,11 @@ fn test_set_footer_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -969,6 +999,11 @@ fn test_set_indicator_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -1056,6 +1091,11 @@ fn test_set_theme_with_callback() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     api.set_theme(crate::theme_control::ThemeControlConfig {
         theme_name: "monokai".into(),
@@ -1102,6 +1142,11 @@ fn test_set_thinking_labels_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -1412,6 +1457,11 @@ fn test_exec_empty_command_returns_error() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     let result = api.exec("");
     assert!(result.unwrap_err().contains("empty"));
@@ -1457,6 +1507,11 @@ fn test_exec_with_callback_success() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -1519,6 +1574,11 @@ fn test_exec_with_callback_denied() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     let result = api.exec("rm -rf /");
     assert!(result.unwrap_err().contains("denied"));
@@ -1565,6 +1625,11 @@ fn test_send_message_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -1630,6 +1695,11 @@ fn test_append_entry_with_callback() {
         None,
         None,
         Some(callback),
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -1953,6 +2023,11 @@ fn test_set_label_success() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     api.set_label("entry-1".into(), "important".into()).unwrap();
     assert!(called.load(Ordering::SeqCst));
@@ -2022,6 +2097,11 @@ fn test_get_label_success() {
         None,
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     assert_eq!(api.get_label("entry-1").unwrap(), Some("my-label".into()));
     assert_eq!(api.get_label("entry-2").unwrap(), None);
@@ -2078,6 +2158,11 @@ fn test_get_active_tools() {
         None,
         None,
         Some(Arc::new(|| vec!["read".into(), "bash".into()]) as crate::api::GetActiveToolsCallback),
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -2142,6 +2227,11 @@ fn test_get_all_tools() {
         }) as crate::api::GetAllToolsCallback),
         None,
         None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     let tools = api.get_all_tools();
     assert_eq!(tools.len(), 2);
@@ -2195,6 +2285,11 @@ fn test_get_thinking_level() {
         None,
         None,
         Some(Arc::new(|| Some("high".into())) as crate::api::GetThinkingLevelCallback),
+        None,
+        None,
+        None,
+        None,
+        None,
         None,
     );
     assert_eq!(api.get_thinking_level(), Some("high".into()));
@@ -2252,6 +2347,11 @@ fn test_set_thinking_level_success() {
             called_clone.store(true, Ordering::SeqCst);
             Ok(())
         }) as crate::api::SetThinkingLevelCallback),
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     api.set_thinking_level("high".into()).unwrap();
     assert!(called.load(Ordering::SeqCst));

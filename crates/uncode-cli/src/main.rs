@@ -763,6 +763,12 @@ async fn main() -> anyhow::Result<()> {
         // P2: Runtime config callbacks
         None, // get_thinking_level
         None, // set_thinking_level
+        // P2: Missing API callbacks (#410)
+        None, // send_user_message
+        None, // set_active_tools
+        None, // get_commands
+        None, // set_model
+        None, // get_session_name
     );
 
     // Load WASM extensions from ~/.uncode/extensions/ (global) and .uncode/extensions/ (project)
