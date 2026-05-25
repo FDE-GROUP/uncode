@@ -786,4 +786,321 @@ mod tests {
         assert_eq!(decoded.root.children.len(), 1);
         assert_eq!(decoded.root.children[0].id, "child");
     }
+
+    // ── Inner entry type serde roundtrips ──
+
+    #[test]
+    fn test_system_entry_serde() {
+        let entry = SystemEntry {
+            id: "sys-1".into(),
+            parent_id: Some("parent-1".into()),
+            timestamp: Utc::now(),
+            event: SystemEventType::Error,
+            data: serde_json::json!({"error": "something failed"}),
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: SystemEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "sys-1");
+        assert_eq!(decoded.parent_id.as_deref(), Some("parent-1"));
+        assert_eq!(decoded.timestamp, entry.timestamp);
+        assert_eq!(
+            format!("{:?}", decoded.event),
+            format!("{:?}", SystemEventType::Error)
+        );
+        assert_eq!(
+            decoded.data,
+            serde_json::json!({"error": "something failed"})
+        );
+    }
+
+    #[test]
+    fn test_compaction_entry_serde() {
+        let entry = CompactionEntry {
+            id: "comp-1".into(),
+            parent_id: Some("parent-1".into()),
+            timestamp: Utc::now(),
+            summary: "compacted summary".into(),
+            first_kept_entry_id: "entry-5".into(),
+            tokens_before: 5000,
+            files_read: vec!["a.rs".into(), "b.rs".into()],
+            files_modified: vec!["c.rs".into()],
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: CompactionEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "comp-1");
+        assert_eq!(decoded.parent_id.as_deref(), Some("parent-1"));
+        assert_eq!(decoded.timestamp, entry.timestamp);
+        assert_eq!(decoded.summary, "compacted summary");
+        assert_eq!(decoded.first_kept_entry_id, "entry-5");
+        assert_eq!(decoded.tokens_before, 5000);
+        assert_eq!(decoded.files_read, vec!["a.rs", "b.rs"]);
+        assert_eq!(decoded.files_modified, vec!["c.rs"]);
+    }
+
+    #[test]
+    fn test_model_change_entry_serde() {
+        let entry = ModelChangeEntry {
+            id: "mc-1".into(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            provider: "openai".into(),
+            model_id: "gpt-4".into(),
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: ModelChangeEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "mc-1");
+        assert_eq!(decoded.parent_id, None);
+        assert_eq!(decoded.timestamp, entry.timestamp);
+        assert_eq!(decoded.provider, "openai");
+        assert_eq!(decoded.model_id, "gpt-4");
+    }
+
+    #[test]
+    fn test_thinking_level_change_entry_serde() {
+        let entry = ThinkingLevelChangeEntry {
+            id: "tlc-1".into(),
+            parent_id: Some("parent-1".into()),
+            timestamp: Utc::now(),
+            thinking_level: ThinkingLevel::XHigh,
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: ThinkingLevelChangeEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "tlc-1");
+        assert_eq!(decoded.parent_id.as_deref(), Some("parent-1"));
+        assert_eq!(decoded.timestamp, entry.timestamp);
+        assert_eq!(decoded.thinking_level, ThinkingLevel::XHigh);
+    }
+
+    #[test]
+    fn test_branch_summary_entry_serde() {
+        let entry = BranchSummaryEntry {
+            id: "bs-1".into(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            from_id: "branch-1".into(),
+            summary: "all tests passed".into(),
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: BranchSummaryEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "bs-1");
+        assert_eq!(decoded.parent_id, None);
+        assert_eq!(decoded.timestamp, entry.timestamp);
+        assert_eq!(decoded.from_id, "branch-1");
+        assert_eq!(decoded.summary, "all tests passed");
+    }
+
+    #[test]
+    fn test_custom_entry_serde() {
+        let entry = CustomEntry {
+            id: "cust-1".into(),
+            parent_id: Some("parent-1".into()),
+            timestamp: Utc::now(),
+            custom_type: "custom_type_1".into(),
+            data: Some(serde_json::json!({"key": "value"})),
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: CustomEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "cust-1");
+        assert_eq!(decoded.parent_id.as_deref(), Some("parent-1"));
+        assert_eq!(decoded.timestamp, entry.timestamp);
+        assert_eq!(decoded.custom_type, "custom_type_1");
+        assert_eq!(decoded.data, Some(serde_json::json!({"key": "value"})));
+    }
+
+    #[test]
+    fn test_custom_entry_serde_none_data() {
+        let entry = CustomEntry {
+            id: "cust-2".into(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            custom_type: "no_data_type".into(),
+            data: None,
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: CustomEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "cust-2");
+        assert_eq!(decoded.data, None);
+    }
+
+    #[test]
+    fn test_custom_message_entry_serde() {
+        let entry = CustomMessageEntry {
+            id: "cm-1".into(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            custom_type: "announcement".into(),
+            content: vec![ContentBlock::Text {
+                text: "hello".into(),
+            }],
+            display: true,
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: CustomMessageEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "cm-1");
+        assert_eq!(decoded.parent_id, None);
+        assert_eq!(decoded.timestamp, entry.timestamp);
+        assert_eq!(decoded.custom_type, "announcement");
+        assert_eq!(decoded.content.len(), 1);
+        assert!(decoded.display);
+    }
+
+    #[test]
+    fn test_label_entry_serde() {
+        let entry = LabelEntry {
+            id: "lbl-1".into(),
+            parent_id: Some("parent-1".into()),
+            timestamp: Utc::now(),
+            target_id: "msg-1".into(),
+            label: Some("important".into()),
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: LabelEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "lbl-1");
+        assert_eq!(decoded.parent_id.as_deref(), Some("parent-1"));
+        assert_eq!(decoded.timestamp, entry.timestamp);
+        assert_eq!(decoded.target_id, "msg-1");
+        assert_eq!(decoded.label, Some("important".into()));
+    }
+
+    #[test]
+    fn test_label_entry_serde_none_label() {
+        let entry = LabelEntry {
+            id: "lbl-2".into(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            target_id: "msg-2".into(),
+            label: None,
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: LabelEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "lbl-2");
+        assert_eq!(decoded.label, None);
+    }
+
+    #[test]
+    fn test_session_info_entry_serde() {
+        let entry = SessionInfoEntry {
+            id: "si-1".into(),
+            parent_id: Some("parent-1".into()),
+            timestamp: Utc::now(),
+            name: Some("my-session".into()),
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: SessionInfoEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "si-1");
+        assert_eq!(decoded.parent_id.as_deref(), Some("parent-1"));
+        assert_eq!(decoded.timestamp, entry.timestamp);
+        assert_eq!(decoded.name, Some("my-session".into()));
+    }
+
+    #[test]
+    fn test_session_info_entry_serde_none_name() {
+        let entry = SessionInfoEntry {
+            id: "si-2".into(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            name: None,
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: SessionInfoEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "si-2");
+        assert_eq!(decoded.name, None);
+    }
+
+    #[test]
+    fn test_decision_audit_entry_serde() {
+        let entry = DecisionAuditEntry {
+            id: "da-1".into(),
+            parent_id: Some("parent-1".into()),
+            timestamp: Utc::now(),
+            turn_id: "turn-1".into(),
+            tool_name: "bash".into(),
+            allowed: true,
+            reason: Some("user approved".into()),
+            adjudication_duration_ms: 150,
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: DecisionAuditEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "da-1");
+        assert_eq!(decoded.parent_id.as_deref(), Some("parent-1"));
+        assert_eq!(decoded.timestamp, entry.timestamp);
+        assert_eq!(decoded.turn_id, "turn-1");
+        assert_eq!(decoded.tool_name, "bash");
+        assert!(decoded.allowed);
+        assert_eq!(decoded.reason.as_deref(), Some("user approved"));
+        assert_eq!(decoded.adjudication_duration_ms, 150);
+    }
+
+    #[test]
+    fn test_decision_audit_entry_serde_denied() {
+        let entry = DecisionAuditEntry {
+            id: "da-2".into(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            turn_id: "turn-2".into(),
+            tool_name: "write".into(),
+            allowed: false,
+            reason: Some("blocked by security policy".into()),
+            adjudication_duration_ms: 5,
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: DecisionAuditEntry = serde_json::from_value(val).unwrap();
+        assert!(!decoded.allowed);
+        assert_eq!(decoded.tool_name, "write");
+        assert_eq!(decoded.adjudication_duration_ms, 5);
+    }
+
+    #[test]
+    fn test_leaf_entry_serde() {
+        let entry = LeafEntry {
+            id: "leaf-1".into(),
+            parent_id: Some("parent-1".into()),
+            timestamp: Utc::now(),
+            target_id: "branch-2".into(),
+        };
+        let val = serde_json::to_value(&entry).unwrap();
+        let decoded: LeafEntry = serde_json::from_value(val).unwrap();
+        assert_eq!(decoded.id, "leaf-1");
+        assert_eq!(decoded.parent_id.as_deref(), Some("parent-1"));
+        assert_eq!(decoded.timestamp, entry.timestamp);
+        assert_eq!(decoded.target_id, "branch-2");
+    }
+
+    // ── From<Message> for MessageEntry ──
+
+    #[test]
+    fn test_message_entry_from_message() {
+        let msg = Message {
+            id: "msg-1".into(),
+            role: Role::Assistant,
+            content: vec![ContentBlock::Text {
+                text: "response".into(),
+            }],
+            usage: None,
+            stop_reason: None,
+            error_message: None,
+            timestamp: None,
+        };
+        let entry = MessageEntry::from(msg);
+        assert_eq!(entry.id, "msg-1");
+        assert_eq!(entry.role, Role::Assistant);
+        assert_eq!(entry.content.len(), 1);
+        assert!(entry.usage.is_none());
+        assert!(entry.parent_id.is_none());
+    }
+
+    #[test]
+    fn test_message_entry_from_message_empty_id_generates_new() {
+        let msg = Message {
+            id: String::new(),
+            role: Role::User,
+            content: vec![],
+            usage: None,
+            stop_reason: None,
+            error_message: None,
+            timestamp: None,
+        };
+        let entry = MessageEntry::from(msg);
+        assert!(!entry.id.is_empty(), "empty id should be replaced");
+    }
 }
