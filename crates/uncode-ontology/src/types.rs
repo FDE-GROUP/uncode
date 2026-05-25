@@ -314,15 +314,9 @@ impl ActionDef {
             "additionalProperties".into(),
             serde_json::Value::Bool(false),
         );
-        schema.insert(
-            "properties".into(),
-            serde_json::Value::Object(properties),
-        );
+        schema.insert("properties".into(), serde_json::Value::Object(properties));
         if !required.is_empty() {
-            schema.insert(
-                "required".into(),
-                serde_json::Value::Array(required),
-            );
+            schema.insert("required".into(), serde_json::Value::Array(required));
         }
 
         serde_json::Value::Object(schema)

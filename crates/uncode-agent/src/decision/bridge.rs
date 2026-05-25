@@ -391,8 +391,8 @@ impl ToolBridge {
         action: &uncode_ontology::ActionDef,
         label: Option<&str>,
     ) -> ToolDefinition {
-        use uncode_ontology::ExecutionCategory;
         use uncode_ai::tool_def::ExecutionMode;
+        use uncode_ontology::ExecutionCategory;
 
         ToolDefinition {
             name: action.name.clone(),
@@ -414,10 +414,8 @@ impl ToolBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use uncode_ontology::{
-        ActionDef, Effect, EntityCategory, ExecutionCategory, FieldDef, TypeId,
-    };
     use uncode_ai::model::ModelPricingPerMillion;
+    use uncode_ontology::{ActionDef, Effect, EntityCategory, ExecutionCategory, FieldDef, TypeId};
 
     fn test_model(id: &str, reasoning: bool, vision: bool) -> Model {
         Model {

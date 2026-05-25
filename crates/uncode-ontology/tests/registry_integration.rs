@@ -238,9 +238,7 @@ fn resolve_entity_with_extends_merges_fields() {
             aliases: vec![],
             description: None,
         }],
-        invariants: vec![Constraint::RequiredField {
-            field: "id".into(),
-        }],
+        invariants: vec![Constraint::RequiredField { field: "id".into() }],
         extends: None,
     });
     reg.register_entity(EntityDef {

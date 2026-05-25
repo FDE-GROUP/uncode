@@ -244,9 +244,8 @@ pub fn evaluate_constraint<F: FieldLookup + ?Sized>(
             if matched {
                 ConstraintResult::Pass
             } else {
-                let detail = format!(
-                    "field '{field}' does not match pattern '{pattern}': {description}"
-                );
+                let detail =
+                    format!("field '{field}' does not match pattern '{pattern}': {description}");
                 match level {
                     ConstraintLevel::Soft => ConstraintResult::Warn {
                         constraint: "regex_match".into(),
