@@ -2715,3 +2715,179 @@ impl AgentLoop {
         denied
     }
 }
+
+#[cfg(test)]
+mod setter_tests {
+    #![allow(unused)]
+
+    use super::*;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio_util::sync::CancellationToken;
+
+    use crate::decision::adjudication::Adjudicator;
+    use crate::tools::local_env::LocalExecutionEnv;
+    use crate::workspace_graph::WorkspaceGraphCache;
+    use uncode_core::config::CompactionConfig;
+    use uncode_core::skill::SkillRegistry;
+    use uncode_core::tool::ExecutionEnv;
+    use uncode_core::workspace_graph::BundleConfig;
+
+    struct NoopHooks;
+    #[async_trait::async_trait]
+    impl ToolHooks for NoopHooks {}
+
+    async fn make_loop() -> AgentLoop {
+        AgentLoop::new(
+            Arc::new(ApiRegistry::default()),
+            Arc::new(ModelRegistry::default()),
+            HashMap::new(),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "test prompt".into(),
+            "test-model".into(),
+        )
+    }
+
+    // ── Builder tests (with_* methods) ──
+
+    #[tokio::test]
+    async fn test_with_compaction_config() {
+        let agent = make_loop().await;
+        let config = CompactionConfig {
+            enabled: true,
+            threshold_percent: 50,
+            ..CompactionConfig::default()
+        };
+        let _ = agent.with_compaction_config(config);
+    }
+
+    #[tokio::test]
+    async fn test_with_skill_registry() {
+        let agent = make_loop().await;
+        let registry = SkillRegistry::load();
+        let _ = agent.with_skill_registry(registry);
+    }
+
+    #[tokio::test]
+    async fn test_with_execution_env() {
+        let agent = make_loop().await;
+        let env: Arc<dyn ExecutionEnv> = Arc::new(LocalExecutionEnv::new());
+        let _ = agent.with_execution_env(env);
+    }
+
+    #[tokio::test]
+    async fn test_with_event_sender() {
+        let (event_tx, _rx) = broadcast::channel(16);
+        let _agent = AgentLoop::with_event_sender(
+            Arc::new(ApiRegistry::default()),
+            Arc::new(ModelRegistry::default()),
+            HashMap::new(),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(SessionStore::new_memory().await.expect("session store")),
+            "test prompt".into(),
+            "test-model".into(),
+            event_tx,
+        );
+    }
+
+    // ── Setter/getter round-trip tests ──
+
+    #[tokio::test]
+    async fn test_set_session_id() {
+        let mut agent = make_loop().await;
+        agent.set_session_id("s1".into());
+        assert_eq!(agent.session_id(), Some("s1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_set_model_id() {
+        let mut agent = make_loop().await;
+        agent.set_model_id("m2".into());
+    }
+
+    #[tokio::test]
+    async fn test_set_cancel_token() {
+        let mut agent = make_loop().await;
+        let token = CancellationToken::new();
+        agent.set_cancel_token(token.clone());
+        assert!(!token.is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn test_set_graph_cache() {
+        let mut agent = make_loop().await;
+        let cache = Arc::new(WorkspaceGraphCache::new(BundleConfig::default()));
+        agent.set_graph_cache(cache);
+    }
+
+    #[tokio::test]
+    async fn test_set_tool_hooks() {
+        let mut agent = make_loop().await;
+        let hooks: Arc<dyn ToolHooks> = Arc::new(NoopHooks);
+        agent.set_tool_hooks(hooks);
+    }
+
+    #[tokio::test]
+    async fn test_set_adjudicator() {
+        let mut agent = make_loop().await;
+        let adj = Adjudicator::new(vec![]);
+        agent.set_adjudicator(adj);
+    }
+
+    #[tokio::test]
+    async fn test_set_should_stop_after_turn() {
+        let mut agent = make_loop().await;
+        agent.set_should_stop_after_turn(Arc::new(|turn| turn >= 3));
+    }
+
+    // ── Trivial getters ──
+
+    #[tokio::test]
+    async fn test_is_run_active_false_initially() {
+        let agent = make_loop().await;
+        assert!(!agent.is_run_active());
+    }
+
+    #[tokio::test]
+    async fn test_active_run_handle_returns_bool() {
+        let agent = make_loop().await;
+        let handle = agent.active_run_handle();
+        assert!(!handle.load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn test_event_router_arc() {
+        let agent = make_loop().await;
+        let router = agent.event_router_arc();
+        let _guard = router.lock().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_session_id_none_initially() {
+        let agent = make_loop().await;
+        assert_eq!(agent.session_id(), None);
+    }
+
+    // ── Action methods ──
+
+    #[tokio::test]
+    async fn test_clear_active_tools() {
+        let agent = make_loop().await;
+        agent.clear_active_tools();
+    }
+
+    #[tokio::test]
+    async fn test_set_active_tools_rejects_unknown() {
+        let agent = make_loop().await;
+        let result = agent.set_active_tools(&["nonexistent"]);
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_load_custom_policies() {
+        let agent = make_loop().await;
+        agent.load_custom_policies();
+    }
+}
