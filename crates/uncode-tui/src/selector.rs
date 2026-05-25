@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
+use ratatui::style::Style;
+use ratatui::widgets::{Block, Clear, List, ListItem, ListState};
 
 pub struct OverlaySelector {
     pub visible: bool,
@@ -70,7 +70,7 @@ impl OverlaySelector {
             .enumerate()
             .map(|(i, item)| {
                 let style = if self.state.selected() == Some(i) {
-                    Style::default().fg(Color::Yellow).bg(Color::DarkGray)
+                    Style::default().yellow().on_dark_gray()
                 } else {
                     Style::default()
                 };
@@ -78,11 +78,7 @@ impl OverlaySelector {
             })
             .collect();
 
-        let list = List::new(items).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(self.title.as_str()),
-        );
+        let list = List::new(items).block(Block::bordered().title(self.title.as_str()));
 
         f.render_stateful_widget(list, popup_area, &mut self.state);
     }
@@ -99,5 +95,83 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 impl Default for OverlaySelector {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_not_visible() {
+        let s = OverlaySelector::new();
+        assert!(!s.is_visible());
+        assert!(s.selected_item().is_none());
+    }
+
+    #[test]
+    fn test_show_makes_visible() {
+        let mut s = OverlaySelector::new();
+        s.show("Choose", vec!["a".into(), "b".into()]);
+        assert!(s.is_visible());
+        assert_eq!(s.selected_item(), Some("a"));
+    }
+
+    #[test]
+    fn test_next_cycles_forward() {
+        let mut s = OverlaySelector::new();
+        s.show("Test", vec!["x".into(), "y".into(), "z".into()]);
+        assert_eq!(s.selected_item(), Some("x"));
+        s.next();
+        assert_eq!(s.selected_item(), Some("y"));
+        s.next();
+        assert_eq!(s.selected_item(), Some("z"));
+        s.next();
+        assert_eq!(s.selected_item(), Some("x")); // wraps around
+    }
+
+    #[test]
+    fn test_prev_cycles_backward() {
+        let mut s = OverlaySelector::new();
+        s.show("Test", vec!["a".into(), "b".into(), "c".into()]);
+        s.prev();
+        assert_eq!(s.selected_item(), Some("c")); // wraps to last
+        s.prev();
+        assert_eq!(s.selected_item(), Some("b"));
+    }
+
+    #[test]
+    fn test_next_prev_empty_items() {
+        let mut s = OverlaySelector::new();
+        s.show("Empty", vec![]);
+        s.next(); // should not panic
+        s.prev(); // should not panic
+        assert!(s.selected_item().is_none());
+    }
+
+    #[test]
+    fn test_hide() {
+        let mut s = OverlaySelector::new();
+        s.show("Test", vec!["a".into()]);
+        s.hide();
+        assert!(!s.is_visible());
+    }
+
+    #[test]
+    fn test_centered_rect() {
+        let r = Rect::new(0, 0, 100, 100);
+        let cr = centered_rect(50, 30, r);
+        assert_eq!(cr.width, 50);
+        assert_eq!(cr.height, 30);
+        assert_eq!(cr.x, 25);
+        assert_eq!(cr.y, 35);
+    }
+
+    #[test]
+    fn test_centered_rect_zero_area() {
+        let r = Rect::new(0, 0, 0, 0);
+        let cr = centered_rect(50, 30, r);
+        assert_eq!(cr.width, 0);
+        assert_eq!(cr.height, 0);
     }
 }

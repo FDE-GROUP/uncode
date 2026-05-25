@@ -749,7 +749,7 @@ async fn get_issue(
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
-    let mut host = "127.0.0.1".to_string();
+    let mut host = "127.0.0.1".to_owned();
     let mut port: u16 = 3000;
 
     let mut args = std::env::args().skip(1);

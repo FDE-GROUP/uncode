@@ -10,8 +10,6 @@
 //!
 //! 参见 `docs/ai-agent-archi/uncodenow-refactoring-roadmap.md` §1.2
 
-use std::collections::HashMap;
-
 use uncode_ai::StreamEvent;
 use uuid::Uuid;
 
@@ -26,16 +24,11 @@ use super::types::{ActionProposal, CognitiveTrace, IntentType};
 /// }
 /// let proposals = accumulator.finalize();
 /// ```
+#[derive(Default)]
 pub struct ProposalAccumulator {
-    /// (tool_call_id, tool_name, accumulated_arguments)
     pending: Vec<(String, String, String)>,
-    /// 已推送过 early progress 的 tool_call_id
-    args_pushed: HashMap<String, bool>,
-    /// 最终完成的提案
     completed: Vec<ActionProposal>,
-    /// 当前 turn 编号（用于 CognitiveTrace）
     turn: u32,
-    /// 当前 LLM model ID（用于 CognitiveTrace）
     model_id: String,
 }
 
@@ -43,7 +36,6 @@ impl ProposalAccumulator {
     pub fn new() -> Self {
         Self {
             pending: Vec::with_capacity(8),
-            args_pushed: HashMap::new(),
             completed: Vec::with_capacity(8),
             turn: 0,
             model_id: String::new(),
@@ -83,7 +75,7 @@ impl ProposalAccumulator {
                     alternatives: vec![],
                     trace: vec![CognitiveTrace {
                         turn: self.turn,
-                        source: "streaming".to_string(),
+                        source: "streaming".to_owned(),
                         llm_model: self.model_id.clone(),
                     }],
                 };
@@ -104,7 +96,6 @@ impl ProposalAccumulator {
     /// 重置累积器（用于新的 LLM 调用）
     pub fn reset(&mut self) {
         self.pending.clear();
-        self.args_pushed.clear();
         self.completed.clear();
     }
 

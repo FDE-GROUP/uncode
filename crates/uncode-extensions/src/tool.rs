@@ -20,6 +20,7 @@ pub struct ExtensionToolMetadata {
 
 impl ExtensionToolMetadata {
     /// Validate metadata before registration.
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         if self.name.is_empty() {
             return Err("tool name cannot be empty".into());

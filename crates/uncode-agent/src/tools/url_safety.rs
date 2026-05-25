@@ -20,6 +20,7 @@ fn loopback_allowed_in_tests() -> bool {
 }
 
 /// Reject URLs whose host resolves to obvious private / loopback targets.
+#[must_use]
 pub fn ensure_public_http_url(url: &str) -> Result<(), String> {
     if !url.starts_with("http://") && !url.starts_with("https://") {
         return Err("only http/https URLs are supported".into());

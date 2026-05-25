@@ -26,7 +26,15 @@ impl ExtensionLifecycleBridge {
         let registry = api.registry().clone();
         Self { registry, api }
     }
+}
 
+impl From<Arc<ExtensionApi>> for ExtensionLifecycleBridge {
+    fn from(api: Arc<ExtensionApi>) -> Self {
+        Self::from_arc(api)
+    }
+}
+
+impl ExtensionLifecycleBridge {
     /// Access the ExtensionApi for loading extensions.
     pub fn api(&self) -> &ExtensionApi {
         &self.api

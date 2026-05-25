@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 pub struct CodeDetailView {
@@ -19,7 +19,7 @@ struct CodeLine {
     kind: LineKind,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum LineKind {
     Normal,
     Added,
@@ -109,10 +109,7 @@ impl CodeDetailView {
             format!("📄 代码: {}", self.title)
         };
 
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title(block_title)
-            .style(Style::default());
+        let block = Block::bordered().title(block_title);
 
         let inner = block.inner(area);
         let max_lines = inner.height as usize;
@@ -125,7 +122,7 @@ impl CodeDetailView {
             .map(|cl| {
                 let line_no = Span::styled(
                     format!("{:>4} ", cl.line_no),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().dark_gray(),
                 );
 
                 let (fg, bg) = match cl.kind {
@@ -156,5 +153,80 @@ impl CodeDetailView {
 impl Default for CodeDetailView {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_not_visible() {
+        let v = CodeDetailView::new();
+        assert!(!v.is_visible());
+        assert!(!v.fullscreen);
+    }
+
+    #[test]
+    fn test_toggle() {
+        let mut v = CodeDetailView::new();
+        v.toggle();
+        assert!(v.is_visible());
+        v.toggle();
+        assert!(!v.is_visible());
+    }
+
+    #[test]
+    fn test_toggle_fullscreen() {
+        let mut v = CodeDetailView::new();
+        v.toggle_fullscreen();
+        assert!(v.fullscreen);
+        v.toggle_fullscreen();
+        assert!(!v.fullscreen);
+    }
+
+    #[test]
+    fn test_hide() {
+        let mut v = CodeDetailView::new();
+        v.toggle();
+        v.hide();
+        assert!(!v.is_visible());
+    }
+
+    #[test]
+    fn test_show_diff_parses_added_lines() {
+        let mut v = CodeDetailView::new();
+        v.show_diff("test.diff", "+added\n-removed\n@@ -1,1 +1,1 @@\n normal");
+        assert!(v.is_visible());
+        assert_eq!(v.content.len(), 4);
+        assert_eq!(v.content[0].kind, LineKind::Added);
+        assert_eq!(v.content[1].kind, LineKind::Removed);
+        assert_eq!(v.content[2].kind, LineKind::Header);
+        assert_eq!(v.content[3].kind, LineKind::Normal);
+    }
+
+    #[test]
+    fn test_show_diff_skips_plus_plus_plus() {
+        let mut v = CodeDetailView::new();
+        v.show_diff("test.diff", "+++ b/new.rs\n+a");
+        assert!(v.is_visible());
+        // +++ is Normal, +a is Added
+        assert_eq!(v.content[0].kind, LineKind::Normal);
+        assert_eq!(v.content[1].kind, LineKind::Added);
+    }
+
+    #[test]
+    fn test_show_diff_empty() {
+        let mut v = CodeDetailView::new();
+        v.show_diff("empty.diff", "");
+        assert!(v.is_visible());
+        assert!(v.content.is_empty());
+    }
+
+    #[test]
+    fn test_show_diff_title() {
+        let mut v = CodeDetailView::new();
+        v.show_diff("my.diff", "+x");
+        assert_eq!(v.title, "my.diff");
     }
 }

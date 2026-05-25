@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A resource path registration from an extension.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ResourcePathConfig {
     /// Absolute path or path relative to CWD.
     pub path: String,
@@ -15,6 +15,7 @@ pub struct ResourcePathConfig {
 }
 
 impl ResourcePathConfig {
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         if self.path.is_empty() {
             return Err("resource path cannot be empty".into());

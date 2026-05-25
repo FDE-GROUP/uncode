@@ -436,7 +436,7 @@ impl Api for OpenAiCompletionsApi {
                 let events: Vec<StreamEvent> = match chunk {
                     Ok(c) => {
                         let mut all_events = Vec::new();
-                        let mut guard = line_buf.lock().expect("openai sse buffer lock");
+                        let mut guard = crate::safe_lock(&line_buf, "openai sse buffer");
                         for line in guard.push_chunk_and_drain_lines(&c) {
                             all_events.extend(parse_sse_chunk(&line, state, &compat));
                         }

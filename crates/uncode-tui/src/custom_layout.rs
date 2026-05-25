@@ -3,7 +3,7 @@
 //! Converts extension-side `HeaderConfig` / `FooterConfig` / `WorkingIndicatorConfig`
 //! into ratatui-native types.
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 
 use uncode_extensions::header_footer::{
@@ -95,7 +95,7 @@ fn convert_line(spans: &[LineSpan]) -> Line<'static> {
                     }
                 }
                 if s.bold {
-                    style = style.add_modifier(Modifier::BOLD);
+                    style = style.bold();
                 }
                 Span::styled(s.text.clone(), style)
             })

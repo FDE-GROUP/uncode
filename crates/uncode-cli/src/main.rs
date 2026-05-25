@@ -399,7 +399,7 @@ async fn main() -> anyhow::Result<()> {
         let prompt_text = cli
             .prompt
             .clone()
-            .unwrap_or_else(|| "继续从这个分叉开发".to_string());
+            .unwrap_or_else(|| "继续从这个分叉开发".to_owned());
         let expanded = expand_file_refs(&prompt_text, &cwd);
         let expanded = expand_url_refs(&expanded).await;
         let messages = agent.run(Message::user(expanded)).await?;

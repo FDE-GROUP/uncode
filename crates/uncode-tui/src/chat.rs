@@ -4,7 +4,7 @@ use crate::message_renderer::MessageRendererRegistry;
 use crate::theme::Theme;
 use crate::tool_renderer::ToolRendererRegistry;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use uncode_core::event::{
     AgentEvent, DeltaType, ErrorCategory, TaskStatus, ToolCallEndEventData, ToolCallStatus,
@@ -949,7 +949,7 @@ impl ChatState {
             let title = if data.phase > 0 {
                 format!("Phase {}", data.phase)
             } else {
-                "Progress".to_string()
+                "Progress".to_owned()
             };
             self.upsert_todo_list(format!("phase:{}", data.phase), title, items);
         } else if !data.completed.is_empty() || !data.next_steps.is_empty() {
@@ -986,7 +986,7 @@ impl ChatState {
             return;
         }
         let title = if data.title.is_empty() {
-            "Tasks".to_string()
+            "Tasks".to_owned()
         } else {
             data.title.clone()
         };
@@ -1031,7 +1031,7 @@ impl ChatState {
         if items.is_empty() {
             return;
         }
-        self.upsert_todo_list("assistant".to_string(), "Todos".to_string(), items);
+        self.upsert_todo_list("assistant".to_owned(), "Todos".to_owned(), items);
     }
 
     /// 添加用户消息，解析 @file 引用
@@ -1125,7 +1125,7 @@ impl ChatState {
         };
         let items = parse_markdown_todos(text);
         if !items.is_empty() {
-            self.upsert_todo_list("assistant".to_string(), "Todos".to_string(), items);
+            self.upsert_todo_list("assistant".to_owned(), "Todos".to_owned(), items);
         }
     }
 
@@ -1326,9 +1326,7 @@ fn render_todo_list(
         Span::styled(prefix, Style::default().fg(prefix_color)),
         Span::styled(
             format!("Todos · {title} ({done_count}/{})", items.len()),
-            Style::default()
-                .fg(theme.ui.summary_card)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.ui.summary_card).bold(),
         ),
     ])];
     if expanded {
@@ -1484,9 +1482,7 @@ fn render_tool_turn_group(
         Span::styled(prefix, Style::default().fg(prefix_color)),
         Span::styled(
             format!("Turn {turn} · {n} tools"),
-            Style::default()
-                .fg(theme.ui.footer_text)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.ui.footer_text).bold(),
         ),
         Span::styled(
             format!(" ({summary})"),
@@ -1591,9 +1587,7 @@ fn render_message(
                 let first = lines.remove(0);
                 let mut new_spans = vec![Span::styled(
                     "UnCode ",
-                    Style::default()
-                        .fg(theme.tool_status.success)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.tool_status.success).bold(),
                 )];
                 new_spans.extend(first.spans);
                 lines.insert(0, Line::from(new_spans));
@@ -1614,14 +1608,14 @@ fn render_message(
                 } else {
                     "○"
                 };
-                (dot, "Thinking".to_string())
+                (dot, "Thinking".to_owned())
             } else {
                 let dur = match duration_ms {
                     Some(d) => format_duration(*d),
                     None => String::new(),
                 };
                 if dur.is_empty() {
-                    ("●", "Thought".to_string())
+                    ("●", "Thought".to_owned())
                 } else {
                     ("●", format!("Thought · {dur}"))
                 }
@@ -1653,12 +1647,7 @@ fn render_message(
                 let mut lines = vec![Line::from(vec![
                     Span::styled(prefix, Style::default().fg(prefix_color)),
                     Span::styled(format!("{icon} "), Style::default().fg(icon_color)),
-                    Span::styled(
-                        label,
-                        Style::default()
-                            .fg(label_color)
-                            .add_modifier(Modifier::BOLD),
-                    ),
+                    Span::styled(label, Style::default().fg(label_color).bold()),
                 ])];
 
                 if *expanded && !text.is_empty() {
@@ -1670,7 +1659,7 @@ fn render_message(
                     lines.extend(
                         content_lines
                             .into_iter()
-                            .map(|l| l.style(Style::default().fg(theme.ui.footer_text))),
+                            .map(|l| l.fg(theme.ui.footer_text)),
                     );
                 } else if !*expanded && !text.is_empty() && !*active && !focused {
                     let preview = truncate_preview(text, 96);
@@ -1685,9 +1674,7 @@ fn render_message(
         ChatMessage::TurnDivider { turn } => {
             vec![Line::from(Span::styled(
                 format!("── Turn {turn} ──"),
-                Style::default()
-                    .fg(theme.ui.footer_text)
-                    .add_modifier(Modifier::ITALIC),
+                Style::default().fg(theme.ui.footer_text).italic(),
             ))]
         }
         ChatMessage::ToolTurnGroup {
@@ -1767,9 +1754,7 @@ fn render_message(
         } => {
             let mut lines = vec![Line::from(Span::styled(
                 " > Summary",
-                Style::default()
-                    .fg(theme.ui.summary_card)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.ui.summary_card).bold(),
             ))];
             if !completed.is_empty() {
                 lines.push(Line::from(Span::styled(
@@ -1793,9 +1778,7 @@ fn render_message(
         } => {
             let mut lines = vec![Line::from(Span::styled(
                 " > Context compressed",
-                Style::default()
-                    .fg(theme.ui.summary_card)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.ui.summary_card).bold(),
             ))];
             lines.push(Line::from(Span::styled(
                 format!(
@@ -1836,9 +1819,7 @@ fn render_message(
                 Span::styled(prefix, Style::default().fg(prefix_color)),
                 Span::styled(
                     format!("[{message_type}]"),
-                    Style::default()
-                        .fg(theme.ui.summary_card)
-                        .add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.ui.summary_card).bold(),
                 ),
             ])];
             if *expanded && !content.is_empty() {
@@ -1865,9 +1846,7 @@ fn render_user_message(
 ) -> Vec<Line<'static>> {
     let mut spans: Vec<Span<'static>> = vec![Span::styled(
         "> ",
-        Style::default()
-            .fg(theme.tool_status.success)
-            .add_modifier(Modifier::BOLD),
+        Style::default().fg(theme.tool_status.success).bold(),
     )];
 
     if file_refs.is_empty() {
@@ -1919,10 +1898,10 @@ fn render_tool_call(
             };
             (dot.to_string(), theme.tool_status.success)
         }
-        ToolCallRenderStatus::Success => ("●".to_string(), theme.tool_status.success),
-        ToolCallRenderStatus::Failed => ("✗".to_string(), theme.tool_status.failed),
-        ToolCallRenderStatus::AwaitConfirm => ("…".to_string(), theme.tool_status.await_confirm),
-        ToolCallRenderStatus::Pending => ("○".to_string(), theme.tool_status.pending),
+        ToolCallRenderStatus::Success => ("●".to_owned(), theme.tool_status.success),
+        ToolCallRenderStatus::Failed => ("✗".to_owned(), theme.tool_status.failed),
+        ToolCallRenderStatus::AwaitConfirm => ("…".to_owned(), theme.tool_status.await_confirm),
+        ToolCallRenderStatus::Pending => ("○".to_owned(), theme.tool_status.pending),
     };
 
     // Focus/expand indicator prefix
@@ -1949,10 +1928,7 @@ fn render_tool_call(
     let header = Line::from(vec![
         Span::styled(prefix, Style::default().fg(prefix_color)),
         Span::styled(format!("{icon} "), Style::default().fg(color)),
-        Span::styled(
-            format!("{label} "),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(format!("{label} "), Style::default().fg(color).bold()),
         Span::styled(first_inline, Style::default().fg(theme.tool_status.running)),
     ]);
     lines.push(header);
@@ -2044,7 +2020,7 @@ fn render_bash(
     };
 
     let title = if description.is_empty() {
-        "Shell".to_string()
+        "Shell".to_owned()
     } else {
         description.to_string()
     };
@@ -2065,10 +2041,7 @@ fn render_bash(
     lines.push(Line::from(vec![
         Span::styled(fprefix, Style::default().fg(prefix_color)),
         Span::styled(format!("{status_icon} "), Style::default().fg(color)),
-        Span::styled(
-            format!("{label} "),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
+        Span::styled(format!("{label} "), Style::default().fg(color).bold()),
         Span::styled(
             format!("# {title}"),
             Style::default().fg(theme.bash.command),
@@ -2179,12 +2152,12 @@ fn format_duration(ms: u64) -> String {
 
 fn capitalize_tool(name: &str) -> String {
     match name {
-        "write" => "Write".to_string(),
-        "grep" => "Grep".to_string(),
-        "find" => "Find".to_string(),
-        "ls" => "Ls".to_string(),
-        "web_fetch" => "WebFetch".to_string(),
-        "web_search" => "WebSearch".to_string(),
+        "write" => "Write".to_owned(),
+        "grep" => "Grep".to_owned(),
+        "find" => "Find".to_owned(),
+        "ls" => "Ls".to_owned(),
+        "web_fetch" => "WebFetch".to_owned(),
+        "web_search" => "WebSearch".to_owned(),
         _ => {
             let mut chars = name.chars();
             match chars.next() {
@@ -2251,7 +2224,7 @@ mod tests {
     #[test]
     fn test_push_user_message() {
         let mut state = ChatState::new();
-        state.push_user_message("分析 @src/main.rs 的结构".to_string());
+        state.push_user_message("分析 @src/main.rs 的结构".to_owned());
         assert_eq!(state.messages.len(), 1);
         if let ChatMessage::User { text, file_refs } = &state.messages[0] {
             assert_eq!(text, "分析 @src/main.rs 的结构");
@@ -2841,7 +2814,7 @@ mod tests {
         let mut state = ChatState::new();
         state.handle_event(AgentEvent::ContentDelta {
             delta_type: DeltaType::Text,
-            content: "Hello world".to_string(),
+            content: "Hello world".to_owned(),
             content_index: None,
         });
         let renderers = ToolRendererRegistry::new();

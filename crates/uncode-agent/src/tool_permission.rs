@@ -95,7 +95,7 @@ fn contains_shell_metacharacters(cmd: &str) -> bool {
 
 /// 检查命令是否在白名单中
 pub fn is_safe_command(command: &str) -> bool {
-    let cmd = command.trim();
+    let cmd = command.trim_ascii();
     if contains_shell_metacharacters(cmd) {
         return false;
     }
@@ -111,6 +111,7 @@ pub fn is_safe_command(command: &str) -> bool {
 /// Compiled permission policy loaded from config.
 ///
 /// **Pi:** 对照 `protected-paths`（敏感路径阻止）、`permission-gate`（危险命令检测）扩展。
+#[derive(Debug)]
 pub struct PermissionPolicy {
     /// Merged safe commands: built-in + user extras.
     safe_commands: Vec<String>,
@@ -233,14 +234,14 @@ impl PermissionPolicy {
     }
 
     fn is_dangerous_command(&self, command: &str) -> bool {
-        let cmd = command.trim();
+        let cmd = command.trim_ascii();
         self.dangerous_bash_regexes
             .iter()
             .any(|re| re.is_match(cmd))
     }
 
     fn is_safe_command_policy(&self, command: &str) -> bool {
-        let cmd = command.trim();
+        let cmd = command.trim_ascii();
         self.safe_commands.iter().any(|safe| {
             cmd == safe.as_str()
                 || cmd.starts_with(&format!("{safe} "))

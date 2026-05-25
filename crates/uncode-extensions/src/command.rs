@@ -32,6 +32,7 @@ pub struct CommandRegistration {
 }
 
 impl CommandRegistration {
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         if self.name.is_empty() {
             return Err("command name cannot be empty".into());
@@ -59,7 +60,7 @@ impl CommandRegistration {
 }
 
 /// Key code — crossterm-independent representation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
 pub enum ExtKey {
     Char(char),
     F(u8),
@@ -80,7 +81,7 @@ pub enum ExtKey {
 }
 
 /// Modifier keys — crossterm-independent representation.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, serde::Deserialize)]
 pub struct ExtModifiers {
     pub ctrl: bool,
     pub alt: bool,
@@ -88,7 +89,7 @@ pub struct ExtModifiers {
 }
 
 /// A key event — crossterm-independent representation.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
 pub struct ExtKeyEvent {
     pub key: ExtKey,
     pub modifiers: ExtModifiers,
@@ -170,6 +171,7 @@ pub struct ShortcutRegistration {
 }
 
 impl ShortcutRegistration {
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         if RESERVED_SHORTCUTS.contains(&self.key) {
             return Err(format!(

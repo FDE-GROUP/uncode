@@ -8,7 +8,7 @@ pub fn truncate_chars(s: &str, max_chars: usize) -> String {
         return if s.is_empty() {
             String::new()
         } else {
-            "…".to_string()
+            "…".to_owned()
         };
     }
     match s.char_indices().nth(max_chars) {

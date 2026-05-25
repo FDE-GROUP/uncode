@@ -194,7 +194,7 @@ impl<'a> RenderContext<'a> {
             } else {
                 // Add space before word (if not at line start)
                 if need_space {
-                    self.current_line.push(Span::styled(" ".to_string(), style));
+                    self.current_line.push(Span::styled(" ", style));
                     self.current_width += 1;
                 }
             }
@@ -223,9 +223,7 @@ impl<'a> RenderContext<'a> {
             }
 
             Node::Heading(heading) => {
-                self.current_style = Style::default()
-                    .fg(self.theme.markdown.heading)
-                    .add_modifier(Modifier::BOLD);
+                self.current_style = Style::default().fg(self.theme.markdown.heading).bold();
                 for child in &heading.children {
                     self.render_inline(child);
                 }
@@ -263,11 +261,11 @@ impl<'a> RenderContext<'a> {
                     .filter(|p| p.text.contains('▎'))
                     .count();
                 self.prefix_stack.push(Prefix {
-                    text: "▎ ".to_string(),
+                    text: "▎ ".to_owned(),
                     width: 2,
                 });
                 self.current_line.push(Span::styled(
-                    "▎ ".to_string(),
+                    "▎ ".to_owned(),
                     Style::default().fg(self.theme.markdown.code_block_border),
                 ));
                 self.current_width += 2;
@@ -312,7 +310,7 @@ impl<'a> RenderContext<'a> {
                     self.list_counter += 1;
                     m
                 } else {
-                    "• ".to_string()
+                    "• ".to_owned()
                 };
                 self.current_line.push(Span::styled(
                     marker,
@@ -362,9 +360,7 @@ impl<'a> RenderContext<'a> {
             Node::InlineCode(code) => self.push_inline_code(&code.value),
             Node::Strong(strong) => {
                 let prev = self.current_style;
-                self.current_style = prev
-                    .fg(self.theme.markdown.bold)
-                    .add_modifier(Modifier::BOLD);
+                self.current_style = prev.fg(self.theme.markdown.bold).bold();
                 for child in &strong.children {
                     self.render_inline(child);
                 }
@@ -372,9 +368,7 @@ impl<'a> RenderContext<'a> {
             }
             Node::Emphasis(em) => {
                 let prev = self.current_style;
-                self.current_style = prev
-                    .fg(self.theme.markdown.italic)
-                    .add_modifier(Modifier::ITALIC);
+                self.current_style = prev.fg(self.theme.markdown.italic).italic();
                 for child in &em.children {
                     self.render_inline(child);
                 }
@@ -390,9 +384,7 @@ impl<'a> RenderContext<'a> {
             }
             Node::Link(link) => {
                 // Render link text with underline, then show URL
-                let link_style = Style::default()
-                    .fg(self.theme.markdown.link)
-                    .add_modifier(Modifier::UNDERLINED);
+                let link_style = Style::default().fg(self.theme.markdown.link).underlined();
                 let prev = self.current_style;
                 self.current_style = link_style;
                 for child in &link.children {
@@ -439,7 +431,7 @@ impl<'a> RenderContext<'a> {
 
         // Top border: ┌─ lang ────┐
         let top_border = if lang_str.is_empty() {
-            "┌──────────────┐".to_string()
+            "┌──────────────┐".to_owned()
         } else {
             let pad = 8usize.saturating_sub(lang_str.len()).max(2);
             format!("┌─ {lang_str} {}┐", "─".repeat(pad))
@@ -493,15 +485,14 @@ impl<'a> RenderContext<'a> {
 
         // Content lines with │ prefix
         self.prefix_stack.push(Prefix {
-            text: "│ ".to_string(),
+            text: "│ ".to_owned(),
             width: 2,
         });
 
         for (i, child) in bq.children.iter().enumerate() {
             if i == 0 {
                 if let Node::Paragraph(para) = child {
-                    self.current_line
-                        .push(Span::styled("│ ".to_string(), border_style));
+                    self.current_line.push(Span::styled("│ ", border_style));
                     self.current_width += 2;
                     for (j, inline) in para.children.iter().enumerate() {
                         if j == 0 {
@@ -520,8 +511,7 @@ impl<'a> RenderContext<'a> {
                     self.flush_line();
                 }
             } else {
-                self.current_line
-                    .push(Span::styled("│ ".to_string(), border_style));
+                self.current_line.push(Span::styled("│ ", border_style));
                 self.current_width += 2;
                 self.render_node(child);
             }
@@ -564,8 +554,8 @@ impl<'a> RenderContext<'a> {
         let mut col_widths = vec![0usize; col_count];
         for row in &rows {
             for (i, cell) in row.iter().enumerate() {
-                if i < col_widths.len() {
-                    col_widths[i] = col_widths[i].max(cell.width);
+                if let Some(w) = col_widths.get_mut(i) {
+                    *w = (*w).max(cell.width);
                 }
             }
         }
@@ -581,9 +571,7 @@ impl<'a> RenderContext<'a> {
                     .unwrap_or(0)
                     .saturating_sub(cell.width);
                 let style = if row_idx == 0 {
-                    Style::default()
-                        .fg(self.theme.markdown.heading)
-                        .add_modifier(Modifier::BOLD)
+                    Style::default().fg(self.theme.markdown.heading).bold()
                 } else {
                     Style::default().fg(self.theme.markdown.code_text)
                 };

@@ -67,4 +67,64 @@ mod tests {
         let options = StreamOptions::default();
         notify_http_response(&options, 200, &HeaderMap::new());
     }
+
+    #[test]
+    fn apply_option_headers_empty() {
+        let client = reqwest::Client::new();
+        let options = StreamOptions::default();
+        let req = apply_option_headers(client.get("https://example.com"), &options)
+            .build()
+            .unwrap();
+        assert!(req.headers().get("X-Custom").is_none());
+    }
+
+    #[test]
+    fn apply_option_headers_with_headers() {
+        let client = reqwest::Client::new();
+        let mut headers_map = HashMap::new();
+        headers_map.insert("X-Custom".into(), "value1".into());
+        headers_map.insert("Authorization".into(), "Bearer token".into());
+        let options = StreamOptions {
+            headers: Some(headers_map),
+            ..Default::default()
+        };
+        let req = apply_option_headers(client.get("https://example.com"), &options)
+            .build()
+            .unwrap();
+        assert_eq!(
+            req.headers().get("X-Custom").unwrap().to_str().unwrap(),
+            "value1"
+        );
+        assert_eq!(
+            req.headers().get("Authorization").unwrap().to_str().unwrap(),
+            "Bearer token"
+        );
+    }
+
+    #[test]
+    fn apply_option_headers_merges_with_existing() {
+        let client = reqwest::Client::new();
+        let mut headers_map = HashMap::new();
+        headers_map.insert("X-Option".into(), "option-val".into());
+        let options = StreamOptions {
+            headers: Some(headers_map),
+            ..Default::default()
+        };
+        let req = apply_option_headers(
+            client
+                .get("https://example.com")
+                .header("X-Builtin", "builtin-val"),
+            &options,
+        )
+        .build()
+        .unwrap();
+        assert_eq!(
+            req.headers().get("X-Builtin").unwrap().to_str().unwrap(),
+            "builtin-val"
+        );
+        assert_eq!(
+            req.headers().get("X-Option").unwrap().to_str().unwrap(),
+            "option-val"
+        );
+    }
 }

@@ -175,7 +175,15 @@ impl Model {
         };
         crate::provider_preset::apply_provider_preset(model)
     }
+}
 
+impl<'a> From<&'a UserModelConfig> for Model {
+    fn from(uc: &'a UserModelConfig) -> Self {
+        Self::from_user_config(uc)
+    }
+}
+
+impl Model {
     pub fn from_model_config(mc: &ModelConfig) -> Self {
         // If a builtin model with the same id exists, use it as base
         let builtin = builtin_models().into_iter().find(|m| m.id == mc.id);
@@ -210,6 +218,12 @@ impl Model {
             }
         };
         crate::provider_preset::apply_provider_preset(model)
+    }
+}
+
+impl<'a> From<&'a ModelConfig> for Model {
+    fn from(mc: &'a ModelConfig) -> Self {
+        Self::from_model_config(mc)
     }
 }
 
@@ -503,4 +517,427 @@ pub fn builtin_models() -> Vec<Model> {
             headers: HashMap::new(),
         }),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api_types::ThinkingFormat;
+    use uncode_shared::config::UserCompatConfig;
+
+    // ── Model ──
+    #[test]
+    fn model_default() {
+        let m = Model::default();
+        assert_eq!(m.id, "");
+        assert_eq!(m.name, "");
+        assert_eq!(m.api, "openai-completions");
+        assert_eq!(m.provider, "");
+        assert_eq!(m.base_url, "");
+        assert_eq!(m.context_window, 128_000);
+        assert_eq!(m.max_output_tokens, 8192);
+        assert!(!m.reasoning);
+        assert!(m.thinking_format.is_none());
+        assert_eq!(m.input_modalities, vec![InputModality::Text]);
+        assert_eq!(m.pricing.input, 0.0);
+        assert_eq!(m.pricing.output, 0.0);
+        assert_eq!(m.pricing.cache_read, 0.0);
+        assert_eq!(m.pricing.cache_write, 0.0);
+        assert!(m.headers.is_empty());
+        assert!(m.compat.supports_usage_in_streaming);
+        assert_eq!(m.compat.max_tokens_field, MaxTokensField::MaxTokens);
+        assert!(m.thinking_level_map.is_empty());
+    }
+
+    #[test]
+    fn model_construction() {
+        let m = Model {
+            id: "test-model".into(),
+            name: "Test Model".into(),
+            api: "test-api".into(),
+            provider: "test-provider".into(),
+            base_url: "https://test.com/v1".into(),
+            context_window: 64000,
+            max_output_tokens: 4096,
+            reasoning: true,
+            thinking_format: Some(ThinkingFormat::DeepSeek),
+            input_modalities: vec![InputModality::Text, InputModality::Image],
+            pricing: ModelPricingPerMillion {
+                input: 1.0,
+                output: 2.0,
+                cache_read: 0.5,
+                cache_write: 0.25,
+            },
+            headers: HashMap::from([("X-Custom".into(), "val".into())]),
+            compat: CompatConfig {
+                supports_developer_role: true,
+                ..CompatConfig::default()
+            },
+            thinking_level_map: HashMap::from([(ThinkingLevel::Medium, None)]),
+        };
+        assert_eq!(m.id, "test-model");
+        assert!(m.reasoning);
+        assert_eq!(m.thinking_format, Some(ThinkingFormat::DeepSeek));
+        assert_eq!(m.pricing.input, 1.0);
+        assert_eq!(m.pricing.cache_write, 0.25);
+    }
+
+    #[test]
+    fn model_serde_roundtrip() {
+        let m = Model {
+            id: "gpt-4o".into(),
+            name: "GPT-4o".into(),
+            api: "openai-completions".into(),
+            provider: "openai".into(),
+            base_url: "https://api.openai.com/v1".into(),
+            context_window: 128000,
+            max_output_tokens: 16384,
+            reasoning: true,
+            thinking_format: Some(ThinkingFormat::OpenAi),
+            input_modalities: vec![InputModality::Text, InputModality::Image],
+            pricing: ModelPricingPerMillion {
+                input: 2.5,
+                output: 10.0,
+                ..Default::default()
+            },
+            headers: HashMap::new(),
+            compat: CompatConfig::default(),
+            thinking_level_map: HashMap::new(),
+        };
+        let json = serde_json::to_string(&m).unwrap();
+        let decoded: Model = serde_json::from_str(&json).unwrap();
+        assert_eq!(m.id, decoded.id);
+        assert_eq!(m.api, decoded.api);
+        assert_eq!(m.context_window, decoded.context_window);
+        assert_eq!(m.thinking_format, decoded.thinking_format);
+        assert_eq!(m.input_modalities.len(), decoded.input_modalities.len());
+    }
+
+    // ── effective_compat ──
+    #[test]
+    fn effective_compat_with_known_provider() {
+        let mut m = Model::default();
+        m.provider = "deepseek".into();
+        m.compat.supports_strict_mode = true;
+        let compat = m.effective_compat();
+        assert!(compat.supports_strict_mode);
+        assert_eq!(compat.thinking_format, Some(ThinkingFormat::DeepSeek));
+        assert!(!compat.supports_developer_role);
+    }
+
+    #[test]
+    fn effective_compat_with_unknown_provider() {
+        let mut m = Model::default();
+        m.provider = "nonexistent".into();
+        m.compat.supports_developer_role = true;
+        let compat = m.effective_compat();
+        assert!(compat.supports_developer_role);
+    }
+
+    // ── effective_thinking_format ──
+    #[test]
+    fn effective_thinking_format_from_compat() {
+        let mut m = Model::default();
+        m.provider = "deepseek".into();
+        assert_eq!(
+            m.effective_thinking_format(),
+            Some(ThinkingFormat::DeepSeek)
+        );
+    }
+
+    #[test]
+    fn effective_thinking_format_from_model_when_compat_none() {
+        let mut m = Model::default();
+        m.provider = "openai".into();
+        m.thinking_format = Some(ThinkingFormat::OpenAi);
+        assert_eq!(
+            m.effective_thinking_format(),
+            Some(ThinkingFormat::OpenAi)
+        );
+    }
+
+    // ── clamp_thinking_level ──
+    #[test]
+    fn clamp_off_returns_off() {
+        let model = Model::default();
+        assert_eq!(
+            clamp_thinking_level(ThinkingLevel::Off, &model),
+            ThinkingLevel::Off
+        );
+    }
+
+    #[test]
+    fn clamp_empty_map_returns_off() {
+        let model = Model::default();
+        assert_eq!(
+            clamp_thinking_level(ThinkingLevel::Medium, &model),
+            ThinkingLevel::Off
+        );
+    }
+
+    #[test]
+    fn clamp_level_in_map_returns_same() {
+        let mut model = Model::default();
+        model
+            .thinking_level_map
+            .insert(ThinkingLevel::Medium, None);
+        assert_eq!(
+            clamp_thinking_level(ThinkingLevel::Medium, &model),
+            ThinkingLevel::Medium
+        );
+    }
+
+    #[test]
+    fn clamp_level_above_max_clamps_down() {
+        let mut model = Model::default();
+        model.thinking_level_map.insert(ThinkingLevel::Low, None);
+        assert_eq!(
+            clamp_thinking_level(ThinkingLevel::XHigh, &model),
+            ThinkingLevel::Low
+        );
+    }
+
+    #[test]
+    fn clamp_level_between_available_clamps_down() {
+        let mut model = Model::default();
+        model
+            .thinking_level_map
+            .insert(ThinkingLevel::Minimal, None);
+        model.thinking_level_map.insert(ThinkingLevel::High, None);
+        assert_eq!(
+            clamp_thinking_level(ThinkingLevel::Medium, &model),
+            ThinkingLevel::Minimal
+        );
+    }
+
+    #[test]
+    fn clamp_map_only_off_returns_off_for_non_off() {
+        let mut model = Model::default();
+        model
+            .thinking_level_map
+            .insert(ThinkingLevel::Off, Some("off".into()));
+        assert_eq!(
+            clamp_thinking_level(ThinkingLevel::Medium, &model),
+            ThinkingLevel::Off
+        );
+    }
+
+    #[test]
+    fn clamp_map_with_high_levels_medium_available() {
+        let mut model = Model::default();
+        model
+            .thinking_level_map
+            .insert(ThinkingLevel::Medium, None);
+        model.thinking_level_map.insert(ThinkingLevel::High, None);
+        assert_eq!(
+            clamp_thinking_level(ThinkingLevel::Medium, &model),
+            ThinkingLevel::Medium
+        );
+        assert_eq!(
+            clamp_thinking_level(ThinkingLevel::High, &model),
+            ThinkingLevel::High
+        );
+    }
+
+    // ── ModelPricingPerMillion ──
+    #[test]
+    fn model_pricing_per_million_default() {
+        let p = ModelPricingPerMillion::default();
+        assert_eq!(p.input, 0.0);
+        assert_eq!(p.output, 0.0);
+        assert_eq!(p.cache_read, 0.0);
+        assert_eq!(p.cache_write, 0.0);
+    }
+
+    #[test]
+    fn model_pricing_per_million_construction() {
+        let p = ModelPricingPerMillion {
+            input: 2.5,
+            output: 10.0,
+            cache_read: 0.3,
+            cache_write: 3.75,
+        };
+        assert!((p.input - 2.5).abs() < f64::EPSILON);
+        assert!((p.cache_write - 3.75).abs() < f64::EPSILON);
+    }
+
+    // ── ModelInfo + ModelPricing ──
+    #[test]
+    fn model_info_serde_roundtrip() {
+        let info = ModelInfo {
+            id: "test".into(),
+            provider: "openai".into(),
+            display_name: "Test".into(),
+            max_tokens: 4096,
+            supports_vision: true,
+            supports_tools: true,
+            pricing: Some(ModelPricing {
+                input_per_1k: 0.01,
+                output_per_1k: 0.03,
+                cache_read_per_1k: Some(0.005),
+            }),
+        };
+        let json = serde_json::to_string(&info).unwrap();
+        let decoded: ModelInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(info.id, decoded.id);
+        assert_eq!(info.supports_vision, decoded.supports_vision);
+        assert_eq!(
+            decoded.pricing.as_ref().unwrap().cache_read_per_1k,
+            Some(0.005)
+        );
+    }
+
+    #[test]
+    fn model_pricing_construction() {
+        let p = ModelPricing {
+            input_per_1k: 0.01,
+            output_per_1k: 0.03,
+            cache_read_per_1k: None,
+        };
+        assert!((p.input_per_1k - 0.01).abs() < f64::EPSILON);
+        assert!(p.cache_read_per_1k.is_none());
+    }
+
+    // ── Model::from_user_config ──
+    #[test]
+    fn from_user_config_applies_compat_fields() {
+        let uc = UserModelConfig {
+            id: "my-model".into(),
+            api: "openai-completions".into(),
+            provider: "custom".into(),
+            base_url: Some("https://custom.api/v1".into()),
+            context_window: Some(64000),
+            max_output_tokens: Some(4096),
+            api_key: None,
+            compat: Some(UserCompatConfig {
+                supports_developer_role: Some(true),
+                supports_usage_in_streaming: Some(false),
+                ..Default::default()
+            }),
+        };
+        let m = Model::from_user_config(&uc);
+        assert_eq!(m.id, "my-model");
+        assert_eq!(m.base_url, "https://custom.api/v1");
+        assert_eq!(m.context_window, 64000);
+        assert_eq!(m.max_output_tokens, 4096);
+        assert!(m.compat.supports_developer_role);
+        assert!(!m.compat.supports_usage_in_streaming);
+    }
+
+    #[test]
+    fn from_user_config_thinking_format_deepseek() {
+        let uc = UserModelConfig {
+            id: "ds".into(),
+            api: "openai-completions".into(),
+            provider: "deepseek".into(),
+            base_url: None,
+            context_window: None,
+            max_output_tokens: None,
+            api_key: None,
+            compat: Some(UserCompatConfig {
+                thinking_format: Some("deepseek".into()),
+                ..Default::default()
+            }),
+        };
+        let m = Model::from_user_config(&uc);
+        assert_eq!(m.compat.thinking_format, Some(ThinkingFormat::DeepSeek));
+    }
+
+    #[test]
+    fn from_user_config_thinking_format_anthropic() {
+        let uc = UserModelConfig {
+            id: "cl".into(),
+            api: "anthropic-messages".into(),
+            provider: "anthropic".into(),
+            base_url: None,
+            context_window: None,
+            max_output_tokens: None,
+            api_key: None,
+            compat: Some(UserCompatConfig {
+                thinking_format: Some("anthropic".into()),
+                ..Default::default()
+            }),
+        };
+        let m = Model::from_user_config(&uc);
+        assert_eq!(m.compat.thinking_format, Some(ThinkingFormat::Anthropic));
+    }
+
+    #[test]
+    fn from_user_config_thinking_format_gemini() {
+        let uc = UserModelConfig {
+            id: "gm".into(),
+            api: "google-generative-ai".into(),
+            provider: "gemini".into(),
+            base_url: None,
+            context_window: None,
+            max_output_tokens: None,
+            api_key: None,
+            compat: Some(UserCompatConfig {
+                thinking_format: Some("gemini".into()),
+                ..Default::default()
+            }),
+        };
+        let m = Model::from_user_config(&uc);
+        assert_eq!(m.compat.thinking_format, Some(ThinkingFormat::Gemini));
+    }
+
+    #[test]
+    fn from_user_config_thinking_format_openai() {
+        let uc = UserModelConfig {
+            id: "oa".into(),
+            api: "openai-completions".into(),
+            provider: "openai".into(),
+            base_url: None,
+            context_window: None,
+            max_output_tokens: None,
+            api_key: None,
+            compat: Some(UserCompatConfig {
+                thinking_format: Some("openai".into()),
+                ..Default::default()
+            }),
+        };
+        let m = Model::from_user_config(&uc);
+        assert_eq!(m.compat.thinking_format, Some(ThinkingFormat::OpenAi));
+    }
+
+    #[test]
+    fn from_user_config_max_tokens_field_max_completion_tokens() {
+        let uc = UserModelConfig {
+            id: "test".into(),
+            api: "openai-completions".into(),
+            provider: "groq".into(),
+            base_url: None,
+            context_window: None,
+            max_output_tokens: None,
+            api_key: None,
+            compat: Some(UserCompatConfig {
+                max_tokens_field: Some("max_completion_tokens".into()),
+                ..Default::default()
+            }),
+        };
+        let m = Model::from_user_config(&uc);
+        assert_eq!(
+            m.compat.max_tokens_field,
+            MaxTokensField::MaxCompletionTokens
+        );
+    }
+
+    #[test]
+    fn from_user_config_max_tokens_field_default_to_max_tokens() {
+        let uc = UserModelConfig {
+            id: "test".into(),
+            api: "openai-completions".into(),
+            provider: "custom".into(),
+            base_url: None,
+            context_window: None,
+            max_output_tokens: None,
+            api_key: None,
+            compat: Some(UserCompatConfig {
+                max_tokens_field: Some("max_tokens".into()),
+                ..Default::default()
+            }),
+        };
+        let m = Model::from_user_config(&uc);
+        assert_eq!(m.compat.max_tokens_field, MaxTokensField::MaxTokens);
+    }
 }

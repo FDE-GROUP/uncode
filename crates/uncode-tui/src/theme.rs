@@ -383,10 +383,10 @@ impl Theme {
     /// 列出所有可用主题（内置 + 自定义）
     pub fn available_themes() -> Vec<String> {
         let mut themes = vec![
-            "default".to_string(),
-            "light".to_string(),
-            "monokai".to_string(),
-            "solarized".to_string(),
+            "default".to_owned(),
+            "light".to_owned(),
+            "monokai".to_owned(),
+            "solarized".to_owned(),
         ];
         if let Some(config_dir) = dirs::config_dir() {
             let themes_dir = config_dir.join("uncode").join("themes");
@@ -617,10 +617,10 @@ mod tests {
     #[test]
     fn test_available_themes() {
         let themes = Theme::available_themes();
-        assert!(themes.contains(&"default".to_string()));
-        assert!(themes.contains(&"light".to_string()));
-        assert!(themes.contains(&"monokai".to_string()));
-        assert!(themes.contains(&"solarized".to_string()));
+        assert!(themes.contains(&"default".to_owned()));
+        assert!(themes.contains(&"light".to_owned()));
+        assert!(themes.contains(&"monokai".to_owned()));
+        assert!(themes.contains(&"solarized".to_owned()));
     }
 
     #[test]

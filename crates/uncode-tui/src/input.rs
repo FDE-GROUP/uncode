@@ -1,6 +1,6 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use std::collections::VecDeque;
@@ -26,7 +26,7 @@ pub struct InputEditor {
     last_input_char: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputAction {
     None,
     Submit(String),
@@ -371,7 +371,7 @@ impl InputEditor {
 
     pub fn render(&self, f: &mut Frame, area: Rect, border_color: Color) {
         let display_text = if self.buffer.is_empty() {
-            "> ".to_string()
+            "> ".to_owned()
         } else {
             format!("> {}", self.buffer)
         };
@@ -382,7 +382,7 @@ impl InputEditor {
                     .borders(Borders::TOP)
                     .border_style(Style::default().fg(border_color)),
             )
-            .style(Style::default().fg(Color::White));
+            .white();
 
         f.render_widget(content, area);
 
@@ -431,26 +431,16 @@ impl InputEditor {
                     if i == self.completion_index % self.completions.len() {
                         Line::from(Span::styled(
                             format!(" > {cmd} "),
-                            Style::default()
-                                .fg(Color::Black)
-                                .bg(Color::White)
-                                .add_modifier(Modifier::BOLD),
+                            Style::default().black().on_white().bold(),
                         ))
                     } else {
-                        Line::from(Span::styled(
-                            format!("   {cmd} "),
-                            Style::default().fg(Color::White),
-                        ))
+                        Line::from(Span::styled(format!("   {cmd} "), Style::default().white()))
                     }
                 })
                 .collect();
             let popup = Paragraph::new(items)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(Color::DarkGray)),
-                )
-                .style(Style::default().bg(Color::Black));
+                .block(Block::bordered().border_style(Style::default().dark_gray()))
+                .on_black();
             f.render_widget(popup, popup_area);
         }
     }

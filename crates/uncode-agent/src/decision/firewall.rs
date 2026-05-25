@@ -31,6 +31,7 @@ use super::types::{ActionProposal, NormalizedAction, ParsedAction, ValidatedActi
 // ── SemanticFirewall ─────────────────────────────────────
 
 /// 语义防火墙 — 编排三层管线
+#[derive(Debug)]
 pub struct SemanticFirewall {
     pub parser: Box<dyn ParseStrategy>,
     pub validators: Vec<Box<dyn ValidationRule>>,
@@ -66,11 +67,12 @@ impl SemanticFirewall {
 
 // ── Parser ──────────────────────────────────────────────
 
-pub trait ParseStrategy: Send + Sync {
+pub trait ParseStrategy: Send + Sync + std::fmt::Debug {
     fn parse(&self, raw: &ActionProposal) -> Result<ParsedAction, ParseError>;
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ParseError {
     #[error("unknown tool: {0}")]
     UnknownTool(String),
@@ -79,6 +81,7 @@ pub enum ParseError {
 }
 
 /// 默认解析器：将 ActionProposal 的 raw_arguments 直接作为 ParsedAction
+#[derive(Debug)]
 pub struct DefaultParser;
 
 impl ParseStrategy for DefaultParser {
@@ -92,9 +95,10 @@ impl ParseStrategy for DefaultParser {
 
 // ── Validator ───────────────────────────────────────────
 
-pub trait ValidationRule: Send + Sync {
+pub trait ValidationRule: Send + Sync + std::fmt::Debug {
+    #[must_use]
     fn validate(&self, action: &ParsedAction) -> Result<ValidationVerdict, ValidationError>;
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &str;
 }
 
 #[derive(Debug)]
@@ -105,6 +109,7 @@ pub struct ValidationVerdict {
 }
 
 impl ValidationVerdict {
+    #[must_use]
     pub fn approved() -> Self {
         Self {
             approved: true,
@@ -113,6 +118,7 @@ impl ValidationVerdict {
         }
     }
 
+    #[must_use]
     pub fn denied(reason: impl Into<String>) -> Self {
         Self {
             approved: false,
@@ -123,6 +129,7 @@ impl ValidationVerdict {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ValidationError {
     #[error("validation rule '{rule}' failed: {reason}")]
     RuleFailed { rule: String, reason: String },
@@ -130,17 +137,19 @@ pub enum ValidationError {
 
 // ── Normalizer ──────────────────────────────────────────
 
-pub trait NormalizeStrategy: Send + Sync {
+pub trait NormalizeStrategy: Send + Sync + std::fmt::Debug {
     fn normalize(&self, action: &ValidatedAction) -> Result<NormalizedAction, NormalizeError>;
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum NormalizeError {
     #[error("path normalization failed: {0}")]
     PathError(String),
 }
 
 /// 默认规范化器：原样通过
+#[derive(Debug)]
 pub struct DefaultNormalizer;
 
 impl NormalizeStrategy for DefaultNormalizer {
@@ -159,21 +168,16 @@ impl NormalizeStrategy for DefaultNormalizer {
 /// - LLM 输出的字段名别名统一（filepath → path）
 /// - 缺失参数的默认值填充
 /// - normalized_fields 日志输出（不再为空）
+#[derive(Debug)]
 pub struct DeclarativeNormalizer {
-    /// 字段名映射：LLM 输出字段名 → 规范字段名
     field_mapping: std::collections::HashMap<String, String>,
-    /// 默认值：工具名 → 字段名 → 默认值
-    defaults:
-        std::collections::HashMap<String, std::collections::HashMap<String, serde_json::Value>>,
+    defaults: uncode_ontology::registry::FieldDefaults,
 }
 
 impl DeclarativeNormalizer {
     pub fn new(
         field_mapping: std::collections::HashMap<String, String>,
-        defaults: std::collections::HashMap<
-            String,
-            std::collections::HashMap<String, serde_json::Value>,
-        >,
+        defaults: uncode_ontology::registry::FieldDefaults,
     ) -> Self {
         Self {
             field_mapping,
@@ -194,6 +198,12 @@ impl DeclarativeNormalizer {
     pub fn builtin() -> Self {
         let registry = uncode_ontology::builtin::coding_agent_ontology();
         Self::from_registry(&registry)
+    }
+}
+
+impl<'a> From<&'a uncode_ontology::TypeRegistry> for DeclarativeNormalizer {
+    fn from(registry: &'a uncode_ontology::TypeRegistry) -> Self {
+        Self::from_registry(registry)
     }
 }
 
@@ -240,6 +250,7 @@ impl NormalizeStrategy for DeclarativeNormalizer {
 // ── FirewallError ───────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum FirewallError {
     #[error("parse error: {0}")]
     Parse(#[from] ParseError),
@@ -258,6 +269,7 @@ pub enum FirewallError {
 // ── PermissionPolicyRule ────────────────────────────────
 
 /// 包装 `tool_permission.rs::PermissionPolicy`
+#[derive(Debug)]
 pub struct PermissionPolicyRule {
     policy: Arc<crate::tool_permission::PermissionPolicy>,
     auto_allow_readonly: bool,
@@ -297,7 +309,7 @@ impl ValidationRule for PermissionPolicyRule {
             Ok(ValidationVerdict::approved())
         }
     }
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "permission_policy"
     }
 }
@@ -305,6 +317,7 @@ impl ValidationRule for PermissionPolicyRule {
 // ── PathSafetyRule ──────────────────────────────────────
 
 /// 路径安全模式
+#[derive(Debug)]
 enum PathSafetyMode {
     /// 仅允许 CWD 内路径
     CwdOnly,
@@ -317,26 +330,37 @@ enum PathSafetyMode {
 }
 
 /// 路径安全校验 — 确保文件操作路径在允许范围内
+#[derive(Debug)]
 pub struct PathSafetyRule {
     cwd: std::path::PathBuf,
+    canonical_cwd: std::path::PathBuf,
     mode: PathSafetyMode,
 }
 
 impl PathSafetyRule {
     pub fn new(cwd: impl Into<std::path::PathBuf>) -> Self {
+        let cwd = cwd.into();
+        let canonical_cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
         Self {
-            cwd: cwd.into(),
+            cwd,
+            canonical_cwd,
             mode: PathSafetyMode::CwdOnly,
         }
     }
 
-    pub fn with_allow_list(cwd: impl Into<std::path::PathBuf>, allow_list: &[String]) -> Self {
+    pub fn with_allow_list(
+        cwd: impl Into<std::path::PathBuf>,
+        allow_list: &[impl AsRef<std::path::Path>],
+    ) -> Self {
+        let cwd = cwd.into();
+        let canonical_cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.clone());
         let allowed_dirs: Vec<std::path::PathBuf> = allow_list
             .iter()
-            .map(|s| std::path::PathBuf::from(s))
+            .map(|p| std::path::PathBuf::from(p.as_ref()))
             .collect();
         Self {
-            cwd: cwd.into(),
+            cwd,
+            canonical_cwd,
             mode: PathSafetyMode::AllowList { allowed_dirs },
         }
     }
@@ -344,6 +368,7 @@ impl PathSafetyRule {
     pub fn unrestricted() -> Self {
         Self {
             cwd: std::path::PathBuf::new(),
+            canonical_cwd: std::path::PathBuf::new(),
             mode: PathSafetyMode::Unrestricted,
         }
     }
@@ -351,13 +376,9 @@ impl PathSafetyRule {
     fn is_path_allowed(&self, resolved: &std::path::Path) -> bool {
         match &self.mode {
             PathSafetyMode::Unrestricted => true,
-            PathSafetyMode::CwdOnly => {
-                let canonical_cwd = self.cwd.canonicalize().unwrap_or_else(|_| self.cwd.clone());
-                resolved.starts_with(&canonical_cwd)
-            }
+            PathSafetyMode::CwdOnly => resolved.starts_with(&self.canonical_cwd),
             PathSafetyMode::AllowList { allowed_dirs } => {
-                let canonical_cwd = self.cwd.canonicalize().unwrap_or_else(|_| self.cwd.clone());
-                if resolved.starts_with(&canonical_cwd) {
+                if resolved.starts_with(&self.canonical_cwd) {
                     return true;
                 }
                 for dir in allowed_dirs {
@@ -401,21 +422,20 @@ impl ValidationRule for PathSafetyRule {
                 Ok(r) => r,
                 Err(_) => {
                     // 路径可能不存在（新建文件），检查父目录
-                    if let Some(parent) = full.parent() {
-                        match parent.canonicalize() {
-                            Ok(parent_resolved) => {
-                                parent_resolved.join(full.file_name().unwrap_or_default())
-                            }
-                            Err(_) => {
-                                return Ok(ValidationVerdict::denied(format!(
-                                    "cannot resolve path: {path_str}"
-                                )));
-                            }
-                        }
-                    } else {
+                    let Some(parent) = full.parent() else {
                         return Ok(ValidationVerdict::denied(format!(
                             "cannot resolve path: {path_str}"
                         )));
+                    };
+                    match parent.canonicalize() {
+                        Ok(parent_resolved) => {
+                            parent_resolved.join(full.file_name().unwrap_or_default())
+                        }
+                        Err(_) => {
+                            return Ok(ValidationVerdict::denied(format!(
+                                "cannot resolve path: {path_str}"
+                            )));
+                        }
                     }
                 }
             };
@@ -431,7 +451,7 @@ impl ValidationRule for PathSafetyRule {
 
         Ok(ValidationVerdict::approved())
     }
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "path_safety"
     }
 }
@@ -441,6 +461,12 @@ impl ValidationRule for PathSafetyRule {
 /// 包装 `tools/registry.rs::ToolRegistry::prepare_and_validate()`
 pub struct SchemaCoercionRule {
     registry: Arc<ToolRegistry>,
+}
+
+impl std::fmt::Debug for SchemaCoercionRule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SchemaCoercionRule").finish()
+    }
 }
 
 impl SchemaCoercionRule {
@@ -467,7 +493,7 @@ impl ValidationRule for SchemaCoercionRule {
             }),
         }
     }
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "schema_coercion"
     }
 }
@@ -478,6 +504,7 @@ impl ValidationRule for SchemaCoercionRule {
 ///
 /// 评估 `ActionDef::preconditions` 中的约束（RequiredField, TypeCheck, RangeCheck 等），
 /// 将 Hard 级别失败转为 firewall deny，Soft 级别失败记录为 violations 但不阻断。
+#[derive(Debug)]
 pub struct OntologyConstraintRule {
     registry: uncode_ontology::TypeRegistry,
 }
@@ -491,20 +518,16 @@ impl OntologyConstraintRule {
 impl ValidationRule for OntologyConstraintRule {
     fn validate(&self, action: &ParsedAction) -> Result<ValidationVerdict, ValidationError> {
         let Some(action_def) = self.registry.get_action(&action.tool_name) else {
-            // 未知工具不在本体范围内，交给其他 rule 处理
             return Ok(ValidationVerdict::approved());
         };
 
-        let fields: std::collections::HashMap<String, serde_json::Value> =
-            if let serde_json::Value::Object(ref map) = action.arguments {
-                map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
-            } else {
-                return Ok(ValidationVerdict::approved());
-            };
+        let Some(map) = action.arguments.as_object() else {
+            return Ok(ValidationVerdict::approved());
+        };
 
         let mut violations = Vec::new();
         for constraint in &action_def.preconditions {
-            let result = uncode_ontology::evaluate_constraint(constraint, &fields);
+            let result = uncode_ontology::evaluate_constraint(constraint, map);
             match result {
                 uncode_ontology::ConstraintResult::Pass => {}
                 uncode_ontology::ConstraintResult::Warn { detail, .. } => {
@@ -517,6 +540,7 @@ impl ValidationRule for OntologyConstraintRule {
                         violations: vec![detail],
                     });
                 }
+                _ => {}
             }
         }
 
@@ -532,7 +556,7 @@ impl ValidationRule for OntologyConstraintRule {
         }
     }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "ontology_constraint"
     }
 }
@@ -788,7 +812,7 @@ mod tests {
             arguments: serde_json::json!({"path": "src/main.rs"}),
         };
         let verdict = rule.validate(&action).unwrap();
-        let _ = verdict;
+        assert!(verdict.approved, "CWD-relative path should be allowed");
     }
 
     #[test]
@@ -815,9 +839,7 @@ mod tests {
             arguments: serde_json::json!({"path": test_path.to_string_lossy().to_string()}),
         };
         let verdict = rule.validate(&action).unwrap();
-        // May or may not pass depending on whether the temp file exists,
-        // but the allow_list logic should not immediately deny it
-        let _ = verdict;
+        assert!(verdict.approved, "path in allow_list dir should be allowed");
     }
 
     #[test]
@@ -847,7 +869,7 @@ mod tests {
         assert!(
             normalized
                 .normalized_fields
-                .contains(&"filepath → path".to_string())
+                .contains(&"filepath → path".to_owned())
         );
     }
 
@@ -864,7 +886,7 @@ mod tests {
         assert!(
             normalized
                 .normalized_fields
-                .contains(&"offset = default".to_string())
+                .contains(&"offset = default".to_owned())
         );
     }
 

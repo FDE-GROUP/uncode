@@ -230,6 +230,7 @@ impl ToolRegistry {
     /// Validate tool arguments against the tool's JSON Schema parameters.
     ///
     /// **Pi:** `validateToolArguments` — runs after `prepareArguments`, before `beforeToolCall`.
+    #[must_use]
     pub fn validate(&self, name: &str, args: &serde_json::Value) -> Result<(), String> {
         let tool = self.tools.read().get(name).cloned();
         let Some(tool) = tool else {
@@ -672,7 +673,7 @@ mod tests {
                 arguments: serde_json::Value,
             ) -> Result<serde_json::Value, UncodeError> {
                 let mut obj = arguments.as_object().cloned().unwrap_or_default();
-                obj.entry("path".to_string())
+                obj.entry("path".to_owned())
                     .or_insert(serde_json::Value::String("/from-prepare".into()));
                 Ok(serde_json::Value::Object(obj))
             }

@@ -42,7 +42,7 @@ use uncode_core::session::SessionEntry;
 use uncode_core::skill::SkillRegistry;
 use uncode_core::template::TemplateStore;
 
-use crate::loop_engine::AgentLoop;
+use crate::loop_engine::{AgentLoop, safe_lock};
 use crate::model_switch;
 
 /// Harness 运行阶段
@@ -219,7 +219,7 @@ impl AgentHarness {
                         // Collect handlers under lock, release before await
                         let tag = uncode_core::event::agent_event_tag(&event);
                         let handlers = {
-                            let router = event_router.lock().unwrap();
+                            let router = safe_lock(&event_router, "event_router");
                             router.get_arc_hook_handlers(tag)
                         };
                         // Dispatch without holding the lock

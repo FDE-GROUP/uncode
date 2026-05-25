@@ -25,6 +25,7 @@ pub struct PendingConfirmation {
 ///
 /// **Pi:** Pi 哲学为「无内置权限弹窗」；uncode TUI 在 L3 层显式确认，非 Pi 机制复刻。
 /// **OpenCode:** 对照工具审批/沙箱交互，无 API 兼容。
+#[derive(Debug)]
 pub struct PermissionManager {
     auto_allow_readonly: bool,
     auto_allow_bash_safe: bool,

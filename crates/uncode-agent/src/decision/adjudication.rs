@@ -39,7 +39,7 @@ pub trait DecisionPolicy: Send + Sync {
         context: &DecisionContext,
         action: &NormalizedAction,
     ) -> Result<DecisionVerdict, AdjudicationError>;
-    fn name(&self) -> &'static str;
+    fn name(&self) -> &str;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -62,12 +62,16 @@ impl Adjudicator {
     }
 
     pub fn replace_policy_by_name(&mut self, name: &str, policy: Box<dyn DecisionPolicy>) {
-        self.remove_policy_by_name(name);
-        self.policies.push(policy);
+        if let Some(pos) = self.policies.iter().position(|p| p.name() == name) {
+            self.policies[pos] = policy;
+        } else {
+            self.policies.push(policy);
+        }
     }
 
     /// 对所有策略依次裁决。任一策略拒绝则立即返回。
     /// 通过时聚合所有策略的 violations 到 warnings。
+    #[must_use]
     pub fn adjudicate(
         &self,
         action: &NormalizedAction,
@@ -78,14 +82,14 @@ impl Adjudicator {
             let verdict = policy.evaluate(context, action)?;
             if !verdict.allowed {
                 return Err(AdjudicationError::Denied {
-                    policy: policy.name().to_string(),
+                    policy: policy.name().to_owned(),
                     reason: verdict.reason.unwrap_or_default(),
                 });
             }
             warnings.extend(verdict.violations);
         }
         Ok(ApprovedAction {
-            action: action.clone(),
+            action: Arc::new(action.clone()),
             adjudicated_at: chrono::Utc::now(),
             warnings,
         })
@@ -123,17 +127,27 @@ impl PhaseGuardPolicy {
 
     /// 更新当前 Phase（由 AgentHarness 在状态转换时调用）
     pub fn set_phase(&self, new_phase: AgentHarnessPhase) {
-        if let Ok(mut p) = self.phase.lock() {
-            *p = new_phase;
+        match self.phase.lock() {
+            Ok(mut p) => *p = new_phase,
+            Err(e) => {
+                tracing::warn!("phase lock poisoned, recovering");
+                *e.into_inner() = new_phase;
+                self.phase.clear_poison();
+            }
         }
     }
 
-    /// 读取当前 Phase
     pub fn current_phase(&self) -> AgentHarnessPhase {
-        self.phase
-            .lock()
-            .map(|p| p.clone())
-            .unwrap_or(AgentHarnessPhase::Idle)
+        match self.phase.lock() {
+            Ok(p) => p.clone(),
+            Err(e) => {
+                let guard = e.into_inner();
+                let phase = guard.clone();
+                drop(guard);
+                self.phase.clear_poison();
+                phase
+            }
+        }
     }
 }
 
@@ -151,7 +165,7 @@ impl DecisionPolicy for PhaseGuardPolicy {
             ))),
         }
     }
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "phase_guard"
     }
 }
@@ -183,7 +197,7 @@ impl DecisionPolicy for TurnLimitPolicy {
         }
         Ok(DecisionVerdict::approved())
     }
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "turn_limit"
     }
 }
@@ -212,7 +226,7 @@ impl DecisionPolicy for CancellationPolicy {
         }
         Ok(DecisionVerdict::approved())
     }
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "cancellation"
     }
 }
@@ -245,7 +259,7 @@ impl DecisionPolicy for ConcurrencyPolicy {
         }
         Ok(DecisionVerdict::denied("no active agent run"))
     }
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "concurrency"
     }
 }
@@ -291,24 +305,27 @@ impl DecisionPolicy for EffectBasedPolicy {
         if action_def.is_read_only() {
             Ok(DecisionVerdict::approved())
         } else {
+            let effect_list = action_def
+                .effects
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
             Ok(DecisionVerdict {
                 allowed: true,
                 reason: Some(format!(
-                    "action '{}' has non-read effects: {}",
+                    "action '{}' has non-read effects: {effect_list}",
                     action.tool_name,
-                    action_def
-                        .effects
-                        .iter()
-                        .map(|e| format!("{e}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
                 )),
-                violations: vec![],
+                violations: vec![format!(
+                    "non_read_effects: {} — {effect_list}",
+                    action.tool_name
+                )],
             })
         }
     }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "effect_based"
     }
 }
@@ -371,8 +388,8 @@ impl DecisionPolicy for CustomPolicy {
         Ok(DecisionVerdict::approved())
     }
 
-    fn name(&self) -> &'static str {
-        "custom_policy"
+    fn name(&self) -> &str {
+        &self.policy_name
     }
 }
 
@@ -416,6 +433,8 @@ mod tests {
             turn_number: turn,
             max_turns: 50,
             active_tools: vec!["read".into()],
+            total_input_tokens: 0,
+            total_output_tokens: 0,
         }
     }
 
@@ -440,6 +459,27 @@ mod tests {
         let policy = PhaseGuardPolicy::new(AgentHarnessPhase::Compaction);
         let verdict = policy.evaluate(&make_context(1), &make_action()).unwrap();
         assert!(!verdict.allowed);
+    }
+
+    #[test]
+    fn test_phase_guard_poison_recovery() {
+        // 通过故意 poison 内部 mutex 来验证 set_phase 的恢复能力
+        let policy = PhaseGuardPolicy::new(AgentHarnessPhase::Idle);
+
+        // Poison the internal mutex: lock it, then panic while holding the lock
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = policy.phase.lock().unwrap();
+            panic!("intentional poison for PhaseGuardPolicy");
+        }));
+        assert!(result.is_err(), "expected panic to poison the mutex");
+
+        // set_phase should recover from poison and set the new phase
+        policy.set_phase(AgentHarnessPhase::Turn);
+        assert_eq!(policy.current_phase(), AgentHarnessPhase::Turn);
+
+        // Verify it still works for evaluation
+        let verdict = policy.evaluate(&make_context(1), &make_action()).unwrap();
+        assert!(verdict.allowed);
     }
 
     // ── TurnLimitPolicy ──
@@ -645,5 +685,51 @@ mod tests {
 
         adj.add_policy(Box::new(CancellationPolicy::new(CancellationToken::new())));
         assert_eq!(adj.policies.len(), 2);
+    }
+
+    #[test]
+    fn test_remove_policy_by_name() {
+        let mut adj = Adjudicator::new(vec![
+            Box::new(TurnLimitPolicy::new(50)),
+            Box::new(CancellationPolicy::new(CancellationToken::new())),
+        ]);
+        assert_eq!(adj.policies.len(), 2);
+        adj.remove_policy_by_name("turn_limit");
+        assert_eq!(adj.policies.len(), 1);
+        assert_eq!(adj.policies[0].name(), "cancellation");
+    }
+
+    #[test]
+    fn test_remove_policy_by_name_nonexistent() {
+        let mut adj = Adjudicator::new(vec![Box::new(TurnLimitPolicy::new(50))]);
+        adj.remove_policy_by_name("nonexistent");
+        assert_eq!(adj.policies.len(), 1);
+    }
+
+    #[test]
+    fn test_replace_policy_by_name_existing() {
+        let mut adj = Adjudicator::new(vec![
+            Box::new(TurnLimitPolicy::new(50)),
+            Box::new(CancellationPolicy::new(CancellationToken::new())),
+        ]);
+        adj.replace_policy_by_name("turn_limit", Box::new(TurnLimitPolicy::new(100)));
+        assert_eq!(adj.policies.len(), 2);
+        assert_eq!(adj.policies[0].name(), "turn_limit");
+        let ctx = make_context(1);
+        let action = make_action();
+        let result = adj.policies[0].evaluate(&ctx, &action).unwrap();
+        assert!(result.allowed);
+    }
+
+    #[test]
+    fn test_replace_policy_by_name_nonexistent_appends() {
+        let mut adj = Adjudicator::new(vec![Box::new(TurnLimitPolicy::new(50))]);
+        adj.replace_policy_by_name(
+            "cancellation",
+            Box::new(CancellationPolicy::new(CancellationToken::new())),
+        );
+        assert_eq!(adj.policies.len(), 2);
+        assert_eq!(adj.policies[0].name(), "turn_limit");
+        assert_eq!(adj.policies[1].name(), "cancellation");
     }
 }

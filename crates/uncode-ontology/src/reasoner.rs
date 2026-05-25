@@ -12,6 +12,7 @@ use crate::types::{ArithmeticOp, DerivationExpr, ReasoningRule, TypeId};
 
 /// Result of a traversal query — entity IDs reachable via a link.
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct TraversalResult {
     pub link_id: TypeId,
     pub source_id: TypeId,
@@ -20,6 +21,7 @@ pub struct TraversalResult {
 
 /// Result of a derivation — a single derived field value.
 #[derive(Debug, Clone)]
+#[must_use]
 pub struct DerivationResult {
     pub rule_id: TypeId,
     pub derived_field: String,
@@ -31,6 +33,7 @@ pub struct DerivationResult {
 /// Given a source entity type and a link, returns all target entity TypeIds.
 /// Note: this returns entity **types**, not instances. Instance-level traversal
 /// requires runtime data (e.g., Model instances), which is handled by the bridge.
+#[must_use]
 pub fn evaluate_traversal(
     registry: &crate::TypeRegistry,
     rule: &ReasoningRule,
@@ -61,6 +64,7 @@ pub fn evaluate_traversal(
 /// Evaluate a derivation rule against field values.
 ///
 /// Returns the derived field value if the rule fires, or None.
+#[must_use]
 pub fn evaluate_derivation(
     rule: &ReasoningRule,
     fields: &HashMap<String, serde_json::Value>,
@@ -134,6 +138,7 @@ fn evaluate_expression(
 /// Evaluate all derivation rules against field values.
 ///
 /// Returns all derived field values that fire.
+#[must_use]
 pub fn evaluate_all_derivations(
     rules: &[ReasoningRule],
     fields: &HashMap<String, serde_json::Value>,

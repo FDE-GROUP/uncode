@@ -53,6 +53,7 @@ pub struct ProviderRegistration {
 }
 
 impl ProviderRegistration {
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         if self.name.is_empty() {
             return Err("provider name cannot be empty".into());

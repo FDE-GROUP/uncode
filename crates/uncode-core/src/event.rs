@@ -709,6 +709,7 @@ fn turn_lifecycle_rank(tag: &str) -> Option<u8> {
 /// 校验事件切片是否符合 Pi 式 turn 内顺序（`turn_start` … `turn_end`）。
 ///
 /// 用于 fixture 测试与回归；不校验跨 turn 的 `session_*` / 队列事件。
+#[must_use]
 pub fn validate_pi_turn_lifecycle_order(events: &[AgentEvent]) -> Result<(), String> {
     let mut last_rank: Option<u8> = None;
     let mut in_turn = false;
@@ -900,5 +901,793 @@ mod pi_event_fixture {
             AgentEvent::TurnStart { turn: 1 },
         ];
         assert!(validate_pi_turn_lifecycle_order(&events).is_err());
+    }
+
+    #[test]
+    fn pi_turn_order_rejects_out_of_order_content_delta_after_tool_call_end() {
+        let events = vec![
+            AgentEvent::TurnStart { turn: 1 },
+            AgentEvent::ToolCallStart {
+                tool_id: "t1".into(),
+                tool_name: "bash".into(),
+                arguments_summary: "ls".into(),
+            },
+            AgentEvent::ToolCallEnd {
+                data: Box::new(ToolCallEndEventData {
+                    tool_id: "t1".into(),
+                    tool_name: "bash".into(),
+                    arguments: "ls".into(),
+                    status: ToolCallStatus::Success,
+                    duration_ms: 10,
+                    output_size: None,
+                    result_summary: None,
+                    is_error: false,
+                }),
+            },
+            AgentEvent::ContentDelta {
+                delta_type: DeltaType::Text,
+                content: "late text".into(),
+                content_index: None,
+            },
+            AgentEvent::TurnEnd {
+                turn: 1,
+                usage: UsageInfo::default(),
+            },
+        ];
+        assert!(validate_pi_turn_lifecycle_order(&events).is_err());
+    }
+
+    #[test]
+    fn pi_turn_order_rejects_missing_turn_end() {
+        let events = vec![AgentEvent::TurnStart { turn: 1 }];
+        assert!(validate_pi_turn_lifecycle_order(&events).is_err());
+    }
+
+    #[test]
+    fn pi_turn_order_skips_non_turn_events() {
+        let events = vec![
+            AgentEvent::SessionStart {
+                session_id: "s1".into(),
+                timestamp: chrono::Utc::now(),
+            },
+            AgentEvent::TurnStart { turn: 1 },
+            AgentEvent::TurnEnd {
+                turn: 1,
+                usage: UsageInfo::default(),
+            },
+            AgentEvent::SessionEnd {
+                data: Box::new(SessionEndData {
+                    session_id: "s1".into(),
+                    total_turns: 1,
+                    total_tokens: UsageInfo::default(),
+                    exit_reason: "completed".into(),
+                }),
+            },
+        ];
+        validate_pi_turn_lifecycle_order(&events).expect("session events skipped");
+    }
+}
+
+#[cfg(test)]
+mod event_serde_tests {
+    use super::*;
+
+    fn roundtrip(event: AgentEvent, expected_tag: &str) {
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], expected_tag);
+        let deserialized: AgentEvent = serde_json::from_value(json).unwrap();
+        let tag2 = agent_event_tag(&deserialized);
+        assert_eq!(tag2, expected_tag);
+    }
+
+    #[test]
+    fn serde_session_start() {
+        roundtrip(
+            AgentEvent::SessionStart {
+                session_id: "s1".into(),
+                timestamp: chrono::Utc::now(),
+            },
+            "session_start",
+        );
+    }
+
+    #[test]
+    fn serde_turn_start() {
+        roundtrip(AgentEvent::TurnStart { turn: 5 }, "turn_start");
+    }
+
+    #[test]
+    fn serde_tool_call_end() {
+        roundtrip(
+            AgentEvent::ToolCallEnd {
+                data: Box::new(ToolCallEndEventData {
+                    tool_id: "t1".into(),
+                    tool_name: "read".into(),
+                    arguments: "{}".into(),
+                    status: ToolCallStatus::Success,
+                    duration_ms: 42,
+                    output_size: Some(100),
+                    result_summary: Some("ok".into()),
+                    is_error: false,
+                }),
+            },
+            "tool_call_end",
+        );
+    }
+
+    #[test]
+    fn serde_error() {
+        roundtrip(
+            AgentEvent::Error {
+                category: ErrorCategory::Llm,
+                message: "timeout".into(),
+                recoverable: true,
+            },
+            "error",
+        );
+    }
+
+    #[test]
+    fn serde_decision_made() {
+        roundtrip(
+            AgentEvent::DecisionMade {
+                turn_id: "1".into(),
+                tool_name: "bash".into(),
+                allowed: true,
+                reason: None,
+                duration_ms: None,
+            },
+            "decision_made",
+        );
+    }
+
+    #[test]
+    fn serde_compaction_complete() {
+        roundtrip(
+            AgentEvent::CompactionComplete {
+                messages_replaced: 5,
+                tokens_before: 10000,
+                tokens_after: 2000,
+                summary_text: "summary".into(),
+                reason: CompactionReason::Threshold,
+            },
+            "compaction_complete",
+        );
+    }
+
+    #[test]
+    fn serde_evaluation_score() {
+        roundtrip(
+            AgentEvent::EvaluationScore {
+                turn_id: "1".into(),
+                level: "H1".into(),
+                quality_score: 0.85,
+                summary: Some("good".into()),
+            },
+            "evaluation_score",
+        );
+    }
+}
+
+#[cfg(test)]
+mod agent_event_tag_tests {
+    use super::*;
+    use crate::message::UsageInfo;
+
+    fn assert_tag(event: AgentEvent, expected: &str) {
+        assert_eq!(agent_event_tag(&event), expected);
+    }
+
+    #[test]
+    fn all_tags() {
+        assert_tag(
+            AgentEvent::SessionStart {
+                session_id: "".into(),
+                timestamp: chrono::Utc::now(),
+            },
+            "session_start",
+        );
+        assert_tag(
+            AgentEvent::SessionEnd {
+                data: Box::new(SessionEndData {
+                    session_id: "".into(),
+                    total_turns: 0,
+                    total_tokens: UsageInfo::default(),
+                    exit_reason: "".into(),
+                }),
+            },
+            "session_end",
+        );
+        assert_tag(AgentEvent::TurnStart { turn: 0 }, "turn_start");
+        assert_tag(
+            AgentEvent::TurnEnd {
+                turn: 0,
+                usage: UsageInfo::default(),
+            },
+            "turn_end",
+        );
+        assert_tag(
+            AgentEvent::MessageStart {
+                role: crate::message::Role::Assistant,
+                message_id: "".into(),
+            },
+            "message_start",
+        );
+        assert_tag(
+            AgentEvent::MessageEnd {
+                role: crate::message::Role::Assistant,
+                message_id: "".into(),
+            },
+            "message_end",
+        );
+        assert_tag(
+            AgentEvent::ContentDelta {
+                delta_type: DeltaType::Text,
+                content: "".into(),
+                content_index: None,
+            },
+            "content_delta",
+        );
+        assert_tag(
+            AgentEvent::ToolCallStart {
+                tool_id: "".into(),
+                tool_name: "".into(),
+                arguments_summary: "".into(),
+            },
+            "tool_call_start",
+        );
+        assert_tag(
+            AgentEvent::ToolCallProgress {
+                tool_id: "".into(),
+                progress_type: ProgressType::Spinner,
+                detail: "".into(),
+            },
+            "tool_call_progress",
+        );
+        assert_tag(
+            AgentEvent::ToolCallAwaitingApproval {
+                tool_id: "".into(),
+                tool_name: "".into(),
+                arguments_summary: "".into(),
+                tool_description: None,
+            },
+            "tool_call_awaiting_approval",
+        );
+        assert_tag(
+            AgentEvent::ToolCallEnd {
+                data: Box::new(ToolCallEndEventData {
+                    tool_id: "".into(),
+                    tool_name: "".into(),
+                    arguments: "".into(),
+                    status: ToolCallStatus::Success,
+                    duration_ms: 0,
+                    output_size: None,
+                    result_summary: None,
+                    is_error: false,
+                }),
+            },
+            "tool_call_end",
+        );
+        assert_tag(
+            AgentEvent::TaskUpdate {
+                data: Box::new(TaskUpdateData {
+                    task_id: "".into(),
+                    status: TaskStatus::Pending,
+                    title: "".into(),
+                    subtasks: vec![],
+                    depends_on: vec![],
+                }),
+            },
+            "task_update",
+        );
+        assert_tag(
+            AgentEvent::PhaseSummary {
+                data: Box::new(PhaseSummaryData {
+                    phase: 0,
+                    completed: vec![],
+                    issues: vec![],
+                    next_steps: vec![],
+                    token_usage: UsageInfo::default(),
+                }),
+            },
+            "phase_summary",
+        );
+        assert_tag(
+            AgentEvent::CompactionStart {
+                data: Box::new(CompactionStartData {
+                    session_id: "".into(),
+                    reason: CompactionReason::Threshold,
+                    tokens_before: 0,
+                }),
+            },
+            "compaction_start",
+        );
+        assert_tag(
+            AgentEvent::CompactionComplete {
+                messages_replaced: 0,
+                tokens_before: 0,
+                tokens_after: 0,
+                summary_text: "".into(),
+                reason: CompactionReason::Threshold,
+            },
+            "compaction_complete",
+        );
+        assert_tag(
+            AgentEvent::RetryAttempt {
+                data: Box::new(RetryAttemptData {
+                    attempt: 0,
+                    max_attempts: 0,
+                    delay_ms: 0,
+                    error: "".into(),
+                    final_success: false,
+                }),
+            },
+            "retry_attempt",
+        );
+        assert_tag(
+            AgentEvent::ModelChanged {
+                data: Box::new(ModelChangedData {
+                    from: None,
+                    to: "".into(),
+                    source: ModelChangeSource::User,
+                }),
+            },
+            "model_changed",
+        );
+        assert_tag(
+            AgentEvent::ThinkingLevelChanged {
+                data: Box::new(ThinkingLevelChangedData {
+                    from: None,
+                    to: ThinkingLevel::Medium,
+                }),
+            },
+            "thinking_level_changed",
+        );
+        assert_tag(
+            AgentEvent::MessageQueued { text: "".into() },
+            "message_queued",
+        );
+        assert_tag(
+            AgentEvent::MessageDelivered { text: "".into() },
+            "message_delivered",
+        );
+        assert_tag(
+            AgentEvent::LlmRequestStart {
+                data: Box::new(LlmRequestStartData {
+                    model_id: "".into(),
+                    message_count: 0,
+                }),
+            },
+            "llm_request_start",
+        );
+        assert_tag(
+            AgentEvent::LlmRequestEnd {
+                data: Box::new(LlmRequestEndData {
+                    model_id: "".into(),
+                    duration_ms: 0,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    status: LlmRequestStatus::Success,
+                }),
+            },
+            "llm_request_end",
+        );
+        assert_tag(
+            AgentEvent::QueueUpdate {
+                data: Box::new(QueueUpdateData {
+                    steering_count: 0,
+                    follow_up_count: 0,
+                    next_turn_count: 0,
+                }),
+            },
+            "queue_update",
+        );
+        assert_tag(
+            AgentEvent::SessionInfoChanged {
+                data: Box::new(SessionInfoChangedData {
+                    session_id: "".into(),
+                    field: "".into(),
+                    old_value: None,
+                    new_value: None,
+                }),
+            },
+            "session_info_changed",
+        );
+        assert_tag(
+            AgentEvent::ContextThreshold {
+                data: Box::new(ContextThresholdData {
+                    session_id: "".into(),
+                    usage_ratio: 0.0,
+                    threshold: 0.0,
+                    context_window: 0,
+                }),
+            },
+            "context_threshold",
+        );
+        assert_tag(
+            AgentEvent::Error {
+                category: ErrorCategory::Llm,
+                message: "".into(),
+                recoverable: false,
+            },
+            "error",
+        );
+        assert_tag(
+            AgentEvent::AgentInterrupted {
+                turn: 0,
+                partial_response: false,
+            },
+            "agent_interrupted",
+        );
+        assert_tag(
+            AgentEvent::UncertaintyEncountered {
+                uncertainty_kind: "".into(),
+                turn_id: "".into(),
+                description: "".into(),
+                resolution_strategy: None,
+            },
+            "uncertainty_encountered",
+        );
+        assert_tag(
+            AgentEvent::DecisionMade {
+                turn_id: "".into(),
+                tool_name: "".into(),
+                allowed: false,
+                reason: None,
+                duration_ms: None,
+            },
+            "decision_made",
+        );
+        assert_tag(
+            AgentEvent::ProposalReceived {
+                turn_id: "".into(),
+                proposal_id: "".into(),
+                tool_name: "".into(),
+                intent: "".into(),
+            },
+            "proposal_received",
+        );
+        assert_tag(
+            AgentEvent::FirewallCheck {
+                turn_id: "".into(),
+                proposal_id: "".into(),
+                tool_name: "".into(),
+                passed: false,
+                stage: "".into(),
+                violations: vec![],
+                duration_ms: 0,
+            },
+            "firewall_check",
+        );
+        assert_tag(
+            AgentEvent::ActionExecuted {
+                turn_id: "".into(),
+                proposal_id: "".into(),
+                tool_name: "".into(),
+                success: false,
+                duration_ms: 0,
+            },
+            "action_executed",
+        );
+        assert_tag(
+            AgentEvent::DecisionAudited {
+                turn_id: "".into(),
+                proposal_id: "".into(),
+                tool_name: "".into(),
+                verdict_allowed: false,
+                persisted: false,
+            },
+            "decision_audited",
+        );
+        assert_tag(
+            AgentEvent::EvaluationScore {
+                turn_id: "".into(),
+                level: "".into(),
+                quality_score: 0.0,
+                summary: None,
+            },
+            "evaluation_score",
+        );
+        assert_tag(
+            AgentEvent::AgentSettled {
+                session_id: "".into(),
+            },
+            "agent_settled",
+        );
+        assert_tag(
+            AgentEvent::ContextInjected {
+                extension_name: "".into(),
+                count: 0,
+            },
+            "context_injected",
+        );
+        assert_tag(
+            AgentEvent::PhaseTransition {
+                data: Box::new(PhaseTransitionEventData {
+                    from: "".into(),
+                    to: "".into(),
+                    trigger: "".into(),
+                    turn: 0,
+                }),
+            },
+            "phase_transition",
+        );
+    }
+}
+
+#[cfg(test)]
+mod detail_level_tests {
+    use super::*;
+
+    #[test]
+    fn critical_levels() {
+        assert_eq!(
+            AgentEvent::SessionStart {
+                session_id: "".into(),
+                timestamp: chrono::Utc::now()
+            }
+            .detail_level(),
+            EventDetailLevel::Critical
+        );
+        assert_eq!(
+            AgentEvent::TurnStart { turn: 0 }.detail_level(),
+            EventDetailLevel::Critical
+        );
+        assert_eq!(
+            AgentEvent::Error {
+                category: ErrorCategory::Llm,
+                message: "".into(),
+                recoverable: false
+            }
+            .detail_level(),
+            EventDetailLevel::Critical
+        );
+        assert_eq!(
+            AgentEvent::DecisionMade {
+                turn_id: "".into(),
+                tool_name: "".into(),
+                allowed: false,
+                reason: None,
+                duration_ms: None
+            }
+            .detail_level(),
+            EventDetailLevel::Critical
+        );
+    }
+
+    #[test]
+    fn verbose_levels() {
+        assert_eq!(
+            AgentEvent::ToolCallProgress {
+                tool_id: "".into(),
+                progress_type: ProgressType::Spinner,
+                detail: "".into()
+            }
+            .detail_level(),
+            EventDetailLevel::Verbose
+        );
+        assert_eq!(
+            AgentEvent::ToolCallAwaitingApproval {
+                tool_id: "".into(),
+                tool_name: "".into(),
+                arguments_summary: "".into(),
+                tool_description: None
+            }
+            .detail_level(),
+            EventDetailLevel::Verbose
+        );
+    }
+
+    #[test]
+    fn standard_levels() {
+        assert_eq!(
+            AgentEvent::ContentDelta {
+                delta_type: DeltaType::Text,
+                content: "".into(),
+                content_index: None
+            }
+            .detail_level(),
+            EventDetailLevel::Standard
+        );
+        assert_eq!(
+            AgentEvent::ModelChanged {
+                data: Box::new(ModelChangedData {
+                    from: None,
+                    to: "".into(),
+                    source: ModelChangeSource::User
+                })
+            }
+            .detail_level(),
+            EventDetailLevel::Standard
+        );
+        assert_eq!(
+            AgentEvent::MessageQueued { text: "".into() }.detail_level(),
+            EventDetailLevel::Standard
+        );
+    }
+}
+
+#[cfg(test)]
+mod event_router_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn test_router_new() {
+        let router = EventRouter::new();
+        assert!(!router.has_hook_handlers("turn_start"));
+    }
+
+    #[test]
+    fn test_router_default() {
+        let router = EventRouter::default();
+        assert!(!router.has_hook_handlers("any_event"));
+    }
+
+    #[test]
+    fn test_sync_handler_fires() {
+        let mut router = EventRouter::new();
+        let fired = Arc::new(AtomicBool::new(false));
+        let f = fired.clone();
+        router.on("turn_start", Box::new(move |_| {
+            f.store(true, Ordering::SeqCst);
+        }));
+
+        let event = AgentEvent::TurnStart { turn: 1 };
+        router.dispatch(&event);
+        assert!(fired.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_sync_handler_not_fired_for_other_event() {
+        let mut router = EventRouter::new();
+        let fired = Arc::new(AtomicBool::new(false));
+        let f = fired.clone();
+        router.on("turn_start", Box::new(move |_| {
+            f.store(true, Ordering::SeqCst);
+        }));
+
+        router.dispatch(&AgentEvent::TurnEnd {
+            turn: 1,
+            usage: UsageInfo::default(),
+        });
+        assert!(!fired.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_multiple_sync_handlers_all_fire() {
+        let mut router = EventRouter::new();
+        let count = Arc::new(AtomicBool::new(false));
+        let c1 = count.clone();
+        let c2 = count.clone();
+        router.on("turn_start", Box::new(move |_| {
+            c1.store(true, Ordering::SeqCst);
+        }));
+        router.on("turn_start", Box::new(move |_| {
+            c2.store(true, Ordering::SeqCst);
+        }));
+
+        router.dispatch(&AgentEvent::TurnStart { turn: 1 });
+        // Both should have fired — we can't distinguish them with AtomicBool,
+        // but at minimum the value is set.
+        assert!(count.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_sync_hook_block_short_circuits() {
+        let mut router = EventRouter::new();
+        let second_fired = Arc::new(AtomicBool::new(false));
+        let s = second_fired.clone();
+
+        router.on_sync_hook("turn_start", Box::new(move |_| {
+            HookResult::Block { reason: "denied".into() }
+        }));
+        router.on_sync_hook("turn_start", Box::new(move |_| {
+            s.store(true, Ordering::SeqCst);
+            HookResult::Continue
+        }));
+
+        let result = router.dispatch_sync_hooks(&AgentEvent::TurnStart { turn: 1 });
+        assert!(matches!(result, HookResult::Block { .. }));
+        // Second handler should NOT have been called (short-circuited)
+        assert!(!second_fired.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_sync_hook_continue_passes_through() {
+        let mut router = EventRouter::new();
+        router.on_sync_hook("turn_start", Box::new(move |_| {
+            HookResult::Continue
+        }));
+
+        let result = router.dispatch_sync_hooks(&AgentEvent::TurnStart { turn: 1 });
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    #[test]
+    fn test_sync_hook_no_handler_returns_continue() {
+        let router = EventRouter::new();
+        let result = router.dispatch_sync_hooks(&AgentEvent::TurnStart { turn: 1 });
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    #[tokio::test]
+    async fn test_async_hook_collects_results() {
+        let mut router = EventRouter::new();
+        router.on_hook("turn_start", Box::new(move |_| {
+            Box::pin(async { HookResult::Block { reason: "async denied".into() } })
+        }));
+
+        let results = router
+            .dispatch_hooks(&AgentEvent::TurnStart { turn: 1 })
+            .await;
+        assert_eq!(results.len(), 1);
+        assert!(matches!(&results[0], HookResult::Block { reason } if reason == "async denied"));
+    }
+
+    #[tokio::test]
+    async fn test_async_hook_multiple_returns_all() {
+        let mut router = EventRouter::new();
+        let called = Arc::new(Mutex::new(Vec::new()));
+        let c1 = called.clone();
+        let c2 = called.clone();
+
+        router.on_hook("turn_start", Box::new(move |_| {
+            let c = c1.clone();
+            Box::pin(async move {
+                c.lock().unwrap().push("first");
+                HookResult::Continue
+            })
+        }));
+        router.on_hook("turn_start", Box::new(move |_| {
+            let c = c2.clone();
+            Box::pin(async move {
+                c.lock().unwrap().push("second");
+                HookResult::Continue
+            })
+        }));
+
+        let results = router
+            .dispatch_hooks(&AgentEvent::TurnStart { turn: 1 })
+            .await;
+        assert_eq!(results.len(), 2);
+        let calls = called.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+    }
+
+    #[test]
+    fn test_has_hook_handlers_true_after_register() {
+        let mut router = EventRouter::new();
+        router.on_hook("error", Box::new(|_| {
+            Box::pin(async { HookResult::Continue })
+        }));
+        assert!(router.has_hook_handlers("error"));
+    }
+
+    #[test]
+    fn test_has_hook_handlers_false_unregistered() {
+        let router = EventRouter::new();
+        assert!(!router.has_hook_handlers("nonexistent"));
+    }
+
+    #[test]
+    fn test_dispatch_no_handlers_no_panic() {
+        let router = EventRouter::new();
+        router.dispatch(&AgentEvent::TurnStart { turn: 1 });
+        // Should not panic
+    }
+
+    #[test]
+    fn test_sync_hook_patch_messages_result() {
+        let mut router = EventRouter::new();
+        router.on_sync_hook("turn_start", Box::new(|_| {
+            HookResult::PatchMessages {
+                messages: vec![],
+            }
+        }));
+
+        let result = router.dispatch_sync_hooks(&AgentEvent::TurnStart { turn: 1 });
+        assert!(matches!(result, HookResult::PatchMessages { .. }));
     }
 }

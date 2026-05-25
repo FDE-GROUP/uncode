@@ -50,7 +50,7 @@ impl WasmInstance {
     }
 
     pub fn is_disabled(&self) -> bool {
-        self.inner.lock().unwrap().disabled
+        super::safe_lock(&self.inner, "wasi_is_disabled").disabled
     }
 
     /// Clone the inner Arc for sharing with WasmExtensionTool instances.
@@ -64,7 +64,7 @@ fn call_on_hook(
     inner: &Arc<std::sync::Mutex<WasmInstanceInner>>,
     ctx_bytes: &[u8],
 ) -> anyhow::Result<HookResult> {
-    let mut guard = inner.lock().unwrap();
+    let mut guard = super::safe_lock(inner, "wasi_on_hook");
 
     if guard.disabled {
         return Ok(HookResult::Continue);

@@ -43,7 +43,7 @@ impl ToolHooks for ExtensionToolHooks {
                 // For proper args modification, the caller needs to check modification.args_override.
                 modification
                     .args_override
-                    .map(|_| "[extension-modified]".to_string())
+                    .map(|_| "[extension-modified]".to_owned())
             }
             HookResult::Block { reason } => Some(reason),
         }

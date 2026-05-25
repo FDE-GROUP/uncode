@@ -1,25 +1,48 @@
 //! Core ontology types: TypeId, EntityDef, ActionDef, FieldDef
 
+use std::borrow::Borrow;
+
 use serde::{Deserialize, Serialize};
 
 /// Entity category: distinguishes domain semantics from system resource semantics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum EntityCategory {
-    /// Domain entities: File, Workspace, Module, Action — consumed by the semantic firewall.
+    #[default]
     Domain,
-    /// System resource entities: LLM, Provider, Capability — consumed by model routing / cost governance.
     System,
 }
 
-impl Default for EntityCategory {
-    fn default() -> Self {
-        Self::Domain
+impl EntityCategory {
+    #[must_use]
+    pub fn is_system(&self) -> bool {
+        matches!(self, Self::System)
+    }
+}
+
+impl std::fmt::Display for EntityCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Domain => f.write_str("domain"),
+            Self::System => f.write_str("system"),
+        }
     }
 }
 
 /// String-based type identifier for debuggability and LLM context clarity.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// # Examples
+///
+/// ```
+/// use uncode_ontology::TypeId;
+///
+/// let id1 = TypeId::from("File");
+/// let id2: TypeId = "Workspace".into();
+/// assert_eq!(id1, TypeId("File".into()));
+/// assert_ne!(id1, id2);
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TypeId(pub String);
 
 impl TypeId {
@@ -32,8 +55,40 @@ impl std::fmt::Display for TypeId {
     }
 }
 
+impl From<String> for TypeId {
+    fn from(s: String) -> Self {
+        TypeId(s)
+    }
+}
+
+impl From<&str> for TypeId {
+    fn from(s: &str) -> Self {
+        TypeId(s.to_owned())
+    }
+}
+
+impl std::ops::Deref for TypeId {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for TypeId {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Borrow<str> for TypeId {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
 /// Entity type definition (≈ Palantir Object Type).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EntityDef {
     pub id: TypeId,
     pub fields: Vec<FieldDef>,
@@ -44,7 +99,8 @@ pub struct EntityDef {
 }
 
 /// Action type definition (≈ Palantir Action Type).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ActionDef {
     pub name: String,
     pub fields: Vec<FieldDef>,
@@ -59,7 +115,8 @@ pub struct ActionDef {
 }
 
 /// Field definition with aliases for LLM output normalization.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FieldDef {
     pub name: String,
     pub value_type: String,
@@ -74,6 +131,7 @@ pub struct FieldDef {
 /// Execution category replaces hardcoded permission logic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ExecutionCategory {
     ReadOnly,
     Destructive,
@@ -83,8 +141,9 @@ pub enum ExecutionCategory {
 }
 
 /// Constraint axioms for validation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Constraint {
     RequiredField {
         field: String,
@@ -124,19 +183,22 @@ pub enum Constraint {
 }
 
 fn default_hard() -> ConstraintLevel {
-    ConstraintLevel::Hard
+    ConstraintLevel::default()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ConstraintLevel {
+    #[default]
     Hard,
     Soft,
 }
 
 /// Side-effect declaration for adjudication.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Effect {
     Read {
         target: String,
@@ -176,12 +238,14 @@ impl std::fmt::Display for Effect {
 }
 
 impl Effect {
+    #[must_use]
     pub fn is_read_only(&self) -> bool {
         matches!(self, Self::Read { .. })
     }
 }
 
 impl ActionDef {
+    #[must_use]
     pub fn is_read_only(&self) -> bool {
         self.effects.iter().all(|e| e.is_read_only())
     }
@@ -190,6 +254,7 @@ impl ActionDef {
 /// Link cardinality.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum Cardinality {
     OneToOne,
     OneToMany,
@@ -197,7 +262,8 @@ pub enum Cardinality {
 }
 
 /// Link definition — declares a relationship between two entity types.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LinkDef {
     pub id: TypeId,
     pub source_type: TypeId,
@@ -212,8 +278,9 @@ pub struct LinkDef {
 /// Two rule types:
 /// - **Traversal**: follow a LinkDef to collect related entities
 /// - **Derivation**: from known field values, compute derived field values
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ReasoningRule {
     /// Traverse a link to collect related entity IDs.
     ///
@@ -251,8 +318,9 @@ pub enum ReasoningRule {
 /// Declarative derivation expression.
 ///
 /// These are simple, deterministic transformations — not a Turing-complete language.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum DerivationExpr {
     /// If source_field equals expected_value, set derived_field to result_value.
     FieldEquals {
@@ -278,6 +346,7 @@ pub enum DerivationExpr {
 /// Arithmetic operation for derivation expressions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum ArithmeticOp {
     Add,
     Subtract,
@@ -291,7 +360,7 @@ pub enum ArithmeticOp {
 /// - **Patch** (0.0.x): bug fixes, no schema change
 /// - **Minor** (0.x.0): backward-compatible additions (new entities, new fields with defaults, new links/rules)
 /// - **Major** (x.0.0): breaking changes (removed entities/fields, changed field types)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct OntologyVersion {
     pub major: u32,
     pub minor: u32,
@@ -309,6 +378,7 @@ impl OntologyVersion {
 
     /// Two versions are compatible if they share the same major version
     /// and the stored version is >= the required version at the minor level.
+    #[must_use]
     pub fn is_compatible_with(&self, required: &OntologyVersion) -> bool {
         self.major == required.major
             && (self.minor > required.minor

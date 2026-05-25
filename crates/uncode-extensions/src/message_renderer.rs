@@ -18,7 +18,7 @@ pub struct MessageRenderConfig {
 }
 
 /// Display style for custom message rendering.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum MessageRenderStyle {
     #[default]
     Inline,
@@ -27,6 +27,7 @@ pub enum MessageRenderStyle {
 }
 
 impl MessageRenderConfig {
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         if self.message_type.is_empty() {
             return Err("message_type must not be empty".into());

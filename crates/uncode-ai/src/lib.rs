@@ -28,6 +28,20 @@ pub use providers::gemini_generative::GeminiGenerativeAiApi;
 pub use providers::ollama_native::OllamaNativeApi;
 pub use providers::openai_completions::OpenAiCompletionsApi;
 
+#[track_caller]
+pub(crate) fn safe_lock<'a, T>(
+    lock: &'a std::sync::Mutex<T>,
+    name: &'static str,
+) -> std::sync::MutexGuard<'a, T> {
+    match lock.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!("mutex '{name}' poisoned, recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
 use futures::stream::BoxStream;
 use uncode_shared::error::UncodeError;
 

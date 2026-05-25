@@ -371,4 +371,184 @@ mod tests {
             "context overflow should trigger concurrency reduction"
         );
     }
+
+    #[test]
+    fn test_evolution_entry_construction() {
+        use chrono::Utc;
+        let entry = EvolutionEntry {
+            timestamp: Utc::now(),
+            failure_type: FailurePattern::RepeatedToolFailure {
+                tool_name: "bash".into(),
+                count: 3,
+            },
+            turn_number: 5,
+            tool_name: "bash".into(),
+            error_message: "command not found".into(),
+        };
+        assert_eq!(entry.turn_number, 5);
+        assert_eq!(entry.tool_name, "bash");
+    }
+
+    #[test]
+    fn test_failure_pattern_repeated_tool_failure() {
+        let pattern = FailurePattern::RepeatedToolFailure {
+            tool_name: "bash".into(),
+            count: 3,
+        };
+        assert!(
+            matches!(pattern, FailurePattern::RepeatedToolFailure { ref tool_name, count } if tool_name == "bash" && count == 3)
+        );
+    }
+
+    #[test]
+    fn test_failure_pattern_turn_limit_exceeded() {
+        let pattern = FailurePattern::TurnLimitExceeded { max_turns: 50 };
+        match pattern {
+            FailurePattern::TurnLimitExceeded { max_turns } => assert_eq!(max_turns, 50),
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_failure_pattern_test_loop_detected() {
+        let pattern = FailurePattern::TestLoopDetected {
+            test_name: "test_foo".into(),
+            attempts: 5,
+        };
+        assert!(
+            matches!(pattern, FailurePattern::TestLoopDetected { ref test_name, attempts } if test_name == "test_foo" && attempts == 5)
+        );
+    }
+
+    #[test]
+    fn test_failure_pattern_unknown() {
+        let pattern = FailurePattern::Unknown {
+            message: "something went wrong".into(),
+        };
+        match pattern {
+            FailurePattern::Unknown { ref message } => {
+                assert_eq!(message, "something went wrong")
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_classify_turn_limit_exceeded() {
+        let pattern = EvolutionEngine::classify_failure("bash", "some error", 50);
+        assert!(matches!(pattern, FailurePattern::TurnLimitExceeded { .. }));
+    }
+
+    #[test]
+    fn test_classify_unknown_falls_to_repeated_tool() {
+        let pattern = EvolutionEngine::classify_failure("test_tool", "unrecognized error", 1);
+        assert!(matches!(
+            pattern,
+            FailurePattern::RepeatedToolFailure { .. }
+        ));
+    }
+
+    #[test]
+    fn test_evolution_engine_new_empty() {
+        let engine = EvolutionEngine::new(2);
+        assert_eq!(engine.entry_count(), 0);
+    }
+
+    #[test]
+    fn test_evolution_engine_entry_count_increments() {
+        let mut engine = EvolutionEngine::new(2);
+        assert_eq!(engine.entry_count(), 0);
+        engine.record_failure(1, "bash", "error");
+        assert_eq!(engine.entry_count(), 1);
+        engine.record_failure(2, "read", "not found");
+        assert_eq!(engine.entry_count(), 2);
+    }
+
+    #[test]
+    fn test_evolution_engine_clear() {
+        let mut engine = EvolutionEngine::new(2);
+        engine.record_failure(1, "bash", "error");
+        engine.record_failure(2, "read", "not found");
+        assert_eq!(engine.entry_count(), 2);
+        engine.clear();
+        assert_eq!(engine.entry_count(), 0);
+    }
+
+    #[test]
+    fn test_harness_mutation_increase_tool_timeout() {
+        let mutation = HarnessMutation::IncreaseToolTimeout {
+            from_seconds: 30,
+            to_seconds: 60,
+        };
+        match mutation {
+            HarnessMutation::IncreaseToolTimeout {
+                from_seconds,
+                to_seconds,
+            } => {
+                assert_eq!(from_seconds, 30);
+                assert_eq!(to_seconds, 60);
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_harness_mutation_enable_policy() {
+        let mutation = HarnessMutation::EnablePolicy {
+            policy_name: "strict_mode".into(),
+        };
+        match mutation {
+            HarnessMutation::EnablePolicy { ref policy_name } => {
+                assert_eq!(policy_name, "strict_mode");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_harness_mutation_custom() {
+        let mutation = HarnessMutation::Custom {
+            description: "increase timeout".into(),
+        };
+        match mutation {
+            HarnessMutation::Custom { ref description } => {
+                assert_eq!(description, "increase timeout");
+            }
+            _ => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn test_apply_increase_tool_timeout() {
+        let mut config = GuardrailConfig::default();
+        let mutations = vec![HarnessMutation::IncreaseToolTimeout {
+            from_seconds: 30,
+            to_seconds: 120,
+        }];
+        EvolutionEngine::apply_to_config(&mutations, &mut config);
+        assert_eq!(config.decision.tool_timeout_seconds, 120);
+    }
+
+    #[test]
+    fn test_apply_enable_policy() {
+        let mut config = GuardrailConfig::default();
+        let policy_name = config.adjudication.policies[0].name.clone();
+        config.adjudication.policies[0].enabled = false;
+        let mutations = vec![HarnessMutation::EnablePolicy {
+            policy_name: policy_name.clone(),
+        }];
+        EvolutionEngine::apply_to_config(&mutations, &mut config);
+        assert!(config.adjudication.policies[0].enabled);
+    }
+
+    #[test]
+    fn test_apply_custom_noop() {
+        let mut config = GuardrailConfig::default();
+        let original_turn_limit = config.decision.turn_limit;
+        let mutations = vec![HarnessMutation::Custom {
+            description: "some change".into(),
+        }];
+        EvolutionEngine::apply_to_config(&mutations, &mut config);
+        assert_eq!(config.decision.turn_limit, original_turn_limit);
+    }
 }

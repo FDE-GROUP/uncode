@@ -1,11 +1,11 @@
 //! Constraint evaluation engine.
 
-use std::collections::HashMap;
-
 use crate::types::{Constraint, ConstraintLevel};
 
 /// Result of evaluating a single constraint.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
+#[non_exhaustive]
 pub enum ConstraintResult {
     Pass,
     Warn {
@@ -21,19 +21,97 @@ pub enum ConstraintResult {
 }
 
 impl ConstraintResult {
+    #[must_use]
     pub fn is_pass(&self) -> bool {
         matches!(self, Self::Pass)
+    }
+
+    fn severity(&self) -> u8 {
+        match self {
+            Self::Pass => 0,
+            Self::Warn { .. } => 1,
+            Self::Fail { .. } => 2,
+        }
+    }
+}
+
+impl std::ops::BitOr for ConstraintResult {
+    type Output = Self;
+    fn bitor(self, rhs: Self) -> Self::Output {
+        if rhs.severity() > self.severity() {
+            rhs
+        } else {
+            self
+        }
+    }
+}
+
+impl std::ops::BitOrAssign for ConstraintResult {
+    fn bitor_assign(&mut self, rhs: Self) {
+        if rhs.severity() > self.severity() {
+            *self = rhs;
+        }
+    }
+}
+
+/// Field lookup trait — abstracts over `HashMap` and `serde_json::Map`.
+pub trait FieldLookup {
+    fn get_field(&self, key: &str) -> Option<&serde_json::Value>;
+    fn contains_field(&self, key: &str) -> bool;
+}
+
+impl FieldLookup for std::collections::HashMap<String, serde_json::Value> {
+    fn get_field(&self, key: &str) -> Option<&serde_json::Value> {
+        self.get(key)
+    }
+    fn contains_field(&self, key: &str) -> bool {
+        self.contains_key(key)
+    }
+}
+
+impl FieldLookup for serde_json::Map<String, serde_json::Value> {
+    fn get_field(&self, key: &str) -> Option<&serde_json::Value> {
+        self.get(key)
+    }
+    fn contains_field(&self, key: &str) -> bool {
+        self.contains_key(key)
     }
 }
 
 /// Evaluate a constraint against field values.
-pub fn evaluate_constraint(
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::HashMap;
+/// use uncode_ontology::{Constraint, ConstraintLevel, evaluate_constraint};
+///
+/// let mut fields = HashMap::new();
+/// fields.insert("name".into(), serde_json::json!("hello"));
+///
+/// let constraint = Constraint::RequiredField { field: "name".into() };
+/// let result = evaluate_constraint(&constraint, &fields);
+/// assert!(result.is_pass());
+/// ```
+///
+/// Missing required field produces a failure:
+///
+/// ```
+/// use std::collections::HashMap;
+/// use uncode_ontology::{Constraint, evaluate_constraint};
+///
+/// let fields: HashMap<String, serde_json::Value> = HashMap::new();
+/// let constraint = Constraint::RequiredField { field: "missing".into() };
+/// let result = evaluate_constraint(&constraint, &fields);
+/// assert!(!result.is_pass());
+/// ```
+pub fn evaluate_constraint<F: FieldLookup + ?Sized>(
     constraint: &Constraint,
-    fields: &HashMap<String, serde_json::Value>,
+    fields: &F,
 ) -> ConstraintResult {
     match constraint {
         Constraint::RequiredField { field } => {
-            if fields.contains_key(field) {
+            if fields.contains_field(field) {
                 ConstraintResult::Pass
             } else {
                 ConstraintResult::Fail {
@@ -48,7 +126,7 @@ pub fn evaluate_constraint(
             expected,
             level,
         } => {
-            let Some(value) = fields.get(field) else {
+            let Some(value) = fields.get_field(field) else {
                 return ConstraintResult::Pass;
             };
             let ok = match expected.as_str() {
@@ -60,21 +138,21 @@ pub fn evaluate_constraint(
             if ok {
                 ConstraintResult::Pass
             } else {
-                let result = ConstraintResult::Fail {
-                    constraint: "type_check".into(),
-                    field: field.clone(),
-                    detail: format!(
-                        "field '{field}' expected {expected}, got {}",
-                        value_type_name(value)
-                    ),
-                };
+                let detail = format!(
+                    "field '{field}' expected {expected}, got {}",
+                    value_type_name(value)
+                );
                 match level {
                     ConstraintLevel::Soft => ConstraintResult::Warn {
-                        constraint: result.constraint().to_string(),
-                        field: result.field().to_string(),
-                        detail: result.detail().to_string(),
+                        constraint: "type_check".into(),
+                        field: field.clone(),
+                        detail,
                     },
-                    ConstraintLevel::Hard => result,
+                    ConstraintLevel::Hard => ConstraintResult::Fail {
+                        constraint: "type_check".into(),
+                        field: field.clone(),
+                        detail,
+                    },
                 }
             }
         }
@@ -84,28 +162,30 @@ pub fn evaluate_constraint(
             max,
             level,
         } => {
-            let Some(value) = fields.get(field) else {
+            let Some(value) = fields.get_field(field) else {
                 return ConstraintResult::Pass;
             };
             let num = value.as_f64();
             let ok = num.map_or(true, |n| {
-                min.map_or(true, |lo| n >= lo) && max.map_or(true, |hi| n <= hi)
+                let in_min = min.is_none_or(|lo| (lo..).contains(&n));
+                let in_max = max.is_none_or(|hi| (..=hi).contains(&n));
+                in_min && in_max
             });
             if ok {
                 ConstraintResult::Pass
             } else {
-                let result = ConstraintResult::Fail {
-                    constraint: "range_check".into(),
-                    field: field.clone(),
-                    detail: format!("field '{field}' value out of range"),
-                };
+                let detail = format!("field '{field}' value out of range");
                 match level {
                     ConstraintLevel::Soft => ConstraintResult::Warn {
-                        constraint: result.constraint().to_string(),
-                        field: result.field().to_string(),
-                        detail: result.detail().to_string(),
+                        constraint: "range_check".into(),
+                        field: field.clone(),
+                        detail,
                     },
-                    ConstraintLevel::Hard => result,
+                    ConstraintLevel::Hard => ConstraintResult::Fail {
+                        constraint: "range_check".into(),
+                        field: field.clone(),
+                        detail,
+                    },
                 }
             }
         }
@@ -114,26 +194,26 @@ pub fn evaluate_constraint(
             allowed,
             level,
         } => {
-            let Some(value) = fields.get(field) else {
+            let Some(value) = fields.get_field(field) else {
                 return ConstraintResult::Pass;
             };
             if let Some(s) = value.as_str() {
-                if allowed.contains(&s.to_string()) {
+                if allowed.iter().any(|a| a == s) {
                     return ConstraintResult::Pass;
                 }
             }
-            let result = ConstraintResult::Fail {
-                constraint: "enum_check".into(),
-                field: field.clone(),
-                detail: format!("field '{field}' value not in allowed set"),
-            };
+            let detail = format!("field '{field}' value not in allowed set");
             match level {
                 ConstraintLevel::Soft => ConstraintResult::Warn {
-                    constraint: result.constraint().to_string(),
-                    field: result.field().to_string(),
-                    detail: result.detail().to_string(),
+                    constraint: "enum_check".into(),
+                    field: field.clone(),
+                    detail,
                 },
-                ConstraintLevel::Hard => result,
+                ConstraintLevel::Hard => ConstraintResult::Fail {
+                    constraint: "enum_check".into(),
+                    field: field.clone(),
+                    detail,
+                },
             }
         }
         Constraint::RegexMatch {
@@ -166,30 +246,10 @@ fn value_type_name(v: &serde_json::Value) -> &'static str {
     }
 }
 
-impl ConstraintResult {
-    fn constraint(&self) -> &str {
-        match self {
-            Self::Fail { constraint, .. } | Self::Warn { constraint, .. } => constraint,
-            Self::Pass => "",
-        }
-    }
-    fn field(&self) -> &str {
-        match self {
-            Self::Fail { field, .. } | Self::Warn { field, .. } => field,
-            Self::Pass => "",
-        }
-    }
-    fn detail(&self) -> &str {
-        match self {
-            Self::Fail { detail, .. } | Self::Warn { detail, .. } => detail,
-            Self::Pass => "",
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn fields() -> HashMap<String, serde_json::Value> {
         let mut m = HashMap::new();

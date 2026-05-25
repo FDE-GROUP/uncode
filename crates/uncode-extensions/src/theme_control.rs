@@ -8,13 +8,14 @@ use serde::{Deserialize, Serialize};
 const VALID_LEVELS: &[&str] = &["off", "minimal", "low", "medium", "high", "xhigh"];
 
 /// Theme switch request — extension changes the active TUI theme by name.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ThemeControlConfig {
     /// Theme name: built-in ("dark", "light", "monokai", "solarized") or path to JSON theme file.
     pub theme_name: String,
 }
 
 impl ThemeControlConfig {
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         if self.theme_name.is_empty() {
             return Err("theme_name cannot be empty".into());
@@ -24,7 +25,7 @@ impl ThemeControlConfig {
 }
 
 /// Thinking label customization — overrides default level labels.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ThinkingLabelConfig {
     /// Map from level key to custom label. Only valid keys accepted.
     /// Example: `{"high": "深度思考", "off": "关"}`.
@@ -32,6 +33,7 @@ pub struct ThinkingLabelConfig {
 }
 
 impl ThinkingLabelConfig {
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         for key in self.labels.keys() {
             if !VALID_LEVELS.contains(&key.as_str()) {

@@ -229,9 +229,9 @@ pub async fn compact_session(
     // Merge file lists from previous compaction (cross-cycle tracking)
     files_read.extend(prev_files_read);
     files_modified.extend(prev_files_modified);
-    files_read.sort();
+    files_read.sort_unstable();
     files_read.dedup();
-    files_modified.sort();
+    files_modified.sort_unstable();
     files_modified.dedup();
 
     // Build conversation text for summarization
@@ -381,10 +381,7 @@ pub(crate) fn is_split_turn(entries: &[SessionEntry], cut_idx: usize) -> bool {
 /// Find the prefix messages of a split turn (entries from User to cut_idx, exclusive).
 ///
 /// Returns empty Vec if not a split turn or no prefix found.
-fn find_split_turn_prefix<'a>(
-    entries: &'a [SessionEntry],
-    cut_idx: usize,
-) -> Vec<&'a MessageEntry> {
+fn find_split_turn_prefix(entries: &[SessionEntry], cut_idx: usize) -> Vec<&MessageEntry> {
     if !is_split_turn(entries, cut_idx) {
         return Vec::new();
     }
@@ -523,9 +520,9 @@ fn extract_files_from_entries(entries: &[&MessageEntry]) -> (Vec<String>, Vec<St
         }
     }
 
-    files_read.sort();
+    files_read.sort_unstable();
     files_read.dedup();
-    files_modified.sort();
+    files_modified.sort_unstable();
     files_modified.dedup();
 
     (files_read, files_modified)
@@ -1086,6 +1083,245 @@ mod tests {
         assert!(result.contains("/c.rs"));
     }
 
+    // ── estimate_context_tokens tests ──
+
+    #[test]
+    fn test_estimate_context_tokens_empty() {
+        assert_eq!(estimate_context_tokens(&[]), 0);
+    }
+
+    #[test]
+    fn test_estimate_context_tokens_single_text() {
+        let msg = Message::user("hello world");
+        // "hello world" = 11 chars / 4 = 2.75 → ceil → 3
+        assert_eq!(estimate_context_tokens(&[msg]), 3);
+    }
+
+    #[test]
+    fn test_estimate_context_tokens_mixed_blocks() {
+        let msg = Message {
+            id: "test".into(),
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Text {
+                    text: "abc".into(),
+                },
+                ContentBlock::ToolCall(Box::new(ToolCall {
+                    id: "tc1".into(),
+                    name: "read".into(),
+                    arguments: serde_json::json!({}),
+                })),
+            ],
+            usage: None,
+            stop_reason: None,
+            error_message: None,
+            timestamp: None,
+        };
+        // "abc" = 3/4=1, "read" = 4/4=1 → 2 tokens
+        assert_eq!(estimate_context_tokens(&[msg]), 2);
+    }
+
+    // ── should_compact tests ──
+
+    #[test]
+    fn test_should_compact_below_threshold() {
+        let msg = Message::user(&"x".repeat(100)); // 100/4 = 25 tokens
+        assert!(!should_compact(&[msg], 100)); // threshold = 100*80% = 80, 25 < 80
+    }
+
+    #[test]
+    fn test_should_compact_above_threshold() {
+        let msg = Message::user(&"x".repeat(400)); // 400/4 = 100 tokens
+        assert!(should_compact(&[msg], 100)); // threshold = 80, 100 > 80
+    }
+
+    #[test]
+    fn test_should_compact_exact_threshold() {
+        let msg = Message::user(&"x".repeat(320)); // 320/4 = 80 tokens
+        // threshold = 100*80% = 80, 80 > 80 → false (not strictly greater)
+        assert!(!should_compact(&[msg], 100));
+    }
+
+    // ── extract_text tests ──
+
+    #[test]
+    fn test_extract_text_text_only() {
+        let blocks = vec![ContentBlock::Text {
+            text: "hello world".into(),
+        }];
+        assert_eq!(extract_text(&blocks), "hello world");
+    }
+
+    #[test]
+    fn test_extract_text_thinking_skipped() {
+        let blocks = vec![
+            ContentBlock::Thinking {
+                text: "deep thought".into(),
+            },
+            ContentBlock::Text {
+                text: "visible".into(),
+            },
+        ];
+        assert_eq!(extract_text(&blocks), "visible");
+    }
+
+    #[test]
+    fn test_extract_text_tool_call() {
+        let blocks = vec![ContentBlock::ToolCall(Box::new(ToolCall {
+            id: "tc1".into(),
+            name: "read".into(),
+            arguments: serde_json::json!({}),
+        }))];
+        assert_eq!(extract_text(&blocks), "\u{1f527}");
+    }
+
+    #[test]
+    fn test_extract_text_image() {
+        let blocks = vec![ContentBlock::Image {
+            mime_type: "image/png".into(),
+            data: "base64data".into(),
+        }];
+        assert_eq!(extract_text(&blocks), "[image]");
+    }
+
+    // ── floor_char_boundary tests ──
+
+    #[test]
+    fn test_floor_char_boundary_ascii() {
+        assert_eq!(floor_char_boundary("hello", 3), 3);
+    }
+
+    #[test]
+    fn test_floor_char_boundary_multi_byte_start() {
+        let s = "héllo"; // é is 2 bytes, starts at byte 1
+        assert_eq!(floor_char_boundary(s, 1), 1); // at start of é, valid boundary
+    }
+
+    #[test]
+    fn test_floor_char_boundary_multi_byte_mid() {
+        let s = "héllo"; // é spans bytes 1-2
+        // byte 2 is continuation byte → not boundary → fall back to 1 (start of é)
+        assert_eq!(floor_char_boundary(s, 2), 1);
+    }
+
+    #[test]
+    fn test_floor_char_boundary_beyond_len() {
+        assert_eq!(floor_char_boundary("hi", 100), 2);
+    }
+
+    #[test]
+    fn test_floor_char_boundary_empty() {
+        assert_eq!(floor_char_boundary("", 0), 0);
+    }
+
+    // ── find_split_turn_prefix tests ──
+
+    #[test]
+    fn test_find_split_turn_prefix_not_split() {
+        let entries = vec![
+            make_msg_entry("u1", Role::User, "hello"),
+            make_msg_entry("a1", Role::Assistant, "world"),
+        ];
+        let prefix = find_split_turn_prefix(&entries, 2);
+        assert!(prefix.is_empty());
+    }
+
+    #[test]
+    fn test_find_split_turn_prefix_returns_prefix() {
+        let entries = vec![
+            make_msg_entry("u1", Role::User, "do it"),
+            SessionEntry::Message(Box::new(MessageEntry {
+                id: "a1".into(),
+                parent_id: None,
+                timestamp: chrono::Utc::now(),
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolCall(Box::new(ToolCall {
+                    id: "tc1".into(),
+                    name: "read".into(),
+                    arguments: serde_json::json!({"path": "/test.rs"}),
+                }))],
+                usage: None,
+            })),
+            SessionEntry::Message(Box::new(MessageEntry {
+                id: "t1".into(),
+                parent_id: None,
+                timestamp: chrono::Utc::now(),
+                role: Role::Tool,
+                content: vec![ContentBlock::ToolResult(Box::new(ToolResult {
+                    tool_call_id: "tc1".into(),
+                    content: "contents".into(),
+                    is_error: false,
+                }))],
+                usage: None,
+            })),
+            make_msg_entry("u2", Role::User, "continue"),
+        ];
+        // cut at t1 (idx=2): split turn, prefix = [u1, a1]
+        let prefix = find_split_turn_prefix(&entries, 2);
+        assert_eq!(prefix.len(), 2);
+        assert_eq!(prefix[0].id, "u1");
+        assert_eq!(prefix[1].id, "a1");
+    }
+
+    #[test]
+    fn test_find_split_turn_prefix_no_user_before() {
+        let entries = vec![
+            SessionEntry::Message(Box::new(MessageEntry {
+                id: "a1".into(),
+                parent_id: None,
+                timestamp: chrono::Utc::now(),
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolCall(Box::new(ToolCall {
+                    id: "tc1".into(),
+                    name: "read".into(),
+                    arguments: serde_json::json!({"path": "/test.rs"}),
+                }))],
+                usage: None,
+            })),
+            SessionEntry::Message(Box::new(MessageEntry {
+                id: "t1".into(),
+                parent_id: None,
+                timestamp: chrono::Utc::now(),
+                role: Role::Tool,
+                content: vec![ContentBlock::ToolResult(Box::new(ToolResult {
+                    tool_call_id: "tc1".into(),
+                    content: "contents".into(),
+                    is_error: false,
+                }))],
+                usage: None,
+            })),
+        ];
+        // cut at t1 (idx=1): split turn, but no user before → empty
+        let prefix = find_split_turn_prefix(&entries, 1);
+        assert!(prefix.is_empty());
+    }
+
+    // ── estimate_message_entry_tokens / estimate_entry_tokens tests ──
+
+    #[test]
+    fn test_estimate_entry_tokens_empty() {
+        assert_eq!(estimate_entry_tokens(&[]), 0);
+    }
+
+    #[test]
+    fn test_estimate_entry_tokens_mixed() {
+        let entries = vec![
+            make_msg_entry("u1", Role::User, "abc"),
+            SessionEntry::Compaction(Box::new(CompactionEntry {
+                id: "c1".into(),
+                parent_id: None,
+                timestamp: chrono::Utc::now(),
+                summary: "summary".into(),
+                first_kept_entry_id: "u2".into(),
+                tokens_before: 100,
+                files_read: vec![],
+                files_modified: vec![],
+            })),
+        ];
+        // "abc" = 3/4 = 1 token → 1 total
+        assert_eq!(estimate_entry_tokens(&entries), 1);
+    }
+
     // ── cross-compaction file merging test ──
 
     #[tokio::test]
@@ -1205,7 +1441,7 @@ mod tests {
         new_read.sort();
         new_read.dedup();
 
-        assert!(new_read.contains(&"/new_read.rs".to_string()));
-        assert!(new_read.contains(&"/old_read.rs".to_string()));
+        assert!(new_read.contains(&"/new_read.rs".to_owned()));
+        assert!(new_read.contains(&"/old_read.rs".to_owned()));
     }
 }

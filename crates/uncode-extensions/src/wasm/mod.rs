@@ -50,3 +50,17 @@ const DEFAULT_FUEL_LIMIT: u64 = 10_000_000;
 
 /// Default timeout per WASM call.
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[track_caller]
+pub(crate) fn safe_lock<'a, T>(
+    lock: &'a std::sync::Mutex<T>,
+    name: &'static str,
+) -> std::sync::MutexGuard<'a, T> {
+    match lock.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!("mutex '{name}' poisoned, recovering");
+            poisoned.into_inner()
+        }
+    }
+}

@@ -59,6 +59,26 @@ pub struct StreamOptions {
     pub metadata: Option<HashMap<String, String>>,
 }
 
+impl std::fmt::Debug for StreamOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamOptions")
+            .field("api_key", &self.api_key.as_ref().map(|_| "***"))
+            .field("temperature", &self.temperature)
+            .field("max_tokens", &self.max_tokens)
+            .field("timeout_ms", &self.timeout_ms)
+            .field("max_retries", &self.max_retries)
+            .field("max_retry_delay_ms", &self.max_retry_delay_ms)
+            .field("headers", &self.headers)
+            .field("thinking_level", &self.thinking_level)
+            .field("thinking_budget_tokens", &self.thinking_budget_tokens)
+            .field("session_id", &self.session_id)
+            .field("cache_retention", &self.cache_retention)
+            .field("transport", &self.transport)
+            .field("metadata", &self.metadata)
+            .finish()
+    }
+}
+
 // ── Thinking ──
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -265,4 +285,268 @@ fn pick_bool(base: bool, overlay: bool, default: bool) -> bool {
 pub enum MaxTokensField {
     MaxTokens,
     MaxCompletionTokens,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── Transport ──
+    #[test]
+    fn transport_serde_roundtrip() {
+        let cases = [
+            Transport::Sse,
+            Transport::WebSocket,
+            Transport::WebSocketCached,
+            Transport::Auto,
+        ];
+        for original in &cases {
+            let json = serde_json::to_string(original).unwrap();
+            let decoded: Transport = serde_json::from_str(&json).unwrap();
+            assert_eq!(*original, decoded);
+        }
+    }
+
+    #[test]
+    fn transport_default_is_sse() {
+        assert_eq!(Transport::default(), Transport::Sse);
+    }
+
+    // ── ThinkingLevel ──
+    #[test]
+    fn thinking_level_serde_roundtrip() {
+        let cases = [
+            ThinkingLevel::Off,
+            ThinkingLevel::Minimal,
+            ThinkingLevel::Low,
+            ThinkingLevel::Medium,
+            ThinkingLevel::High,
+            ThinkingLevel::XHigh,
+        ];
+        for original in &cases {
+            let json = serde_json::to_string(original).unwrap();
+            let decoded: ThinkingLevel = serde_json::from_str(&json).unwrap();
+            assert_eq!(*original, decoded);
+        }
+    }
+
+    #[test]
+    fn thinking_level_copy_eq() {
+        let a = ThinkingLevel::Medium;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    // ── ThinkingFormat ──
+    #[test]
+    fn thinking_format_serde_roundtrip() {
+        let cases = [
+            ThinkingFormat::OpenAi,
+            ThinkingFormat::DeepSeek,
+            ThinkingFormat::Anthropic,
+            ThinkingFormat::Gemini,
+            ThinkingFormat::OpenRouter,
+            ThinkingFormat::Together,
+            ThinkingFormat::ZAi,
+            ThinkingFormat::Qwen,
+            ThinkingFormat::QwenChatTemplate,
+        ];
+        for original in &cases {
+            let json = serde_json::to_string(original).unwrap();
+            let decoded: ThinkingFormat = serde_json::from_str(&json).unwrap();
+            assert_eq!(*original, decoded);
+        }
+    }
+
+    // ── StopReason ──
+    #[test]
+    fn stop_reason_serde_roundtrip() {
+        let cases = [
+            StopReason::Stop,
+            StopReason::Length,
+            StopReason::ToolUse,
+            StopReason::Error,
+            StopReason::Aborted,
+        ];
+        for original in &cases {
+            let json = serde_json::to_string(original).unwrap();
+            let decoded: StopReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(*original, decoded);
+        }
+    }
+
+    // ── InputModality ──
+    #[test]
+    fn input_modality_serde_roundtrip() {
+        let cases = [InputModality::Text, InputModality::Image, InputModality::Audio];
+        for original in &cases {
+            let json = serde_json::to_string(original).unwrap();
+            let decoded: InputModality = serde_json::from_str(&json).unwrap();
+            assert_eq!(*original, decoded);
+        }
+    }
+
+    // ── CacheRetention ──
+    #[test]
+    fn cache_retention_serde_roundtrip() {
+        let cases = [
+            CacheRetention::None,
+            CacheRetention::Short,
+            CacheRetention::Long,
+        ];
+        for original in &cases {
+            let json = serde_json::to_string(original).unwrap();
+            let decoded: CacheRetention = serde_json::from_str(&json).unwrap();
+            assert_eq!(*original, decoded);
+        }
+    }
+
+    #[test]
+    fn cache_retention_default_is_short() {
+        assert_eq!(CacheRetention::default(), CacheRetention::Short);
+    }
+
+    // ── MaxTokensField ──
+    #[test]
+    fn max_tokens_field_serde_roundtrip() {
+        let cases = [MaxTokensField::MaxTokens, MaxTokensField::MaxCompletionTokens];
+        for original in &cases {
+            let json = serde_json::to_string(original).unwrap();
+            let decoded: MaxTokensField = serde_json::from_str(&json).unwrap();
+            assert_eq!(*original, decoded);
+        }
+    }
+
+    // ── CompatConfig ──
+    #[test]
+    fn compat_config_default() {
+        let c = CompatConfig::default();
+        assert!(!c.supports_developer_role);
+        assert!(!c.supports_reasoning_effort);
+        assert!(c.supports_usage_in_streaming);
+        assert!(!c.supports_strict_mode);
+        assert_eq!(c.max_tokens_field, MaxTokensField::MaxTokens);
+        assert!(!c.requires_tool_result_name);
+        assert!(!c.requires_assistant_after_tool_result);
+        assert!(!c.requires_thinking_as_text);
+        assert!(!c.done_breaks_stream);
+        assert!(c.thinking_format.is_none());
+        assert!(!c.send_session_affinity_headers);
+        assert!(!c.supports_long_cache_retention);
+        assert!(!c.supports_store);
+        assert!(!c.requires_reasoning_content_on_assistant_messages);
+        assert!(!c.supports_eager_tool_input_streaming);
+        assert!(!c.supports_cache_control_on_tools);
+    }
+
+    #[test]
+    fn compat_config_merge_overlay_wins() {
+        let base = CompatConfig::default();
+        let mut overlay = CompatConfig::default();
+        overlay.supports_strict_mode = true;
+        let result = CompatConfig::merge_with_overlay(&base, &overlay);
+        assert!(result.supports_strict_mode);
+    }
+
+    #[test]
+    fn compat_config_merge_base_when_overlay_default() {
+        let mut base = CompatConfig::default();
+        base.supports_developer_role = true;
+        let overlay = CompatConfig::default();
+        let result = CompatConfig::merge_with_overlay(&base, &overlay);
+        assert!(result.supports_developer_role);
+    }
+
+    #[test]
+    fn compat_config_merge_both_default() {
+        let base = CompatConfig::default();
+        let overlay = CompatConfig::default();
+        let result = CompatConfig::merge_with_overlay(&base, &overlay);
+        assert!(!result.supports_strict_mode);
+        assert!(!result.supports_developer_role);
+    }
+
+    #[test]
+    fn compat_config_merge_max_tokens_field() {
+        let base = CompatConfig::default();
+        let mut overlay = CompatConfig::default();
+        overlay.max_tokens_field = MaxTokensField::MaxCompletionTokens;
+        let result = CompatConfig::merge_with_overlay(&base, &overlay);
+        assert_eq!(result.max_tokens_field, MaxTokensField::MaxCompletionTokens);
+        let result2 = CompatConfig::merge_with_overlay(&base, &CompatConfig::default());
+        assert_eq!(result2.max_tokens_field, MaxTokensField::MaxTokens);
+    }
+
+    #[test]
+    fn compat_config_merge_thinking_format() {
+        let mut base = CompatConfig::default();
+        base.thinking_format = Some(ThinkingFormat::DeepSeek);
+        let overlay = CompatConfig::default();
+        let result = CompatConfig::merge_with_overlay(&base, &overlay);
+        assert_eq!(result.thinking_format, Some(ThinkingFormat::DeepSeek));
+        let mut overlay2 = CompatConfig::default();
+        overlay2.thinking_format = Some(ThinkingFormat::Anthropic);
+        let result2 = CompatConfig::merge_with_overlay(&base, &overlay2);
+        assert_eq!(result2.thinking_format, Some(ThinkingFormat::Anthropic));
+    }
+
+    // ── Context ──
+    #[test]
+    fn context_default() {
+        let ctx = Context::default();
+        assert!(ctx.system_prompt.is_none());
+        assert!(ctx.messages.is_empty());
+        assert!(ctx.tools.is_empty());
+    }
+
+    #[test]
+    fn context_construction() {
+        let ctx = Context {
+            system_prompt: Some("You are helpful".into()),
+            messages: vec![],
+            tools: vec![],
+        };
+        assert_eq!(ctx.system_prompt.as_deref(), Some("You are helpful"));
+    }
+
+    // ── StreamOptions ──
+    #[test]
+    fn stream_options_debug_hides_api_key() {
+        let opts = StreamOptions {
+            api_key: Some("sk-abc123".into()),
+            ..Default::default()
+        };
+        let debug = format!("{:?}", opts);
+        assert!(debug.contains("***"));
+        assert!(!debug.contains("sk-abc123"));
+    }
+
+    #[test]
+    fn stream_options_construction() {
+        let opts = StreamOptions {
+            api_key: Some("key".into()),
+            temperature: Some(0.7),
+            max_tokens: Some(4096),
+            timeout_ms: Some(30_000),
+            max_retries: Some(3),
+            max_retry_delay_ms: Some(2000),
+            headers: Some(HashMap::from([("X-Custom".into(), "val".into())])),
+            thinking_level: Some(ThinkingLevel::High),
+            thinking_budget_tokens: Some(4000),
+            session_id: Some("sess-1".into()),
+            cache_retention: Some(CacheRetention::Long),
+            transport: Some(Transport::Auto),
+            metadata: Some(HashMap::from([("key".into(), "value".into())])),
+            ..Default::default()
+        };
+        assert_eq!(opts.api_key.as_deref(), Some("key"));
+        assert_eq!(opts.temperature, Some(0.7));
+        assert_eq!(opts.transport, Some(Transport::Auto));
+        assert_eq!(
+            opts.metadata
+                .as_ref()
+                .and_then(|m| m.get("key")),
+            Some(&"value".into())
+        );
+    }
 }

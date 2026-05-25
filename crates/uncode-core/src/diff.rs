@@ -64,7 +64,7 @@ pub struct Patch {
 }
 
 /// 变更统计
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DiffStats {
     pub added: usize,
     pub removed: usize,

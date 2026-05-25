@@ -3,20 +3,15 @@ use std::fmt;
 use std::path::Path;
 
 /// Skill 来源标记。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SkillSource {
     #[serde(rename = "builtin")]
+    #[default]
     BuiltIn,
     #[serde(rename = "global")]
     Global,
     #[serde(rename = "project")]
     Project,
-}
-
-impl Default for SkillSource {
-    fn default() -> Self {
-        Self::BuiltIn
-    }
 }
 
 /// Skill 输入参数定义

@@ -7,7 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Action an extension requests on the session tree.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum SessionAction {
     /// Fork a new branch from the specified entry.
@@ -21,6 +21,7 @@ pub enum SessionAction {
 }
 
 impl SessionAction {
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         match self {
             Self::Fork { entry_id } if entry_id.is_empty() => {
@@ -41,7 +42,7 @@ impl SessionAction {
 }
 
 /// Response from a session action.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "response", rename_all = "snake_case")]
 pub enum SessionResponse {
     /// Returned by Fork — contains the new session ID.

@@ -55,6 +55,7 @@ pub struct EpisodeEntry {
 }
 
 /// 情景记忆 — 会话内按重要性保留的事件集合
+#[derive(Debug)]
 pub struct EpisodeMemory {
     entries: Vec<EpisodeEntry>,
     capacity: usize,

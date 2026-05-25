@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+use ratatui::style::Stylize;
+use ratatui::widgets::{Block, Clear, Paragraph};
 
 pub struct WelcomeScreen {
     pub visible: bool,
@@ -52,12 +52,7 @@ impl WelcomeScreen {
         );
 
         let p = Paragraph::new(text)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Wellcome to UnCodeNow ")
-                    .style(Style::default().fg(Color::Cyan)),
-            )
+            .block(Block::bordered().title(" Wellcome to UnCodeNow ").cyan())
             .alignment(Alignment::Left);
 
         f.render_widget(p, popup_area);
@@ -76,4 +71,42 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let x = r.x + (r.width - pw) / 2;
     let y = r.y + (r.height - ph) / 2;
     Rect::new(x, y, pw, ph)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_is_visible_by_default() {
+        let w = WelcomeScreen::new();
+        assert!(w.is_visible());
+    }
+
+    #[test]
+    fn test_hide() {
+        let mut w = WelcomeScreen::new();
+        w.hide();
+        assert!(!w.is_visible());
+    }
+
+    #[test]
+    fn test_centered_rect() {
+        let r = Rect::new(10, 20, 200, 100);
+        let cr = centered_rect(50, 40, r);
+        assert_eq!(cr.width, 100);
+        assert_eq!(cr.height, 40);
+        assert_eq!(cr.x, 60);
+        assert_eq!(cr.y, 50);
+    }
+
+    #[test]
+    fn test_centered_rect_full() {
+        let r = Rect::new(0, 0, 100, 50);
+        let cr = centered_rect(100, 100, r);
+        assert_eq!(cr.width, 100);
+        assert_eq!(cr.height, 50);
+        assert_eq!(cr.x, 0);
+        assert_eq!(cr.y, 0);
+    }
 }

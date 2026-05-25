@@ -33,7 +33,7 @@ pub enum Freshness {
 }
 
 /// 边类型
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EdgeType {
     Calls,
     Contains,

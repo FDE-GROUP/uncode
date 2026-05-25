@@ -69,7 +69,7 @@ fn extract_symbols(
             } else {
                 SymbolKind::Function
             };
-            let sig = line.trim().to_string();
+            let sig = line.trim_ascii().to_string();
             nodes.push(GraphNode {
                 id: format!("{relative_path}:{line_num}:{kind:?}:{name}"),
                 kind,
@@ -86,7 +86,7 @@ fn extract_symbols(
 
         if let Some(caps) = patterns.struct_.captures(line) {
             let name = caps[1].to_string();
-            let sig = line.trim().to_string();
+            let sig = line.trim_ascii().to_string();
             nodes.push(GraphNode {
                 id: format!("{relative_path}:{line_num}:Struct:{name}"),
                 kind: SymbolKind::Struct,
@@ -99,7 +99,7 @@ fn extract_symbols(
             });
         } else if let Some(caps) = patterns.enum_.captures(line) {
             let name = caps[1].to_string();
-            let sig = line.trim().to_string();
+            let sig = line.trim_ascii().to_string();
             nodes.push(GraphNode {
                 id: format!("{relative_path}:{line_num}:Enum:{name}"),
                 kind: SymbolKind::Enum,
@@ -112,7 +112,7 @@ fn extract_symbols(
             });
         } else if let Some(caps) = patterns.trait_.captures(line) {
             let name = caps[1].to_string();
-            let sig = line.trim().to_string();
+            let sig = line.trim_ascii().to_string();
             nodes.push(GraphNode {
                 id: format!("{relative_path}:{line_num}:Trait:{name}"),
                 kind: SymbolKind::Trait,
@@ -125,7 +125,7 @@ fn extract_symbols(
             });
         } else if let Some(caps) = patterns.impl_.captures(line) {
             let name = caps[1].to_string();
-            let sig = line.trim().to_string();
+            let sig = line.trim_ascii().to_string();
             nodes.push(GraphNode {
                 id: format!("{relative_path}:{line_num}:Impl:{name}"),
                 kind: SymbolKind::Impl,
@@ -673,7 +673,7 @@ fn normal_fn() {}
 
         let bundle = select_bundle(
             &graph,
-            &["src/lib.rs".to_string()],
+            &["src/lib.rs".to_owned()],
             "how does Agent work?",
             &config,
         );

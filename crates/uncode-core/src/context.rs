@@ -2,14 +2,16 @@ use std::path::{Path, PathBuf};
 
 /// 从用户输入中提取 `@<path>` 引用（不包含 URL）
 pub fn extract_file_refs(text: &str) -> Vec<String> {
-    let all = extract_all_refs(text);
-    all.into_iter().filter(|r| !is_url(r)).collect()
+    let mut all = extract_all_refs(text);
+    all.retain(|r| !is_url(r));
+    all
 }
 
 /// 从用户输入中提取 `@<url>` 引用
 pub fn extract_url_refs(text: &str) -> Vec<String> {
-    let all = extract_all_refs(text);
-    all.into_iter().filter(|r| is_url(r)).collect()
+    let mut all = extract_all_refs(text);
+    all.retain(|r| is_url(r));
+    all
 }
 
 fn extract_all_refs(text: &str) -> Vec<String> {
@@ -402,5 +404,55 @@ mod tests {
         let result = truncate_content(&long, 100);
         assert!(result.contains("[truncated"));
         assert!(result.len() < long.len());
+    }
+
+    // ── extract_url_refs ──
+
+    #[test]
+    fn test_extract_url_refs_none() {
+        let refs = extract_url_refs("普通文本");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_extract_url_refs_no_urls_ignored() {
+        let refs = extract_url_refs("请看 @not-a-url 的内容");
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_extract_url_refs_simple_http() {
+        let refs = extract_url_refs("看 @http://example.com");
+        assert_eq!(refs, vec!["http://example.com"]);
+    }
+
+    #[test]
+    fn test_extract_url_refs_simple_https() {
+        let refs = extract_url_refs("看 @https://example.com");
+        assert_eq!(refs, vec!["https://example.com"]);
+    }
+
+    #[test]
+    fn test_extract_url_refs_multiple() {
+        let refs = extract_url_refs("看 @http://a.com 和 @https://b.org");
+        assert_eq!(refs, vec!["http://a.com", "https://b.org"]);
+    }
+
+    #[test]
+    fn test_extract_url_refs_with_path() {
+        let refs = extract_url_refs("@https://example.com/path/to/file.rs");
+        assert_eq!(refs, vec!["https://example.com/path/to/file.rs"]);
+    }
+
+    #[test]
+    fn test_extract_url_refs_with_query() {
+        let refs = extract_url_refs("@https://example.com/search?q=rust&page=1");
+        assert_eq!(refs, vec!["https://example.com/search?q=rust&page=1"]);
+    }
+
+    #[test]
+    fn test_extract_url_refs_at_end() {
+        let refs = extract_url_refs("详情见 @https://docs.rs");
+        assert_eq!(refs, vec!["https://docs.rs"]);
     }
 }

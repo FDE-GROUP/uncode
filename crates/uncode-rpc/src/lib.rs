@@ -484,6 +484,267 @@ mod tests {
     }
 
     #[test]
+    fn test_event_name_all_known_variants() {
+        use chrono::Utc;
+        use uncode_core::event::*;
+        use uncode_core::message::UsageInfo;
+
+        let now = Utc::now();
+
+        let cases: Vec<(AgentEvent, &str)> = vec![
+            (
+                AgentEvent::SessionStart {
+                    session_id: "s1".into(),
+                    timestamp: now,
+                },
+                "session_start",
+            ),
+            (
+                AgentEvent::SessionEnd {
+                    data: Box::new(SessionEndData {
+                        session_id: "s1".into(),
+                        total_turns: 1,
+                        total_tokens: UsageInfo::default(),
+                        exit_reason: "done".into(),
+                    }),
+                },
+                "session_end",
+            ),
+            (
+                AgentEvent::TurnStart { turn: 1 },
+                "unknown",
+            ),
+            (
+                AgentEvent::TurnEnd {
+                    turn: 1,
+                    usage: UsageInfo::default(),
+                },
+                "turn_end",
+            ),
+            (
+                AgentEvent::MessageStart {
+                    role: uncode_core::message::Role::Assistant,
+                    message_id: "m1".into(),
+                },
+                "unknown",
+            ),
+            (
+                AgentEvent::MessageEnd {
+                    role: uncode_core::message::Role::Assistant,
+                    message_id: "m1".into(),
+                },
+                "unknown",
+            ),
+            (
+                AgentEvent::ContentDelta {
+                    delta_type: DeltaType::Text,
+                    content: "hi".into(),
+                    content_index: None,
+                },
+                "content_delta",
+            ),
+            (
+                AgentEvent::ToolCallStart {
+                    tool_id: "t1".into(),
+                    tool_name: "read".into(),
+                    arguments_summary: "{}".into(),
+                },
+                "tool_call_start",
+            ),
+            (
+                AgentEvent::ToolCallProgress {
+                    tool_id: "t1".into(),
+                    progress_type: ProgressType::Spinner,
+                    detail: "".into(),
+                },
+                "tool_call_progress",
+            ),
+            (
+                AgentEvent::ToolCallAwaitingApproval {
+                    tool_id: "t1".into(),
+                    tool_name: "write".into(),
+                    arguments_summary: "{}".into(),
+                    tool_description: None,
+                },
+                "unknown",
+            ),
+            (
+                AgentEvent::ToolCallEnd {
+                    data: Box::new(ToolCallEndEventData {
+                        tool_id: "t1".into(),
+                        tool_name: "read".into(),
+                        arguments: "{}".into(),
+                        status: ToolCallStatus::Success,
+                        duration_ms: 5,
+                        output_size: None,
+                        result_summary: None,
+                        is_error: false,
+                    }),
+                },
+                "tool_call_end",
+            ),
+            (
+                AgentEvent::TaskUpdate {
+                    data: Box::new(TaskUpdateData {
+                        task_id: "task1".into(),
+                        status: TaskStatus::Running,
+                        title: "test".into(),
+                        subtasks: vec![],
+                        depends_on: vec![],
+                    }),
+                },
+                "task_update",
+            ),
+            (
+                AgentEvent::PhaseSummary {
+                    data: Box::new(PhaseSummaryData {
+                        phase: 1,
+                        completed: vec![],
+                        issues: vec![],
+                        next_steps: vec![],
+                        token_usage: UsageInfo::default(),
+                    }),
+                },
+                "phase_summary",
+            ),
+            (
+                AgentEvent::CompactionStart {
+                    data: Box::new(CompactionStartData {
+                        session_id: "s1".into(),
+                        reason: CompactionReason::Threshold,
+                        tokens_before: 1000,
+                    }),
+                },
+                "unknown",
+            ),
+            (
+                AgentEvent::CompactionComplete {
+                    messages_replaced: 5,
+                    tokens_before: 1000,
+                    tokens_after: 500,
+                    summary_text: "compressed".into(),
+                    reason: CompactionReason::Threshold,
+                },
+                "compaction_complete",
+            ),
+            (
+                AgentEvent::RetryAttempt {
+                    data: Box::new(RetryAttemptData {
+                        attempt: 1,
+                        max_attempts: 3,
+                        delay_ms: 100,
+                        error: "timeout".into(),
+                        final_success: true,
+                    }),
+                },
+                "unknown",
+            ),
+            (
+                AgentEvent::ModelChanged {
+                    data: Box::new(ModelChangedData {
+                        from: Some("gpt4".into()),
+                        to: "gpt4o".into(),
+                        source: ModelChangeSource::User,
+                    }),
+                },
+                "unknown",
+            ),
+            (
+                AgentEvent::ThinkingLevelChanged {
+                    data: Box::new(ThinkingLevelChangedData {
+                        from: None,
+                        to: uncode_core::api_types::ThinkingLevel::Medium,
+                    }),
+                },
+                "unknown",
+            ),
+            (
+                AgentEvent::MessageQueued {
+                    text: "hello".into(),
+                },
+                "message_queued",
+            ),
+            (
+                AgentEvent::MessageDelivered {
+                    text: "hello".into(),
+                },
+                "message_delivered",
+            ),
+            (
+                AgentEvent::LlmRequestStart {
+                    data: Box::new(LlmRequestStartData {
+                        model_id: "gpt4o".into(),
+                        message_count: 5,
+                    }),
+                },
+                "unknown",
+            ),
+            (
+                AgentEvent::LlmRequestEnd {
+                    data: Box::new(LlmRequestEndData {
+                        model_id: "gpt4o".into(),
+                        duration_ms: 200,
+                        input_tokens: 100,
+                        output_tokens: 50,
+                        status: LlmRequestStatus::Success,
+                    }),
+                },
+                "unknown",
+            ),
+            (
+                AgentEvent::QueueUpdate {
+                    data: Box::new(QueueUpdateData {
+                        steering_count: 0,
+                        follow_up_count: 1,
+                        next_turn_count: 0,
+                    }),
+                },
+                "unknown",
+            ),
+            (
+                AgentEvent::SessionInfoChanged {
+                    data: Box::new(SessionInfoChangedData {
+                        session_id: "s1".into(),
+                        field: "title".into(),
+                        old_value: None,
+                        new_value: Some("new".into()),
+                    }),
+                },
+                "unknown",
+            ),
+            (
+                AgentEvent::ContextThreshold {
+                    data: Box::new(ContextThresholdData {
+                        session_id: "s1".into(),
+                        usage_ratio: 0.9,
+                        threshold: 0.8,
+                        context_window: 128000,
+                    }),
+                },
+                "unknown",
+            ),
+            (
+                AgentEvent::Error {
+                    category: ErrorCategory::Llm,
+                    message: "error".into(),
+                    recoverable: true,
+                },
+                "error",
+            ),
+            (
+                AgentEvent::AgentInterrupted {
+                    turn: 1,
+                    partial_response: true,
+                },
+                "agent_interrupted",
+            ),
+        ];
+        for (event, expected) in cases {
+            assert_eq!(event_name(&event), expected, "mismatch for {event:?}");
+        }
+    }
+
+    #[test]
     fn test_json_rpc_response_serialization() {
         let resp = JsonRpcResponse {
             jsonrpc: "2.0".into(),
@@ -495,6 +756,25 @@ mod tests {
         assert!(json.contains("\"id\":1"));
         assert!(json.contains("\"result\""));
         assert!(!json.contains("\"error\""));
+    }
+
+    #[test]
+    fn test_json_rpc_response_error_serialization() {
+        let resp = JsonRpcResponse {
+            jsonrpc: "2.0".into(),
+            id: Some(Value::Number(1.into())),
+            result: None,
+            error: Some(JsonRpcError {
+                code: -32601,
+                message: "Method not found: foo".into(),
+            }),
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"id\":1"));
+        assert!(json.contains("\"error\""));
+        assert!(json.contains("-32601"));
+        assert!(json.contains("Method not found"));
+        assert!(!json.contains("\"result\""));
     }
 
     #[test]
@@ -510,6 +790,32 @@ mod tests {
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("-32700"));
+    }
+
+    #[test]
+    fn test_parse_error_response() {
+        let resp = RpcServer::parse_error("invalid json".into());
+        assert_eq!(resp.jsonrpc, "2.0");
+        assert!(resp.id.is_none());
+        assert!(resp.result.is_none());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32700);
+        assert!(err.message.contains("invalid json"));
+    }
+
+    #[test]
+    fn test_json_rpc_roundtrip() {
+        let resp = JsonRpcResponse {
+            jsonrpc: "2.0".into(),
+            id: Some(Value::Number(42.into())),
+            result: Some(serde_json::json!({"result": "ok"})),
+            error: None,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let deserialized: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized["id"], 42);
+        assert_eq!(deserialized["result"]["result"], "ok");
+        assert_eq!(deserialized["jsonrpc"], "2.0");
     }
 
     #[tokio::test]
@@ -540,5 +846,72 @@ mod tests {
         let resp = server.handle_request(request, &handlers).await;
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, -32601);
+    }
+
+    #[tokio::test]
+    async fn test_handler_error_return() {
+        let server = RpcServer::new();
+        server
+            .register("test.fail", |_| {
+                Box::pin(async move { Err("something went wrong".into()) })
+            })
+            .await;
+
+        let handlers = server.handlers.lock().await;
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(Value::Number(1.into())),
+            method: "test.fail".into(),
+            params: None,
+        };
+        let resp = server.handle_request(request, &handlers).await;
+        assert!(resp.error.is_some());
+        let err = resp.error.unwrap();
+        assert_eq!(err.code, -32000);
+        assert!(err.message.contains("something went wrong"));
+    }
+
+    #[tokio::test]
+    async fn test_notification_no_response() {
+        let server = RpcServer::new();
+        server
+            .register("test.notify", |params| Box::pin(async move { Ok(params) }))
+            .await;
+
+        let handlers = server.handlers.lock().await;
+        let request = JsonRpcRequest {
+            jsonrpc: "2.0".into(),
+            id: None, // notification: no id
+            method: "test.notify".into(),
+            params: Some(serde_json::json!({"ping": true})),
+        };
+        let resp = server.handle_request(request, &handlers).await;
+        assert!(resp.id.is_none());
+        assert!(resp.result.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_forward_events_closed_channel() {
+        let (tx, _rx) = broadcast::channel::<uncode_core::event::AgentEvent>(16);
+        let server = RpcServer::new();
+        // Drop the sender to close the channel
+        drop(tx);
+        let rx = server.notification_writer.lock().await;
+        drop(rx);
+        // forward_events should exit on RecvError::Closed
+        // Use a new receiver from the dropped sender
+        let (_tx, _rx) = broadcast::channel::<uncode_core::event::AgentEvent>(16);
+        // This should either break or continue without panicking
+        // We just verify no panic:
+        // We can't easily observe the loop exit without joining,
+        // but we can verify it doesn't hang by using a timeout
+        tokio::time::timeout(std::time::Duration::from_millis(100), async {
+            // Create a closed receiver
+            let (_tx2, rx2) = broadcast::channel::<uncode_core::event::AgentEvent>(1);
+            drop(_tx2);
+            server.forward_events(rx2).await;
+        })
+        .await
+        .expect("forward_events should exit on closed channel without hanging");
     }
 }

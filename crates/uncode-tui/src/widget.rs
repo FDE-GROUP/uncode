@@ -2,13 +2,7 @@
 
 use std::collections::HashMap;
 
-use ratatui::{
-    Frame,
-    layout::Rect,
-    style::{Modifier, Style},
-    text::Line,
-    widgets::Paragraph,
-};
+use ratatui::{Frame, layout::Rect, style::Style, text::Line, widgets::Paragraph};
 
 use uncode_core::ui_action::{WidgetConfig, WidgetPlacement};
 
@@ -90,7 +84,7 @@ impl WidgetManager {
                 .map(|l| {
                     Line::from(ratatui::text::Span::styled(
                         l.clone(),
-                        Style::default().add_modifier(Modifier::BOLD),
+                        Style::default().bold(),
                     ))
                 })
                 .collect();
@@ -104,5 +98,84 @@ impl WidgetManager {
 impl Default for WidgetManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uncode_core::ui_action::{WidgetConfig, WidgetPlacement};
+
+    fn placement_above() -> WidgetPlacement { WidgetPlacement::AboveEditor }
+    fn placement_below() -> WidgetPlacement { WidgetPlacement::BelowEditor }
+
+    #[test]
+    fn test_new_empty() {
+        let m = WidgetManager::new();
+        assert_eq!(m.lines_for(placement_above()), 0);
+        assert_eq!(m.lines_for(placement_below()), 0);
+    }
+
+    #[test]
+    fn test_set_widget_adds_order() {
+        let mut m = WidgetManager::new();
+        m.set_widget(WidgetConfig {
+            key: "w1".into(),
+            placement: placement_above(),
+            content: vec!["line1".into()],
+        });
+        assert_eq!(m.lines_for(placement_above()), 1);
+        assert_eq!(m.lines_for(placement_below()), 0);
+    }
+
+    #[test]
+    fn test_set_widget_does_not_duplicate_order() {
+        let mut m = WidgetManager::new();
+        m.set_widget(WidgetConfig {
+            key: "w1".into(),
+            placement: placement_above(),
+            content: vec!["a".into()],
+        });
+        m.set_widget(WidgetConfig {
+            key: "w1".into(),
+            placement: placement_above(),
+            content: vec!["a".into(), "b".into()],
+        });
+        assert_eq!(m.lines_for(placement_above()), 2);
+    }
+
+    #[test]
+    fn test_remove_widget() {
+        let mut m = WidgetManager::new();
+        m.set_widget(WidgetConfig {
+            key: "w1".into(),
+            placement: placement_above(),
+            content: vec!["x".into()],
+        });
+        m.remove_widget("w1");
+        assert_eq!(m.lines_for(placement_above()), 0);
+    }
+
+    #[test]
+    fn test_remove_widget_nonexistent() {
+        let mut m = WidgetManager::new();
+        m.remove_widget("nonexistent"); // should not panic
+    }
+
+    #[test]
+    fn test_lines_for_both_placements() {
+        let mut m = WidgetManager::new();
+        m.set_widget(WidgetConfig {
+            key: "above1".into(),
+            placement: placement_above(),
+            content: vec!["a".into(), "b".into()],
+        });
+        m.set_widget(WidgetConfig {
+            key: "below1".into(),
+            placement: placement_below(),
+            content: vec!["c".into()],
+        });
+        assert_eq!(m.lines_for(placement_above()), 2);
+        assert_eq!(m.lines_for(placement_below()), 1);
     }
 }

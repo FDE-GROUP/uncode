@@ -37,7 +37,7 @@ impl ExtensionTool for WasmExtensionTool {
         let args_bytes = serde_json::to_vec(&arguments)?;
 
         tokio::task::spawn_blocking(move || {
-            let mut guard = inner.lock().unwrap();
+            let mut guard = super::safe_lock(&inner, "wasi_tool_execute");
 
             if guard.disabled {
                 return Err(anyhow::anyhow!(

@@ -13,6 +13,35 @@ use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+#[track_caller]
+pub(crate) fn safe_lock<'a, T>(
+    lock: &'a std::sync::Mutex<T>,
+    name: &'static str,
+) -> std::sync::MutexGuard<'a, T> {
+    match lock.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            tracing::warn!("mutex '{name}' poisoned, recovering");
+            poisoned.into_inner()
+        }
+    }
+}
+
+struct DecisionSnapshot {
+    max_turns: u32,
+    budget: f64,
+    deny: bool,
+}
+
+struct PendingAudit {
+    turn_id: String,
+    tool_name: String,
+    allowed: bool,
+    reason: Option<String>,
+    duration_ms: u64,
+    proposal_id: String,
+}
+
 use crate::phase_summary::{
     PhaseSummaryLlmInput, assistant_snippet_for_phase, build_phase_summary_heuristic,
     format_tool_phase_label, summarize_tool_args, try_llm_phase_summary,
@@ -175,7 +204,7 @@ async fn execute_prepared_tool_shared(
                 is_error: tool_result.is_error,
             }),
         };
-        let router = event_router.lock().unwrap();
+        let router = safe_lock(&*event_router, "event_router");
         let hook_result = router.dispatch_sync_hooks(&end_event);
         if let uncode_core::event::HookResult::PatchToolResult { content, terminate } = hook_result
         {
@@ -425,11 +454,11 @@ impl AgentLoop {
     }
 
     pub fn set_session_id(&mut self, session_id: String) {
-        *self.session_id.lock().unwrap() = Some(session_id);
+        *safe_lock(&self.session_id, "session_id") = Some(session_id);
     }
 
     pub fn session_id(&self) -> Option<String> {
-        self.session_id.lock().unwrap().clone()
+        safe_lock(&self.session_id, "session_id").clone()
     }
 
     /// 获取 event_router Arc — 用于 async hook dispatch (#457)
@@ -443,15 +472,12 @@ impl AgentLoop {
         event_type: &str,
         handler: uncode_core::event::SyncHookHandler,
     ) {
-        self.event_router
-            .lock()
-            .unwrap()
-            .on_sync_hook(event_type, handler);
+        safe_lock(&self.event_router, "event_router").on_sync_hook(event_type, handler);
     }
 
     pub fn set_model_id(&mut self, model_id: String) {
         self.model_id = model_id;
-        *self.firewall.lock().unwrap() = None;
+        *safe_lock(&self.firewall, "firewall") = None;
     }
 
     pub fn set_cancel_token(&mut self, token: CancellationToken) {
@@ -472,12 +498,12 @@ impl AgentLoop {
 
     /// 注入裁决器 — 决策层合法性判定 (#385)
     pub fn set_adjudicator(&mut self, adj: crate::decision::adjudication::Adjudicator) {
-        *self.adjudicator.lock().unwrap() = Some(adj);
+        *safe_lock(&self.adjudicator, "adjudicator") = Some(adj);
     }
 
     /// 读取配置的 turn limit，fallback DEFAULT_MAX_TURNS
     fn effective_max_turns(&self) -> u64 {
-        let gc = self.guardrail_config.lock().unwrap();
+        let gc = safe_lock(&self.guardrail_config, "guardrail_config");
         if gc.decision.turn_limit > 0 {
             gc.decision.turn_limit as u64
         } else {
@@ -488,7 +514,7 @@ impl AgentLoop {
     /// 从 GuardrailConfig 加载 CustomPolicy 到裁决器 (#453)
     pub fn load_custom_policies(&self) {
         let gc = self.guardrail_config();
-        let mut adj = self.adjudicator.lock().unwrap();
+        let mut adj = safe_lock(&self.adjudicator, "adjudicator");
         if let Some(ref mut adjudicator) = *adj {
             for policy_config in &gc.adjudication.policies {
                 if policy_config.enabled {
@@ -502,14 +528,14 @@ impl AgentLoop {
 
     /// 注入护栏配置 — 从 .uncode/guardrails.json 加载
     pub fn set_guardrail_config(&self, config: uncode_shared::guardrails::GuardrailConfig) {
-        *self.guardrail_config.lock().unwrap() = config;
+        *safe_lock(&self.guardrail_config, "guardrail_config") = config;
     }
 
     /// 获取护栏配置的快照
     pub fn guardrail_config(
         &self,
     ) -> std::sync::MutexGuard<'_, uncode_shared::guardrails::GuardrailConfig> {
-        self.guardrail_config.lock().unwrap()
+        safe_lock(&self.guardrail_config, "guardrail_config")
     }
 
     /// Fire `SessionShutdown` lifecycle hook (called from harness abort).
@@ -637,7 +663,7 @@ impl AgentLoop {
     /// Attempt a phase transition. On success, emits a PhaseTransition event.
     /// On failure, logs a warning and does NOT block execution.
     fn try_transition_phase(&self, to: crate::governance::AgentPhase, trigger: &str, turn: u64) {
-        let mut sm = self.phase_sm.lock().unwrap();
+        let mut sm = safe_lock(&self.phase_sm, "phase_sm");
         match sm.transition(to, trigger) {
             Ok(()) => {
                 let last = sm.history().last().unwrap();
@@ -705,7 +731,7 @@ impl AgentLoop {
     /// EpisodeMemory 的摘要合并为结构化文本。
     fn build_cognition_context(&self) -> Option<String> {
         let (wm_hint, ep_summary) = {
-            let cm = self.cognition_memory.lock().unwrap();
+            let cm = safe_lock(&self.cognition_memory, "cognition_memory");
             (
                 cm.working.to_context_hint(),
                 cm.episode.build_context_summary(),
@@ -750,7 +776,7 @@ impl AgentLoop {
                 tool_name: name.to_string(),
                 arguments_summary: summarize_tool_args(&prepared_args.to_string()),
             };
-            let router = self.event_router.lock().unwrap();
+            let router = safe_lock(&self.event_router, "event_router");
             let result = router.dispatch_sync_hooks(&start_event);
             if let uncode_core::event::HookResult::Block { reason } = result {
                 return Err(ToolResult::err(format!("blocked by governance: {reason}")));
@@ -902,7 +928,7 @@ impl AgentLoop {
             .is_err()
         {
             return Err(UncodeError::Harness(HarnessError::Busy {
-                phase: "run".to_string(),
+                phase: "run".to_owned(),
                 code: 5001,
             }));
         }
@@ -973,7 +999,7 @@ impl AgentLoop {
 
     /// Record turn feedback into WorkingMemory and EpisodeMemory.
     fn record_feedback(&self, turn: u64, feedback: &crate::decision::feedback::TurnFeedback) {
-        let mut cm = self.cognition_memory.lock().unwrap();
+        let mut cm = safe_lock(&self.cognition_memory, "cognition_memory");
         let wm_entries = feedback.to_working_memory_entries();
         for (content, important) in wm_entries {
             if important {
@@ -1042,7 +1068,7 @@ impl AgentLoop {
 
     async fn run_inner(&self, mut user_message: Message) -> Result<Vec<Message>, UncodeError> {
         let cwd = std::env::current_dir().unwrap_or_default();
-        let existing_id = self.session_id.lock().unwrap().clone();
+        let existing_id = safe_lock(&self.session_id, "session_id").clone();
         let session_id = match existing_id {
             Some(id) => id,
             None => {
@@ -1055,7 +1081,7 @@ impl AgentLoop {
                 {
                     debug!("session init skipped: {e}");
                 }
-                *self.session_id.lock().unwrap() = Some(id.clone());
+                *safe_lock(&self.session_id, "session_id") = Some(id.clone());
                 id
             }
         };
@@ -1336,7 +1362,7 @@ impl AgentLoop {
 
                 // PhaseStateMachine: reset at turn boundary, then Init → Cognizing
                 {
-                    let mut sm = self.phase_sm.lock().unwrap();
+                    let mut sm = safe_lock(&self.phase_sm, "phase_sm");
                     *sm = crate::governance::PhaseStateMachine::new();
                 }
                 self.try_transition_phase(
@@ -1378,7 +1404,7 @@ impl AgentLoop {
                         role: uncode_core::message::Role::User,
                         message_id: String::new(),
                     };
-                    let router = self.event_router.lock().unwrap();
+                    let router = safe_lock(&self.event_router, "event_router");
                     let hook_result = router.dispatch_sync_hooks(&msg_start);
                     if let uncode_core::event::HookResult::PatchMessages { messages: new_msgs } =
                         hook_result
@@ -1545,7 +1571,7 @@ impl AgentLoop {
 
                 // ── 决策层连线 (#339): 重置提案累积器 ──
                 {
-                    let mut acc = self.proposal_acc.lock().unwrap();
+                    let mut acc = safe_lock(&self.proposal_acc, "proposal_acc");
                     acc.reset();
                     acc.set_context(turn as u32, &self.model_id);
                 }
@@ -1554,7 +1580,7 @@ impl AgentLoop {
                 let mut turn_feedback = crate::decision::feedback::TurnFeedback::new(turn as u32);
                 // 重置工作记忆的 turn 编号，flush 返回的低重要性条目注入情景记忆
                 {
-                    let mut cm = self.cognition_memory.lock().unwrap();
+                    let mut cm = safe_lock(&self.cognition_memory, "cognition_memory");
                     let flushed = cm.working.flush(turn);
                     for entry in &flushed {
                         cm.episode
@@ -1618,7 +1644,7 @@ impl AgentLoop {
                     };
 
                     // ── 决策层连线 (#339): 喂入提案累积器 ──
-                    self.proposal_acc.lock().unwrap().feed(&event);
+                    safe_lock(&self.proposal_acc, "proposal_acc").feed(&event);
 
                     match event {
                         StreamEvent::ThinkingDelta(text) => {
@@ -1840,198 +1866,24 @@ impl AgentLoop {
 
                             // ── 决策层防火墙验证 + 裁决器 + 审计 (#339, #385, #387) ──
                             let mut denied_results: Vec<(String, String, ToolResult)> = Vec::new();
-                            #[allow(dead_code)]
-                            struct PendingAudit {
-                                turn_id: String,
-                                tool_name: String,
-                                allowed: bool,
-                                reason: Option<String>,
-                                duration_ms: u64,
-                                proposal_id: String,
-                            }
                             let mut pending_audits: Vec<PendingAudit> = Vec::new();
                             let denied_tool_names: HashSet<String> = {
-                                let acc = self.proposal_acc.lock().unwrap();
-                                let proposals = acc.completed();
+                                let proposals = {
+                                    let acc = safe_lock(&self.proposal_acc, "proposal_acc");
+                                    acc.completed().to_vec()
+                                };
                                 if proposals.is_empty() {
                                     HashSet::new()
                                 } else {
-                                    let mut fw = self.firewall.lock().unwrap();
-                                    if fw.is_none() {
-                                        let gc = self.guardrail_config.lock().unwrap();
-                                        let current_model = self.model_registry.get(&self.model_id);
-                                        let model_info = current_model.as_ref().map(|m| {
-                                            crate::decision::firewall::FirewallModelInfo {
-                                                current_model: std::sync::Arc::new(m.clone()),
-                                                all_models: std::sync::Arc::new(
-                                                    self.model_registry.all_models(),
-                                                ),
-                                            }
-                                        });
-                                        *fw = Some(
-                                            crate::decision::firewall::build_firewall_from_config_with_model(
-                                                &gc,
-                                                Arc::clone(&self.tool_registry),
-                                                std::env::current_dir().unwrap_or_default(),
-                                                model_info,
-                                            ),
-                                        );
-
-                                        // Wire CostBudgetPolicy into adjudicator
-                                        let mut adj = self.adjudicator.lock().unwrap();
-                                        if let (Some(adjudicator), Some(model)) =
-                                            (&mut *adj, &current_model)
-                                        {
-                                            let budget = gc.cost.budget_per_turn_usd;
-                                            let deny = gc.cost.deny_mode;
-                                            let estimated_tokens =
-                                                (model.context_window as f64 * 0.8) as u32;
-                                            adjudicator.replace_policy_by_name(
-                                                "cost_budget",
-                                                Box::new(
-                                                    crate::decision::bridge::CostBudgetPolicyAdapter::new(
-                                                        budget,
-                                                        deny,
-                                                        std::sync::Arc::new(model.clone()),
-                                                        estimated_tokens,
-                                                    ),
-                                                ),
-                                            );
-                                        }
-                                    }
-                                    let mut denied = HashSet::new();
-                                    if let Some(ref firewall) = *fw {
-                                        let gc = self.guardrail_config.lock().unwrap();
-                                        let max_turns = if gc.decision.turn_limit > 0 {
-                                            gc.decision.turn_limit
-                                        } else {
-                                            crate::loop_engine::DEFAULT_MAX_TURNS as u32
-                                        };
-                                        drop(gc);
-                                        let adj = self.adjudicator.lock().unwrap();
-                                        let decision_ctx =
-                                            crate::decision::types::DecisionContext {
-                                                turn_number: turn as u32,
-                                                max_turns,
-                                                active_tools: self
-                                                    .tool_registry
-                                                    .active_tool_names()
-                                                    .unwrap_or_default(),
-                                            };
-                                        for proposal in proposals {
-                                            let started_at = std::time::Instant::now();
-                                            let tool_name = proposal.tool_name.clone();
-                                            let proposal_id = proposal.proposal_id.to_string();
-                                            let intent = format!("{}", proposal.intent);
-
-                                            // ── ProposalReceived 事件 ──
-                                            self.emit(AgentEvent::ProposalReceived {
-                                                turn_id: format!("turn-{turn}"),
-                                                proposal_id: proposal_id.clone(),
-                                                tool_name: tool_name.clone(),
-                                                intent: intent.clone(),
-                                            });
-
-                                            match firewall.process(proposal) {
-                                                Ok(normalized) => {
-                                                    let fw_duration_ms =
-                                                        started_at.elapsed().as_millis() as u64;
-
-                                                    // ── FirewallCheck passed ──
-                                                    self.emit(AgentEvent::FirewallCheck {
-                                                        turn_id: format!("turn-{turn}"),
-                                                        proposal_id: proposal_id.clone(),
-                                                        tool_name: normalized.tool_name.clone(),
-                                                        passed: true,
-                                                        stage: "validate".into(),
-                                                        violations: vec![],
-                                                        duration_ms: fw_duration_ms,
-                                                    });
-
-                                                    let (allowed, reason) =
-                                                        if let Some(ref adjudicator) = *adj {
-                                                            match adjudicator.adjudicate(
-                                                                &normalized,
-                                                                &decision_ctx,
-                                                            ) {
-                                                                Ok(_approved) => {
-                                                                    debug!(
-                                                                        "adjudicator approved: {}",
-                                                                        normalized.tool_name
-                                                                    );
-                                                                    (true, None)
-                                                                }
-                                                                Err(e) => {
-                                                                    warn!(
-                                                                        "adjudicator denied: {e}"
-                                                                    );
-                                                                    (false, Some(e.to_string()))
-                                                                }
-                                                            }
-                                                        } else {
-                                                            (true, None)
-                                                        };
-
-                                                    let duration_ms =
-                                                        started_at.elapsed().as_millis() as u64;
-                                                    self.emit(AgentEvent::DecisionMade {
-                                                        turn_id: format!("turn-{turn}"),
-                                                        tool_name: normalized.tool_name.clone(),
-                                                        allowed,
-                                                        reason: reason.clone(),
-                                                        duration_ms: Some(duration_ms),
-                                                    });
-                                                    pending_audits.push(PendingAudit {
-                                                        turn_id: format!("turn-{turn}"),
-                                                        tool_name: normalized.tool_name.clone(),
-                                                        allowed,
-                                                        reason,
-                                                        duration_ms,
-                                                        proposal_id: proposal_id.clone(),
-                                                    });
-                                                    if !allowed {
-                                                        denied.insert(tool_name);
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    tracing::debug!(
-                                                        "firewall flagged proposal {}: {e}",
-                                                        tool_name
-                                                    );
-                                                    let duration_ms =
-                                                        started_at.elapsed().as_millis() as u64;
-
-                                                    // ── FirewallCheck failed ──
-                                                    self.emit(AgentEvent::FirewallCheck {
-                                                        turn_id: format!("turn-{turn}"),
-                                                        proposal_id: proposal_id.clone(),
-                                                        tool_name: tool_name.clone(),
-                                                        passed: false,
-                                                        stage: "validate".into(),
-                                                        violations: vec![e.to_string()],
-                                                        duration_ms,
-                                                    });
-
-                                                    self.emit(AgentEvent::DecisionMade {
-                                                        turn_id: format!("turn-{turn}"),
-                                                        tool_name: tool_name.clone(),
-                                                        allowed: false,
-                                                        reason: Some(e.to_string()),
-                                                        duration_ms: Some(duration_ms),
-                                                    });
-                                                    pending_audits.push(PendingAudit {
-                                                        turn_id: format!("turn-{turn}"),
-                                                        tool_name: tool_name.clone(),
-                                                        allowed: false,
-                                                        reason: Some(e.to_string()),
-                                                        duration_ms,
-                                                        proposal_id: proposal_id.clone(),
-                                                    });
-                                                }
-                                            }
-                                        }
-                                    }
-                                    denied
+                                    let snapshot = self.extract_snapshot_and_ensure_firewall();
+                                    self.adjudicate_proposals(
+                                        proposals,
+                                        &snapshot,
+                                        turn,
+                                        total_input_tokens,
+                                        total_output_tokens,
+                                        &mut pending_audits,
+                                    )
                                 }
                             };
 
@@ -2339,7 +2191,7 @@ impl AgentLoop {
                                     if is_error {
                                         turn_phase_issues.push(label);
                                         // ── 演化引擎: 记录失败 ──
-                                        self.evolution.lock().unwrap().record_failure(
+                                        safe_lock(&self.evolution, "evolution").record_failure(
                                             turn as u32,
                                             name.clone(),
                                             content_text.clone(),
@@ -2350,7 +2202,7 @@ impl AgentLoop {
                                             crate::cognition::uncertainty::UncertaintyClass::Generative(_) => "generative_uncertainty",
                                             crate::cognition::uncertainty::UncertaintyClass::Cognitive(_) => "cognitive_gap",
                                             crate::cognition::uncertainty::UncertaintyClass::Executional(e) => {
-                                                self.cognition_memory.lock().unwrap().working.observe_important(
+                                                safe_lock(&self.cognition_memory, "cognition_memory").working.observe_important(
                                                     format!("[uncertainty] executional: {} — strategy: {:?}", e.error, e.strategy),
                                                 );
                                                 "executional_uncertainty"
@@ -2444,7 +2296,7 @@ impl AgentLoop {
                     };
                     // ── 演化引擎: 模式检测 ──
                     {
-                        let evolution = self.evolution.lock().unwrap();
+                        let evolution = safe_lock(&self.evolution, "evolution");
                         let mutations = evolution.analyze();
                         if !mutations.is_empty() {
                             tracing::info!(
@@ -2671,5 +2523,195 @@ mod phase_summary_tests {
         assert_eq!(data.completed, vec!["grep(foo)"]);
         assert_eq!(data.issues, vec!["bash(cargo test)"]);
         assert!(data.next_steps.is_empty());
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Extracted decision methods
+// ═══════════════════════════════════════════════════════════
+
+impl AgentLoop {
+    fn extract_snapshot_and_ensure_firewall(&self) -> DecisionSnapshot {
+        let gc = safe_lock(&self.guardrail_config, "guardrail_config");
+        let max_turns = if gc.decision.turn_limit > 0 {
+            gc.decision.turn_limit
+        } else {
+            DEFAULT_MAX_TURNS as u32
+        };
+        let budget = gc.cost.budget_per_turn_usd;
+        let deny = gc.cost.deny_mode;
+        let snapshot = DecisionSnapshot {
+            max_turns,
+            budget,
+            deny,
+        };
+
+        {
+            let mut fw = safe_lock(&self.firewall, "firewall");
+            if fw.is_none() {
+                let current_model = self.model_registry.get(&self.model_id);
+                let model_info =
+                    current_model
+                        .as_ref()
+                        .map(|m| crate::decision::firewall::FirewallModelInfo {
+                            current_model: std::sync::Arc::new(m.clone()),
+                            all_models: std::sync::Arc::new(self.model_registry.all_models()),
+                        });
+                *fw = Some(
+                    crate::decision::firewall::build_firewall_from_config_with_model(
+                        &gc,
+                        Arc::clone(&self.tool_registry),
+                        std::env::current_dir().unwrap_or_default(),
+                        model_info,
+                    ),
+                );
+
+                let mut adj = safe_lock(&self.adjudicator, "adjudicator");
+                if let (Some(adjudicator), Some(model)) = (&mut *adj, &current_model) {
+                    let estimated_tokens = (model.context_window as f64 * 0.8) as u64;
+                    adjudicator.replace_policy_by_name(
+                        "cost_budget",
+                        Box::new(crate::decision::bridge::CostBudgetPolicyAdapter::new(
+                            snapshot.budget,
+                            snapshot.deny,
+                            std::sync::Arc::new(model.clone()),
+                            estimated_tokens,
+                        )),
+                    );
+                }
+            }
+        }
+
+        drop(gc);
+        snapshot
+    }
+
+    fn adjudicate_proposals(
+        &self,
+        proposals: Vec<crate::decision::types::ActionProposal>,
+        snapshot: &DecisionSnapshot,
+        turn: u64,
+        total_input_tokens: u64,
+        total_output_tokens: u64,
+        pending_audits: &mut Vec<PendingAudit>,
+    ) -> HashSet<String> {
+        let fw = safe_lock(&self.firewall, "firewall");
+        let mut denied = HashSet::new();
+        let Some(ref firewall) = *fw else {
+            return denied;
+        };
+
+        let adj = safe_lock(&self.adjudicator, "adjudicator");
+        let decision_ctx = crate::decision::types::DecisionContext {
+            turn_number: turn as u32,
+            max_turns: snapshot.max_turns,
+            active_tools: self.tool_registry.active_tool_names().unwrap_or_default(),
+            total_input_tokens,
+            total_output_tokens,
+        };
+        let turn_id = format!("turn-{turn}");
+
+        for proposal in proposals {
+            let started_at = std::time::Instant::now();
+            let tool_name = proposal.tool_name.clone();
+            let proposal_id = proposal.proposal_id.to_string();
+            let intent = proposal.intent.to_string();
+
+            self.emit(AgentEvent::ProposalReceived {
+                turn_id: turn_id.clone(),
+                proposal_id: proposal_id.clone(),
+                tool_name: tool_name.clone(),
+                intent: intent.clone(),
+            });
+
+            match firewall.process(&proposal) {
+                Ok(normalized) => {
+                    let fw_duration_ms = started_at.elapsed().as_millis() as u64;
+
+                    self.emit(AgentEvent::FirewallCheck {
+                        turn_id: turn_id.clone(),
+                        proposal_id: proposal_id.clone(),
+                        tool_name: normalized.tool_name.clone(),
+                        passed: true,
+                        stage: "validate".into(),
+                        violations: vec![],
+                        duration_ms: fw_duration_ms,
+                    });
+
+                    let (allowed, reason, warnings) = if let Some(ref adjudicator) = *adj {
+                        match adjudicator.adjudicate(&normalized, &decision_ctx) {
+                            Ok(approved) => {
+                                debug!("adjudicator approved: {}", normalized.tool_name);
+                                (true, None, approved.warnings)
+                            }
+                            Err(e) => {
+                                warn!("adjudicator denied: {e}");
+                                (false, Some(e.to_string()), vec![])
+                            }
+                        }
+                    } else {
+                        (true, None, vec![])
+                    };
+
+                    if !warnings.is_empty() {
+                        debug!(
+                            "adjudicator warnings for {}: {:?}",
+                            normalized.tool_name, warnings
+                        );
+                    }
+
+                    let duration_ms = started_at.elapsed().as_millis() as u64;
+                    self.emit(AgentEvent::DecisionMade {
+                        turn_id: turn_id.clone(),
+                        tool_name: normalized.tool_name.clone(),
+                        allowed,
+                        reason: reason.clone(),
+                        duration_ms: Some(duration_ms),
+                    });
+                    pending_audits.push(PendingAudit {
+                        turn_id: turn_id.clone(),
+                        tool_name: normalized.tool_name.clone(),
+                        allowed,
+                        reason,
+                        duration_ms,
+                        proposal_id: proposal_id.clone(),
+                    });
+                    if !allowed {
+                        denied.insert(tool_name);
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("firewall flagged proposal {}: {e}", tool_name);
+                    let duration_ms = started_at.elapsed().as_millis() as u64;
+
+                    self.emit(AgentEvent::FirewallCheck {
+                        turn_id: turn_id.clone(),
+                        proposal_id: proposal_id.clone(),
+                        tool_name: tool_name.clone(),
+                        passed: false,
+                        stage: "validate".into(),
+                        violations: vec![e.to_string()],
+                        duration_ms,
+                    });
+
+                    self.emit(AgentEvent::DecisionMade {
+                        turn_id: turn_id.clone(),
+                        tool_name: tool_name.clone(),
+                        allowed: false,
+                        reason: Some(e.to_string()),
+                        duration_ms: Some(duration_ms),
+                    });
+                    pending_audits.push(PendingAudit {
+                        turn_id: turn_id.clone(),
+                        tool_name: tool_name.clone(),
+                        allowed: false,
+                        reason: Some(e.to_string()),
+                        duration_ms,
+                        proposal_id: proposal_id.clone(),
+                    });
+                }
+            }
+        }
+        denied
     }
 }

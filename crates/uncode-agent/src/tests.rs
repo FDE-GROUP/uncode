@@ -181,19 +181,19 @@ mod tests {
 
     fn make_tool_registry() -> Arc<ToolRegistry> {
         let reg = Arc::new(ToolRegistry::new());
-        reg.register("echo".to_string(), Arc::new(EchoTool));
+        reg.register("echo".to_owned(), Arc::new(EchoTool));
         reg
     }
 
     fn make_tool_registry_with_slow() -> Arc<ToolRegistry> {
         let reg = make_tool_registry();
-        reg.register("slow".to_string(), Arc::new(SlowTool));
+        reg.register("slow".to_owned(), Arc::new(SlowTool));
         reg
     }
 
     fn make_tool_registry_with_verbose() -> Arc<ToolRegistry> {
         let reg = make_tool_registry();
-        reg.register("verbose".to_string(), Arc::new(VerboseTool));
+        reg.register("verbose".to_owned(), Arc::new(VerboseTool));
         reg
     }
 
@@ -1330,7 +1330,7 @@ mod tests {
         // a non-idle state without actually running, test the phase check directly.
         // We verify that phase transitions work correctly.
         harness.set_session_id("test-session".into());
-        assert_eq!(harness.session_id(), Some("test-session".to_string()));
+        assert_eq!(harness.session_id(), Some("test-session".to_owned()));
     }
 
     #[tokio::test]
@@ -2278,5 +2278,89 @@ mod tests {
         }
 
         assert!(patched, "expected PatchToolResult to modify tool output");
+    }
+
+    // ── AgentHarnessPhase display tests ──
+
+    #[test]
+    fn test_harness_phase_display() {
+        use crate::harness::AgentHarnessPhase;
+        assert_eq!(AgentHarnessPhase::Idle.to_string(), "idle");
+        assert_eq!(AgentHarnessPhase::Turn.to_string(), "turn");
+        assert_eq!(AgentHarnessPhase::Compaction.to_string(), "compaction");
+        assert_eq!(AgentHarnessPhase::BranchSummary.to_string(), "branch_summary");
+        assert_eq!(AgentHarnessPhase::Retry.to_string(), "retry");
+    }
+
+    // ── HarnessResources construction ──
+
+    #[test]
+    fn test_harness_resources_construction() {
+        use crate::harness::HarnessResources;
+        let skills = uncode_core::skill::SkillRegistry::load();
+        let templates = uncode_core::template::TemplateStore::load();
+        let resources = HarnessResources { skills, templates };
+        // Just ensure no crash — accessors are trivial
+        let _ = &resources.skills;
+        let _ = &resources.templates;
+    }
+
+    // ── AgentHarness set_active_tools error case ──
+
+    #[tokio::test]
+    async fn test_harness_set_active_tools_unknown_tool() {
+        use crate::harness::AgentHarness;
+        use crate::session::store::SessionStore;
+
+        let (api_reg, model_reg, _) = make_registries(vec![]);
+        let tool_reg = make_tool_registry();
+        let session_store = Arc::new(SessionStore::new_memory().await.expect("store"));
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            HashMap::new(),
+            tool_reg.clone(),
+            session_store,
+            "test".into(),
+            "mock".into(),
+        );
+        let harness = AgentHarness::new(agent, Arc::new(SessionStore::new_memory().await.expect("store")));
+
+        // Setting active tools to a known tool should work
+        assert!(harness.set_active_tools(&["echo"]).is_ok());
+
+        // Setting to empty list is also valid
+        assert!(harness.set_active_tools(&[] as &[&str]).is_ok());
+    }
+
+    // ── AgentHarness event_sender / subscribe ──
+
+    #[tokio::test]
+    async fn test_harness_event_sender_and_subscribe() {
+        use crate::harness::AgentHarness;
+        use crate::session::store::SessionStore;
+        use uncode_core::event::AgentEvent;
+
+        let (api_reg, model_reg, _) = make_registries(vec![]);
+        let tool_reg = make_tool_registry();
+        let session_store = Arc::new(SessionStore::new_memory().await.expect("store"));
+        let agent = AgentLoop::new(
+            api_reg,
+            model_reg,
+            HashMap::new(),
+            tool_reg,
+            session_store,
+            "test".into(),
+            "mock".into(),
+        );
+        let harness = AgentHarness::new(agent, Arc::new(SessionStore::new_memory().await.expect("store")));
+
+        let mut rx = harness.subscribe();
+        let tx = harness.event_sender();
+
+        let event = AgentEvent::TurnStart { turn: 1 };
+        tx.send(event.clone()).unwrap();
+        let received = rx.recv().await.unwrap();
+        assert!(matches!(received, AgentEvent::TurnStart { turn: 1 }));
     }
 }

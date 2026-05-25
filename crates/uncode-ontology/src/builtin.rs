@@ -9,8 +9,7 @@ use crate::types::{
 /// Current ontology version — bump on schema changes.
 const ONTOLOGY_VERSION: OntologyVersion = OntologyVersion::new(1, 0, 0);
 
-/// Build the complete coding agent domain ontology.
-pub fn coding_agent_ontology() -> TypeRegistry {
+static CODING_AGENT_ONTOLOGY: std::sync::LazyLock<TypeRegistry> = std::sync::LazyLock::new(|| {
     let mut reg = TypeRegistry::with_version(ONTOLOGY_VERSION);
 
     // Entities
@@ -38,6 +37,12 @@ pub fn coding_agent_ontology() -> TypeRegistry {
     reg.register_reasoning_rule(rule_workspace_files_traversal());
 
     reg
+});
+
+/// Build the complete coding agent domain ontology (cached).
+#[inline]
+pub fn coding_agent_ontology() -> TypeRegistry {
+    CODING_AGENT_ONTOLOGY.clone()
 }
 
 fn entity_file() -> EntityDef {
@@ -434,41 +439,44 @@ fn action_web_search() -> ActionDef {
 // System Resource Semantic Ontology
 // ═══════════════════════════════════════════════════════════
 
-/// Build the system resource ontology — LLM, Provider, Capability.
+static SYSTEM_RESOURCE_ONTOLOGY: std::sync::LazyLock<TypeRegistry> =
+    std::sync::LazyLock::new(|| {
+        let mut reg = TypeRegistry::with_version(ONTOLOGY_VERSION);
+
+        reg.register_entity(entity_llm());
+        reg.register_entity(entity_provider());
+        reg.register_entity(entity_capability());
+
+        reg.register_action(action_llm_query());
+        reg.register_action(action_model_switch());
+
+        reg.register_link(link_provider_provides_llm());
+        reg.register_link(link_llm_has_capability());
+
+        reg.register_reasoning_rule(rule_provider_models_traversal());
+        reg.register_reasoning_rule(rule_llm_capabilities_traversal());
+        reg.register_reasoning_rule(rule_vision_implies_image_input());
+        reg.register_reasoning_rule(rule_total_cost_derivation());
+
+        reg
+    });
+
+/// Build the system resource ontology — LLM, Provider, Capability (cached).
+#[inline]
 pub fn system_resource_ontology() -> TypeRegistry {
-    let mut reg = TypeRegistry::with_version(ONTOLOGY_VERSION);
-
-    reg.register_entity(entity_llm());
-    reg.register_entity(entity_provider());
-    reg.register_entity(entity_capability());
-
-    reg.register_action(action_llm_query());
-    reg.register_action(action_model_switch());
-
-    // Links — system resource semantic
-    reg.register_link(link_provider_provides_llm());
-    reg.register_link(link_llm_has_capability());
-
-    // Reasoning rules — system resource
-    reg.register_reasoning_rule(rule_provider_models_traversal());
-    reg.register_reasoning_rule(rule_llm_capabilities_traversal());
-    reg.register_reasoning_rule(rule_vision_implies_image_input());
-    reg.register_reasoning_rule(rule_total_cost_derivation());
-
-    reg
+    SYSTEM_RESOURCE_ONTOLOGY.clone()
 }
 
-static FULL_ONTOLOGY: std::sync::OnceLock<TypeRegistry> = std::sync::OnceLock::new();
+static FULL_ONTOLOGY: std::sync::LazyLock<TypeRegistry> = std::sync::LazyLock::new(|| {
+    let domain = coding_agent_ontology();
+    let system = system_resource_ontology();
+    domain.merge(&system)
+});
 
 /// Build the full ontology — domain + system resource (cached).
+#[inline]
 pub fn full_ontology() -> TypeRegistry {
-    FULL_ONTOLOGY
-        .get_or_init(|| {
-            let domain = coding_agent_ontology();
-            let system = system_resource_ontology();
-            domain.merge(system)
-        })
-        .clone()
+    FULL_ONTOLOGY.clone()
 }
 
 fn entity_llm() -> EntityDef {
@@ -1132,7 +1140,7 @@ mod tests {
     fn test_merge_takes_higher_version() {
         let reg1 = TypeRegistry::with_version(OntologyVersion::new(1, 2, 0));
         let reg2 = TypeRegistry::with_version(OntologyVersion::new(1, 3, 0));
-        let merged = reg1.merge(reg2);
+        let merged = reg1.merge(&reg2);
         assert_eq!(merged.version, OntologyVersion::new(1, 3, 0));
     }
 
@@ -1140,7 +1148,7 @@ mod tests {
     fn test_merge_keeps_higher_on_left() {
         let reg1 = TypeRegistry::with_version(OntologyVersion::new(2, 0, 0));
         let reg2 = TypeRegistry::with_version(OntologyVersion::new(1, 9, 9));
-        let merged = reg1.merge(reg2);
+        let merged = reg1.merge(&reg2);
         assert_eq!(merged.version, OntologyVersion::new(2, 0, 0));
     }
 

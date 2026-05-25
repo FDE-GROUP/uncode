@@ -441,4 +441,157 @@ mod tests {
         assert!((config.cost.budget_per_turn_usd - 0.5).abs() < f64::EPSILON);
         assert!(config.cost.deny_mode);
     }
+
+    #[test]
+    fn test_load_from_dir_missing_returns_default() {
+        let dir = std::path::Path::new("/nonexistent/path");
+        let config = GuardrailConfig::load_from_dir(dir);
+        assert_eq!(config.version, 1);
+        assert_eq!(config.decision.turn_limit, 50);
+    }
+
+    #[test]
+    fn test_load_from_dir_valid_json() {
+        let dir = std::env::temp_dir().join("uncode_test_guardrails");
+        let uncode_dir = dir.join(".uncode");
+        std::fs::create_dir_all(&uncode_dir).unwrap();
+        let file_path = uncode_dir.join("guardrails.json");
+        let json = r#"{"version": 2, "cost": {"budget_per_turn_usd": 0.1, "deny_mode": true}}"#;
+        std::fs::write(&file_path, json).unwrap();
+
+        let config = GuardrailConfig::load_from_dir(&dir);
+        assert_eq!(config.version, 2);
+        assert!((config.cost.budget_per_turn_usd - 0.1).abs() < f64::EPSILON);
+        assert!(config.cost.deny_mode);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_load_from_dir_invalid_json_returns_default() {
+        let dir = std::env::temp_dir().join("uncode_test_guardrails_invalid");
+        let uncode_dir = dir.join(".uncode");
+        std::fs::create_dir_all(&uncode_dir).unwrap();
+        let file_path = uncode_dir.join("guardrails.json");
+        std::fs::write(&file_path, "not valid json").unwrap();
+
+        let config = GuardrailConfig::load_from_dir(&dir);
+        assert_eq!(config.version, 1); // default
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_path_safety_config_default() {
+        let config = PathSafetyConfig::default();
+        assert!(matches!(config.mode, PathSafetyMode::CwdOnly));
+        assert!(config.allow_list.is_empty());
+    }
+
+    #[test]
+    fn test_path_safety_config_serde() {
+        let json = r#"{"mode": "allow_list", "allow_list": ["/tmp"]}"#;
+        let config: PathSafetyConfig = serde_json::from_str(json).unwrap();
+        assert!(matches!(config.mode, PathSafetyMode::AllowList));
+        assert_eq!(config.allow_list, vec!["/tmp"]);
+    }
+
+    #[test]
+    fn test_path_safety_unrestricted_serde() {
+        let json = r#"{"mode": "unrestricted"}"#;
+        let config: PathSafetyConfig = serde_json::from_str(json).unwrap();
+        assert!(matches!(config.mode, PathSafetyMode::Unrestricted));
+    }
+
+    #[test]
+    fn test_tool_whitelist_mode_all_serde() {
+        let json = r#"{"mode": "all"}"#;
+        let config: ToolWhitelistConfig = serde_json::from_str(json).unwrap();
+        assert!(matches!(config.mode, ToolWhitelistMode::All));
+    }
+
+    #[test]
+    fn test_tool_whitelist_mode_custom_serde() {
+        let json = r#"{"mode": "custom", "blocked": ["bash", "write"]}"#;
+        let config: ToolWhitelistConfig = serde_json::from_str(json).unwrap();
+        assert!(matches!(config.mode, ToolWhitelistMode::Custom));
+        assert_eq!(config.blocked, vec!["bash", "write"]);
+    }
+
+    #[test]
+    fn test_policy_action_allow_serde() {
+        let json = r#"{"pattern": "ls", "action": "allow"}"#;
+        let rule: PolicyRule = serde_json::from_str(json).unwrap();
+        assert!(matches!(rule.action, PolicyAction::Allow));
+        assert_eq!(rule.pattern, "ls");
+    }
+
+    #[test]
+    fn test_policy_action_block_and_warn_serde() {
+        let json = r#"{"pattern": "DROP TABLE", "action": "block_and_warn"}"#;
+        let rule: PolicyRule = serde_json::from_str(json).unwrap();
+        assert!(matches!(rule.action, PolicyAction::BlockAndWarn));
+    }
+
+    #[test]
+    fn test_policy_action_ask_user_serde() {
+        let json = r#"{"pattern": "write", "action": "ask_user"}"#;
+        let rule: PolicyRule = serde_json::from_str(json).unwrap();
+        assert!(matches!(rule.action, PolicyAction::AskUser));
+    }
+
+    #[test]
+    fn test_resource_limit_defaults() {
+        let config = ResourceLimitConfig::default();
+        assert_eq!(config.max_file_size_mb, 10);
+        assert_eq!(config.max_bash_output_lines, 1000);
+    }
+
+    #[test]
+    fn test_full_config_from_json() {
+        let json = r#"{
+            "version": 3,
+            "decision": {"turn_limit": 100, "max_concurrent_tools": 4, "tool_timeout_seconds": 300},
+            "firewall": {
+                "path_safety": {"mode": "unrestricted"},
+                "tool_whitelist": {"mode": "custom", "blocked": ["bash"]}
+            },
+            "cost": {"budget_per_turn_usd": 0.01, "deny_mode": true}
+        }"#;
+        let config: GuardrailConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.version, 3);
+        assert_eq!(config.decision.turn_limit, 100);
+        assert_eq!(config.decision.max_concurrent_tools, 4);
+        assert_eq!(config.decision.tool_timeout_seconds, 300);
+        assert!(matches!(config.firewall.path_safety.mode, PathSafetyMode::Unrestricted));
+        assert!(matches!(config.firewall.tool_whitelist.mode, ToolWhitelistMode::Custom));
+        assert_eq!(config.firewall.tool_whitelist.blocked, vec!["bash"]);
+        assert!((config.cost.budget_per_turn_usd - 0.01).abs() < f64::EPSILON);
+        assert!(config.cost.deny_mode);
+    }
+
+    #[test]
+    fn test_audit_config_defaults() {
+        let config = AuditConfig::default();
+        assert!(config.event_levels.critical.contains(&"SessionStart".into()));
+        assert!(config.event_levels.standard.contains(&"ContentDelta".into()));
+        assert!(config.event_levels.verbose.contains(&"ToolCallProgress".into()));
+        assert_eq!(config.retention.critical_events, "permanent");
+        assert_eq!(config.retention.standard_events, "90_days");
+        assert_eq!(config.retention.verbose_events, "7_days");
+    }
+
+    #[test]
+    fn test_event_level_config_serde() {
+        let json = r#"{"critical": ["Error"], "standard": ["ContentDelta"], "verbose": ["ToolCallProgress"]}"#;
+        let config: EventLevelConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.critical, vec!["Error"]);
+        assert_eq!(config.standard, vec!["ContentDelta"]);
+        assert_eq!(config.verbose, vec!["ToolCallProgress"]);
+    }
+
+    #[test]
+    fn test_default_version_fn() {
+        assert_eq!(default_version(), 1);
+    }
 }

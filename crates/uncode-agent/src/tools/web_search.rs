@@ -59,7 +59,7 @@ impl WebSearchTool {
     }
 
     pub fn try_new(api_key: &str) -> Option<Self> {
-        if api_key.trim().is_empty() {
+        if api_key.trim_ascii().is_empty() {
             None
         } else {
             Some(Self::new(api_key.to_string()))

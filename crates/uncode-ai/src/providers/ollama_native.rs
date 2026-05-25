@@ -268,7 +268,7 @@ impl Api for OllamaNativeApi {
                 let events: Vec<StreamEvent> = match chunk {
                     Ok(c) => {
                         let mut all_events = Vec::new();
-                        let mut guard = buf.lock().expect("ollama stream buffer lock");
+                        let mut guard = crate::safe_lock(&buf, "ollama stream buffer");
                         for line in guard.push_chunk_and_drain_lines(&c) {
                             all_events.extend(parse_ollama_chunk(&line, state));
                         }
@@ -284,7 +284,7 @@ impl Api for OllamaNativeApi {
             .flatten()
             .chain(stream::once({
                 async move {
-                    let guard = buf2.lock().expect("ollama stream buffer lock");
+                    let guard = crate::safe_lock(&buf2, "ollama stream buffer");
                     if let Some(message) = guard.trailing_error_message("ollama") {
                         return StreamEvent::Error {
                             reason: StopReason::Error,

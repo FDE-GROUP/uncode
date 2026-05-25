@@ -3,9 +3,9 @@
 use crossterm::event::KeyEvent;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Clear, List, ListItem, ListState, Paragraph};
 
 use uncode_core::dialog::{DialogRequest, DialogResponse};
 
@@ -163,21 +163,12 @@ impl DialogOverlay {
         let items: Vec<ListItem> = options.iter().map(|o| ListItem::new(o.as_str())).collect();
         let list = List::new(items)
             .block(
-                Block::new()
-                    .borders(Borders::ALL)
+                Block::bordered()
                     .title(format!(" {title} "))
-                    .title_style(
-                        Style::default()
-                            .fg(self.theme.ui.user_message)
-                            .add_modifier(Modifier::BOLD),
-                    )
+                    .title_style(Style::default().fg(self.theme.ui.user_message).bold())
                     .border_style(Style::default().fg(self.theme.ui.input_border)),
             )
-            .highlight_style(
-                Style::default()
-                    .fg(self.theme.tool_status.success)
-                    .add_modifier(Modifier::BOLD),
-            );
+            .highlight_style(Style::default().fg(self.theme.tool_status.success).bold());
         f.render_stateful_widget(list, area, &mut self.list_state);
     }
 
@@ -194,14 +185,9 @@ impl DialogOverlay {
             )),
         ];
         let paragraph = Paragraph::new(text).block(
-            Block::new()
-                .borders(Borders::ALL)
+            Block::bordered()
                 .title(" Confirm ")
-                .title_style(
-                    Style::default()
-                        .fg(self.theme.ui.user_message)
-                        .add_modifier(Modifier::BOLD),
-                )
+                .title_style(Style::default().fg(self.theme.ui.user_message).bold())
                 .border_style(Style::default().fg(self.theme.ui.input_border)),
         );
         f.render_widget(paragraph, area);
@@ -215,16 +201,14 @@ impl DialogOverlay {
             )),
             Line::from(""),
             Line::from(vec![
-                Span::styled("> ", Style::default().fg(self.theme.ui.user_message)),
+                "> ".fg(self.theme.ui.user_message),
                 Span::styled(
                     self.input_buffer.clone(),
                     Style::default().fg(self.theme.ui.agent_text),
                 ),
                 Span::styled(
                     "│",
-                    Style::default()
-                        .fg(self.theme.ui.user_message)
-                        .add_modifier(Modifier::SLOW_BLINK),
+                    Style::default().fg(self.theme.ui.user_message).slow_blink(),
                 ),
             ]),
             Line::from(""),
@@ -234,14 +218,9 @@ impl DialogOverlay {
             )),
         ];
         let paragraph = Paragraph::new(text).block(
-            Block::new()
-                .borders(Borders::ALL)
+            Block::bordered()
                 .title(" Input ")
-                .title_style(
-                    Style::default()
-                        .fg(self.theme.ui.user_message)
-                        .add_modifier(Modifier::BOLD),
-                )
+                .title_style(Style::default().fg(self.theme.ui.user_message).bold())
                 .border_style(Style::default().fg(self.theme.ui.input_border)),
         );
         f.render_widget(paragraph, area);

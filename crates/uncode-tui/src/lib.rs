@@ -754,9 +754,9 @@ impl TuiEngine {
                 Span::styled(
                     format!("确认 {}?{hint} ", p.tool_name),
                     Style::default()
-                        .fg(Color::Black)
+                        .black()
                         .bg(self.theme.tool_status.await_confirm)
-                        .add_modifier(ratatui::style::Modifier::BOLD),
+                        .bold(),
                 ),
                 Span::styled(
                     keys,
@@ -781,10 +781,7 @@ impl TuiEngine {
         // Extension override: custom working message
         if let Some(ref msg) = self.custom_working_message {
             let bg_color = self.theme.tool_status.running;
-            let accent = Style::default()
-                .fg(Color::Black)
-                .bg(bg_color)
-                .add_modifier(ratatui::style::Modifier::BOLD);
+            let accent = Style::default().black().bg(bg_color).bold();
             let dim = Style::default().fg(self.theme.ui.footer_text).bg(bg_color);
 
             let elapsed = self.footer.current_elapsed();
@@ -799,26 +796,23 @@ impl TuiEngine {
         }
 
         let label = match &self.activity {
-            AgentActivity::Thinking => "Thinking…".to_string(),
+            AgentActivity::Thinking => "Thinking…".to_owned(),
             AgentActivity::RunningTool { name } => format!("Running {name}"),
-            AgentActivity::Writing => "Writing".to_string(),
-            AgentActivity::Idle => "Processing".to_string(),
+            AgentActivity::Writing => "Writing".to_owned(),
+            AgentActivity::Idle => "Processing".to_owned(),
         };
 
         let elapsed = self.footer.current_elapsed();
         let tokens = format_tokens(self.footer.output_tokens);
 
         let bg_color = self.theme.tool_status.running;
-        let accent = Style::default()
-            .fg(Color::Black)
-            .bg(bg_color)
-            .add_modifier(ratatui::style::Modifier::BOLD);
+        let accent = Style::default().black().bg(bg_color).bold();
         let dim = Style::default().fg(self.theme.ui.footer_text).bg(bg_color);
 
         let indicator = if let Some(ref ci) = self.custom_indicator {
             ci.frame_at(self.tick as u64).to_string()
         } else {
-            "*".to_string()
+            "*".to_owned()
         };
 
         let line = Line::from(vec![
@@ -1637,7 +1631,7 @@ impl TuiEngine {
 
     fn handle_new_command(&mut self) {
         let old_id = if self.session_id.is_empty() {
-            "none".to_string()
+            "none".to_owned()
         } else {
             self.session_id[..8.min(self.session_id.len())].to_string()
         };
@@ -2118,7 +2112,7 @@ impl TuiEngine {
                         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
                         .unwrap_or_default();
                     let mut lines = vec![
-                        "工作区变更:".to_string(),
+                        "工作区变更:".to_owned(),
                         stat.trim().to_string(),
                         String::new(),
                     ];
@@ -2245,7 +2239,7 @@ impl TuiEngine {
                 .iter()
                 .map(|t| format!("  {} — {}", t.name, t.description))
                 .collect();
-            let header = "可用模板:".to_string();
+            let header = "可用模板:".to_owned();
             self.chat.push_message(chat::ChatMessage::Summary {
                 completed: std::iter::once(header).chain(list).collect(),
                 next_steps: vec![],
@@ -2357,9 +2351,9 @@ impl TuiEngine {
             return;
         }
         let lines: Vec<String> = list.iter().map(|s| format!("  {s}")).collect();
-        let mut completed = vec!["可用 Skills:".to_string()];
+        let mut completed = vec!["可用 Skills:".to_owned()];
         completed.extend(lines);
-        completed.push("调用方式: /<skill_name> <args>".to_string());
+        completed.push("调用方式: /<skill_name> <args>".to_owned());
         self.chat.push_message(chat::ChatMessage::Summary {
             completed,
             next_steps: vec![],
@@ -2393,10 +2387,10 @@ impl TuiEngine {
                 let mut lines: Vec<String> = vec!["已加载扩展:".into()];
                 for r in &records {
                     let state_str = match &r.state {
-                        ExtensionState::Active => "active".to_string(),
-                        ExtensionState::Reloading => "reloading".to_string(),
+                        ExtensionState::Active => "active".to_owned(),
+                        ExtensionState::Reloading => "reloading".to_owned(),
                         ExtensionState::Error(e) => format!("error: {e}"),
-                        ExtensionState::Disabled => "disabled".to_string(),
+                        ExtensionState::Disabled => "disabled".to_owned(),
                     };
                     let tools = if r.tools.is_empty() {
                         String::new()
@@ -2545,9 +2539,9 @@ impl TuiEngine {
                     }
                 })
                 .collect();
-            let mut completed = vec!["可用主题:".to_string()];
+            let mut completed = vec!["可用主题:".to_owned()];
             completed.extend(lines);
-            completed.push("使用 /theme <name> 切换".to_string());
+            completed.push("使用 /theme <name> 切换".to_owned());
             self.chat.push_message(chat::ChatMessage::Summary {
                 completed,
                 next_steps: vec![],
@@ -2703,7 +2697,7 @@ fn render_export_html(entries: &[uncode_core::session::SessionEntry]) -> String 
 
 fn open_external_editor() -> Option<String> {
     let editor = std::env::var("EDITOR")
-        .unwrap_or_else(|_| std::env::var("VISUAL").unwrap_or_else(|_| "vi".to_string()));
+        .unwrap_or_else(|_| std::env::var("VISUAL").unwrap_or_else(|_| "vi".to_owned()));
     let tmp_path = std::env::temp_dir().join(format!("uncode-input-{}.md", uuid::Uuid::new_v4()));
     std::fs::write(&tmp_path, "").ok()?;
     let _ = crossterm::execute!(std::io::stdout(), crossterm::event::DisableMouseCapture);

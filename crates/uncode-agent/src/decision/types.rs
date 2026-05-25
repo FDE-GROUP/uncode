@@ -15,11 +15,14 @@
 //!
 //! 参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// 意图类型：LLM 调用工具的目的分类
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum IntentType {
     FileRead,
     FileWrite,
@@ -31,6 +34,7 @@ pub enum IntentType {
 }
 
 impl IntentType {
+    #[must_use]
     pub fn from_tool_name(tool_name: &str) -> Self {
         match tool_name {
             "read" | "find" | "ls" | "grep" => Self::FileRead,
@@ -43,16 +47,22 @@ impl IntentType {
     }
 }
 
+impl From<&str> for IntentType {
+    fn from(tool_name: &str) -> Self {
+        Self::from_tool_name(tool_name)
+    }
+}
+
 impl std::fmt::Display for IntentType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::FileRead => write!(f, "FileRead"),
-            Self::FileWrite => write!(f, "FileWrite"),
-            Self::FileEdit => write!(f, "FileEdit"),
-            Self::Search => write!(f, "Search"),
-            Self::Execution => write!(f, "Execution"),
-            Self::WebAccess => write!(f, "WebAccess"),
-            Self::Unknown => write!(f, "Unknown"),
+            Self::FileRead => f.write_str("FileRead"),
+            Self::FileWrite => f.write_str("FileWrite"),
+            Self::FileEdit => f.write_str("FileEdit"),
+            Self::Search => f.write_str("Search"),
+            Self::Execution => f.write_str("Execution"),
+            Self::WebAccess => f.write_str("WebAccess"),
+            Self::Unknown => f.write_str("Unknown"),
         }
     }
 }
@@ -83,7 +93,7 @@ pub struct FirewallAudit {
 }
 
 /// 参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionProposal {
     pub proposal_id: Uuid,
     pub tool_name: String,
@@ -96,14 +106,14 @@ pub struct ActionProposal {
 }
 
 /// 防火墙 Parsing 层输出——已结构化的动作
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ParsedAction {
     pub tool_name: String,
     pub arguments: serde_json::Value,
 }
 
 /// 防火墙 Validation 层输出——已通过合法性校验的动作
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatedAction {
     pub tool_name: String,
     pub arguments: serde_json::Value,
@@ -111,7 +121,7 @@ pub struct ValidatedAction {
 }
 
 /// 防火墙 Normalization 层输出——消歧义、标准化后的最终形式
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NormalizedAction {
     pub tool_name: String,
     pub arguments: serde_json::Value,
@@ -119,15 +129,15 @@ pub struct NormalizedAction {
 }
 
 /// 裁决通过的、可执行的动作
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovedAction {
-    pub action: NormalizedAction,
+    pub action: Arc<NormalizedAction>,
     pub adjudicated_at: chrono::DateTime<chrono::Utc>,
     pub warnings: Vec<String>,
 }
 
 /// 裁决结果
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DecisionVerdict {
     pub allowed: bool,
     pub reason: Option<String>,
@@ -135,29 +145,42 @@ pub struct DecisionVerdict {
 }
 
 impl DecisionVerdict {
+    #[must_use]
     pub fn approved() -> Self {
         Self {
             allowed: true,
             reason: None,
-            violations: vec![],
+            violations: Vec::new(),
         }
     }
 
+    #[must_use]
     pub fn denied(reason: impl Into<String>) -> Self {
         Self {
             allowed: false,
             reason: Some(reason.into()),
-            violations: vec![],
+            violations: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn warn(reason: impl Into<String>, violations: Vec<String>) -> Self {
+        Self {
+            allowed: true,
+            reason: Some(reason.into()),
+            violations,
         }
     }
 }
 
 /// 裁决上下文快照
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DecisionContext {
     pub turn_number: u32,
     pub max_turns: u32,
     pub active_tools: Vec<String>,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
 }
 
 /// 决策记录——进入审计层的单次决策
@@ -176,7 +199,7 @@ pub struct DecisionRecord {
 }
 
 /// 工具执行结果（由 loop_engine 构造，供 feedback 层消费）
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecutionResult {
     pub tool_id: String,
     pub tool_name: String,
@@ -188,6 +211,7 @@ pub struct ExecutionResult {
 }
 
 impl ExecutionResult {
+    #[must_use]
     pub fn success(id: impl Into<String>, name: impl Into<String>, duration_ms: u64) -> Self {
         Self {
             tool_id: id.into(),
@@ -200,6 +224,7 @@ impl ExecutionResult {
         }
     }
 
+    #[must_use]
     pub fn with_output(mut self, output: impl Into<String>) -> Self {
         self.output = Some(output.into());
         self
@@ -239,7 +264,7 @@ mod tests {
             normalized_fields: vec!["path".into()],
         };
         let approved = ApprovedAction {
-            action,
+            action: Arc::new(action),
             adjudicated_at: chrono::Utc::now(),
             warnings: vec![],
         };
@@ -252,6 +277,8 @@ mod tests {
             turn_number: 3,
             max_turns: 50,
             active_tools: vec!["read".into()],
+            total_input_tokens: 1000,
+            total_output_tokens: 500,
         };
         assert_eq!(ctx.turn_number, 3);
     }

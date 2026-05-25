@@ -148,7 +148,7 @@ fn extract_doc(attrs: &[syn::Attribute]) -> String {
     }
     let doc = lines.join(" ");
     if doc.is_empty() {
-        "工具函数".to_string()
+        "工具函数".to_owned()
     } else {
         doc.trim().to_string()
     }
@@ -233,19 +233,19 @@ mod tests {
     #[test]
     fn test_extract_kv_with_quoted_value() {
         let result = extract_kv(r#"label="Hello World""#, "label");
-        assert_eq!(result, Some("Hello World".to_string()));
+        assert_eq!(result, Some("Hello World".to_owned()));
     }
 
     #[test]
     fn test_extract_kv_with_single_quoted_value() {
         let result = extract_kv("label='hello'", "label");
-        assert_eq!(result, Some("hello".to_string()));
+        assert_eq!(result, Some("hello".to_owned()));
     }
 
     #[test]
     fn test_extract_kv_with_unquoted_value() {
         let result = extract_kv("execution_mode=sequential", "execution_mode");
-        assert_eq!(result, Some("sequential".to_string()));
+        assert_eq!(result, Some("sequential".to_owned()));
     }
 
     #[test]
@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn test_extract_kv_trailing_comma() {
         let result = extract_kv(r#"label="test","#, "label");
-        assert_eq!(result, Some("test".to_string()));
+        assert_eq!(result, Some("test".to_owned()));
     }
 
     #[test]
@@ -335,22 +335,22 @@ mod tests {
     #[test]
     fn test_parse_tool_attr_with_label() {
         let result = parse_tool_attr_str(r#"label="Read File""#);
-        assert_eq!(result.label, Some("Read File".to_string()));
+        assert_eq!(result.label, Some("Read File".to_owned()));
         assert!(result.execution_mode.is_none());
     }
 
     #[test]
     fn test_parse_tool_attr_with_execution_mode() {
         let result = parse_tool_attr_str("execution_mode=sequential");
-        assert_eq!(result.execution_mode, Some("sequential".to_string()));
+        assert_eq!(result.execution_mode, Some("sequential".to_owned()));
         assert!(result.label.is_none());
     }
 
     #[test]
     fn test_parse_tool_attr_with_both() {
         let result = parse_tool_attr_str(r#"label="Write", execution_mode=sequential"#);
-        assert_eq!(result.label, Some("Write".to_string()));
-        assert_eq!(result.execution_mode, Some("sequential".to_string()));
+        assert_eq!(result.label, Some("Write".to_owned()));
+        assert_eq!(result.execution_mode, Some("sequential".to_owned()));
     }
 
     #[test]

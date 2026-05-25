@@ -45,6 +45,7 @@ pub struct QueuedMessage {
 ///
 /// **Pi:** 对应 Pi 终端在循环运行时的排队 UX；运行时三通道见 `uncode_agent::MessageQueue`。
 /// **OpenCode:** 无三队列专名；对照会话中「排队输入」产品行为。
+#[derive(Debug)]
 pub struct MessageQueue {
     messages: Vec<QueuedMessage>,
     steering_mode: QueueMode,
@@ -147,9 +148,9 @@ mod tests {
         q.enqueue("second".into(), QueueType::FollowUp);
 
         assert_eq!(q.len(), 3);
-        assert_eq!(q.drain_follow_up(), vec!["first".to_string()]);
+        assert_eq!(q.drain_follow_up(), vec!["first".to_owned()]);
         assert_eq!(q.len(), 2);
-        assert_eq!(q.drain_follow_up(), vec!["second".to_string()]);
+        assert_eq!(q.drain_follow_up(), vec!["second".to_owned()]);
         assert!(q.drain_follow_up().is_empty());
     }
 
@@ -162,7 +163,7 @@ mod tests {
         q.enqueue("second".into(), QueueType::FollowUp);
 
         let result = q.drain_follow_up();
-        assert_eq!(result, vec!["first".to_string(), "second".to_string()]);
+        assert_eq!(result, vec!["first".to_owned(), "second".to_owned()]);
         assert_eq!(q.len(), 1); // steering remains
     }
 
@@ -174,7 +175,7 @@ mod tests {
         q.enqueue("steer2".into(), QueueType::Steering);
 
         let steering = q.drain_steering();
-        assert_eq!(steering, vec!["steer1".to_string(), "steer2".to_string()]);
+        assert_eq!(steering, vec!["steer1".to_owned(), "steer2".to_owned()]);
         assert_eq!(q.len(), 1);
     }
 
@@ -185,8 +186,8 @@ mod tests {
         q.enqueue("steer1".into(), QueueType::Steering);
         q.enqueue("steer2".into(), QueueType::Steering);
 
-        assert_eq!(q.drain_steering(), vec!["steer1".to_string()]);
-        assert_eq!(q.drain_steering(), vec!["steer2".to_string()]);
+        assert_eq!(q.drain_steering(), vec!["steer1".to_owned()]);
+        assert_eq!(q.drain_steering(), vec!["steer2".to_owned()]);
     }
 
     #[test]

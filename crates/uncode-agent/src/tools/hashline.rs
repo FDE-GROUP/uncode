@@ -119,6 +119,7 @@ pub fn parse_anchor(s: &str) -> Option<Anchor> {
 }
 
 /// 校验锚点是否与当前文件内容匹配。
+#[must_use]
 pub fn validate_anchors(content: &str, anchors: &[(usize, &[u8; 2])]) -> Result<(), String> {
     let lines: Vec<&str> = content.lines().collect();
     for &(line_num, expected_hash) in anchors {

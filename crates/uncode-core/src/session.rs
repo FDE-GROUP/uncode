@@ -414,3 +414,365 @@ pub struct SessionNode {
 pub struct SessionTree {
     pub root: SessionNode,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api_types::ThinkingLevel;
+    use crate::message::{ContentBlock, Role};
+    use chrono::Utc;
+
+    // ── generate_entry_id ──
+
+    #[test]
+    fn generate_entry_id_non_empty() {
+        let id = generate_entry_id();
+        assert!(!id.is_empty());
+    }
+
+    #[test]
+    fn generate_entry_id_unique() {
+        let id1 = generate_entry_id();
+        let id2 = generate_entry_id();
+        assert_ne!(id1, id2);
+    }
+
+    // ── SessionEntry::entry_id ──
+
+    fn make_message_entry() -> SessionEntry {
+        SessionEntry::Message(Box::new(MessageEntry::new(
+            Role::User,
+            vec![ContentBlock::Text { text: "hi".into() }],
+        )))
+    }
+
+    fn make_branch_entry() -> SessionEntry {
+        SessionEntry::Branch(Box::new(BranchEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            parent_session_id: "p1".into(),
+            reason: "fork".into(),
+        }))
+    }
+
+    fn make_leaf_entry() -> SessionEntry {
+        SessionEntry::Leaf(Box::new(LeafEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            target_id: "t1".into(),
+        }))
+    }
+
+    fn make_compaction_entry() -> SessionEntry {
+        SessionEntry::Compaction(Box::new(CompactionEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            summary: "summary".into(),
+            first_kept_entry_id: "e1".into(),
+            tokens_before: 1000,
+            files_read: vec![],
+            files_modified: vec![],
+        }))
+    }
+
+    fn make_model_change_entry() -> SessionEntry {
+        SessionEntry::ModelChange(Box::new(ModelChangeEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            provider: "openai".into(),
+            model_id: "gpt-4".into(),
+        }))
+    }
+
+    fn make_thinking_level_change_entry() -> SessionEntry {
+        SessionEntry::ThinkingLevelChange(Box::new(ThinkingLevelChangeEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            thinking_level: ThinkingLevel::High,
+        }))
+    }
+
+    fn make_system_entry() -> SessionEntry {
+        SessionEntry::System(Box::new(SystemEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            event: SystemEventType::SessionStart,
+            data: serde_json::json!({}),
+        }))
+    }
+
+    fn make_branch_summary_entry() -> SessionEntry {
+        SessionEntry::BranchSummary(Box::new(BranchSummaryEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            from_id: "b1".into(),
+            summary: "branch summary".into(),
+        }))
+    }
+
+    fn make_custom_entry() -> SessionEntry {
+        SessionEntry::Custom(Box::new(CustomEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            custom_type: "my_type".into(),
+            data: Some(serde_json::json!({"k": "v"})),
+        }))
+    }
+
+    fn make_custom_message_entry() -> SessionEntry {
+        SessionEntry::CustomMessage(Box::new(CustomMessageEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            custom_type: "my_type".into(),
+            content: vec![ContentBlock::Text { text: "msg".into() }],
+            display: true,
+        }))
+    }
+
+    fn make_label_entry() -> SessionEntry {
+        SessionEntry::Label(Box::new(LabelEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            target_id: "t1".into(),
+            label: Some("important".into()),
+        }))
+    }
+
+    fn make_session_info_entry() -> SessionEntry {
+        SessionEntry::SessionInfo(Box::new(SessionInfoEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            name: Some("sess-name".into()),
+        }))
+    }
+
+    fn make_decision_audit_entry() -> SessionEntry {
+        SessionEntry::DecisionAudit(Box::new(DecisionAuditEntry {
+            id: generate_entry_id(),
+            parent_id: None,
+            timestamp: Utc::now(),
+            turn_id: "turn-1".into(),
+            tool_name: "bash".into(),
+            allowed: true,
+            reason: Some("approved".into()),
+            adjudication_duration_ms: 50,
+        }))
+    }
+
+    fn all_variants() -> Vec<SessionEntry> {
+        vec![
+            make_message_entry(),
+            make_branch_entry(),
+            make_leaf_entry(),
+            make_compaction_entry(),
+            make_model_change_entry(),
+            make_thinking_level_change_entry(),
+            make_system_entry(),
+            make_branch_summary_entry(),
+            make_custom_entry(),
+            make_custom_message_entry(),
+            make_label_entry(),
+            make_session_info_entry(),
+            make_decision_audit_entry(),
+        ]
+    }
+
+    #[test]
+    fn session_entry_all_variants_entry_id() {
+        for entry in all_variants() {
+            assert!(!entry.entry_id().is_empty(), "entry_id empty for {:?}", entry);
+        }
+    }
+
+    #[test]
+    fn session_entry_all_variants_parent_id_default_none() {
+        for entry in all_variants() {
+            assert!(entry.parent_id().is_none(), "expected None parent_id for {:?}", entry);
+        }
+    }
+
+    #[test]
+    fn session_entry_set_parent_id_message() {
+        let mut entry = make_message_entry();
+        entry.set_parent_id("parent-1".into());
+        assert_eq!(entry.parent_id(), Some("parent-1"));
+    }
+
+    #[test]
+    fn session_entry_set_parent_id_branch() {
+        let mut entry = make_branch_entry();
+        entry.set_parent_id("parent-1".into());
+        assert_eq!(entry.parent_id(), Some("parent-1"));
+    }
+
+    // ── MessageEntry::new ──
+
+    #[test]
+    fn message_entry_new_constructor() {
+        let entry = MessageEntry::new(Role::Assistant, vec![ContentBlock::Text { text: "ok".into() }]);
+        assert!(!entry.id.is_empty());
+        assert!(entry.parent_id.is_none());
+        assert_eq!(entry.role, Role::Assistant);
+        assert_eq!(entry.content.len(), 1);
+        assert!(entry.usage.is_none());
+    }
+
+    // ── SessionHeader ──
+
+    #[test]
+    fn session_header_construction() {
+        let h = SessionHeader::new("sid-1".into(), "gpt-4".into(), "/home".into());
+        assert_eq!(h.id, "sid-1");
+        assert_eq!(h.model, "gpt-4");
+        assert_eq!(h.working_dir, "/home");
+        assert_eq!(h.version, 2);
+        assert!(h.title.is_none());
+    }
+
+    #[test]
+    fn session_header_with_title() {
+        let h = SessionHeader::new("sid-1".into(), "gpt-4".into(), "/home".into())
+            .with_title("My Session".into());
+        assert_eq!(h.title.unwrap(), "My Session");
+    }
+
+    #[test]
+    fn session_header_serde_roundtrip() {
+        let h = SessionHeader::new("sid-1".into(), "gpt-4".into(), "/home".into());
+        let json = serde_json::to_string(&h).unwrap();
+        let decoded: SessionHeader = serde_json::from_str(&json).unwrap();
+        assert_eq!(h.id, decoded.id);
+        assert_eq!(h.model, decoded.model);
+        assert_eq!(h.version, decoded.version);
+    }
+
+    // ── SessionMetadata ──
+
+    #[test]
+    fn session_metadata_from_header() {
+        let h = SessionHeader::new("sid-1".into(), "gpt-4".into(), "/home".into());
+        let meta = SessionMetadata::from(h);
+        assert_eq!(meta.id, "sid-1");
+        assert_eq!(meta.model, "gpt-4");
+        assert_eq!(meta.message_count, 0);
+        assert!(meta.title.is_none());
+    }
+
+    // ── Serde roundtrip for all entry variants ──
+
+    #[test]
+    fn session_entry_serde_roundtrip_message() {
+        let entry = make_message_entry();
+        let json = serde_json::to_string(&entry).unwrap();
+        let decoded: SessionEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry.entry_id(), decoded.entry_id());
+    }
+
+    #[test]
+    fn session_entry_serde_roundtrip_branch() {
+        let entry = make_branch_entry();
+        let json = serde_json::to_string(&entry).unwrap();
+        let decoded: SessionEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry.entry_id(), decoded.entry_id());
+    }
+
+    #[test]
+    fn session_entry_serde_roundtrip_compaction() {
+        let entry = make_compaction_entry();
+        let json = serde_json::to_string(&entry).unwrap();
+        let decoded: SessionEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry.entry_id(), decoded.entry_id());
+    }
+
+    #[test]
+    fn session_entry_serde_roundtrip_decision_audit() {
+        let entry = make_decision_audit_entry();
+        let json = serde_json::to_string(&entry).unwrap();
+        let decoded: SessionEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(entry.entry_id(), decoded.entry_id());
+    }
+
+    // ── SystemEventType serde ──
+
+    #[test]
+    fn system_event_type_serde_roundtrip() {
+        let cases = vec![
+            SystemEventType::SessionStart,
+            SystemEventType::SessionEnd,
+            SystemEventType::PhaseSummary,
+            SystemEventType::Error,
+            SystemEventType::Compaction,
+        ];
+        for original in cases {
+            let json = serde_json::to_string(&original).unwrap();
+            let decoded: SystemEventType = serde_json::from_str(&json).unwrap();
+            // Compare via debug string since no PartialEq
+            assert_eq!(format!("{:?}", original), format!("{:?}", decoded));
+        }
+    }
+
+    // ── SessionNode / SessionTree ──
+
+    #[test]
+    fn session_node_construction() {
+        let node = SessionNode {
+            id: "n1".into(),
+            title: Some("root".into()),
+            model: "gpt-4".into(),
+            message_count: 5,
+            children: vec![],
+        };
+        assert_eq!(node.id, "n1");
+        assert_eq!(node.message_count, 5);
+        assert!(node.children.is_empty());
+    }
+
+    #[test]
+    fn session_tree_construction() {
+        let tree = SessionTree {
+            root: SessionNode {
+                id: "root".into(),
+                title: None,
+                model: "gpt-4".into(),
+                message_count: 0,
+                children: vec![],
+            },
+        };
+        assert_eq!(tree.root.id, "root");
+    }
+
+    #[test]
+    fn session_tree_serde_roundtrip() {
+        let tree = SessionTree {
+            root: SessionNode {
+                id: "root".into(),
+                title: Some("title".into()),
+                model: "claude".into(),
+                message_count: 3,
+                children: vec![SessionNode {
+                    id: "child".into(),
+                    title: None,
+                    model: "claude".into(),
+                    message_count: 1,
+                    children: vec![],
+                }],
+            },
+        };
+        let json = serde_json::to_string(&tree).unwrap();
+        let decoded: SessionTree = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.root.id, "root");
+        assert_eq!(decoded.root.children.len(), 1);
+        assert_eq!(decoded.root.children[0].id, "child");
+    }
+}

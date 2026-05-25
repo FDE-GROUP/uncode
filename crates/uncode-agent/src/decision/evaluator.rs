@@ -20,6 +20,7 @@ use super::types::ExecutionResult;
 
 /// H0-H3 评估级别
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
 pub enum AssessmentLevel {
     /// H0: 仅输出结果，无评估
     RawOutput = 0,
@@ -57,7 +58,7 @@ impl EvaluationScore {
         }
     }
 
-    pub fn h1(success: bool, _output_summary: &str, error: Option<&str>) -> Self {
+    pub fn h1(success: bool, error: Option<&str>) -> Self {
         let quality = if success { 0.7 } else { 0.3 };
         let mut passed = Vec::new();
         let mut failed = Vec::new();
@@ -78,7 +79,9 @@ impl EvaluationScore {
     }
 
     pub fn h2(success: bool, test_output: &str) -> Self {
-        let tests_passed = test_output.contains("test result: ok");
+        let tests_passed = test_output
+            .lines()
+            .any(|line| line.starts_with("test result: ok"));
         let quality = match (success, tests_passed) {
             (true, true) => 0.9,
             (true, false) => 0.6,
@@ -131,11 +134,7 @@ pub struct BasicEvaluator;
 
 impl Evaluator for BasicEvaluator {
     fn evaluate(&self, result: &ExecutionResult, _ctx: &EvaluationContext) -> EvaluationScore {
-        EvaluationScore::h1(
-            result.success,
-            result.output.as_deref().unwrap_or(""),
-            result.error.as_deref(),
-        )
+        EvaluationScore::h1(result.success, result.error.as_deref())
     }
     fn name(&self) -> &'static str {
         "basic"
@@ -154,11 +153,7 @@ impl Evaluator for VerifiedEvaluator {
             return EvaluationScore::h2(result.success, test_output);
         }
         // 回退到 H1
-        EvaluationScore::h1(
-            result.success,
-            result.output.as_deref().unwrap_or(""),
-            result.error.as_deref(),
-        )
+        EvaluationScore::h1(result.success, result.error.as_deref())
     }
     fn name(&self) -> &'static str {
         "verified"
@@ -204,13 +199,14 @@ impl TurnEvaluation {
             AssessmentLevel::Verified => "H2",
             AssessmentLevel::Reproducible => "H3",
         };
+        let passed_count = self.scores.iter().flat_map(|s| &s.passed).count();
+        let failed_count = self.scores.iter().flat_map(|s| &s.failed).count();
         format!(
             "Turn {} evaluation: level={level_name} quality={:.0}% ({}/{} passed)",
             self.turn_number,
             self.overall_quality * 100.0,
-            self.scores.iter().flat_map(|s| &s.passed).count(),
-            self.scores.iter().flat_map(|s| &s.passed).count()
-                + self.scores.iter().flat_map(|s| &s.failed).count(),
+            passed_count,
+            passed_count + failed_count,
         )
     }
 }
@@ -248,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_h1_success() {
-        let score = EvaluationScore::h1(true, "done", None);
+        let score = EvaluationScore::h1(true, None);
         assert_eq!(score.level, AssessmentLevel::Basic);
         assert!(score.quality_score > 0.5);
         assert!(score.failed.is_empty());
@@ -256,7 +252,7 @@ mod tests {
 
     #[test]
     fn test_h1_failure() {
-        let score = EvaluationScore::h1(false, "", Some("error"));
+        let score = EvaluationScore::h1(false, Some("error"));
         assert_eq!(score.level, AssessmentLevel::Basic);
         assert!(score.quality_score < 0.5);
         assert!(!score.failed.is_empty());
@@ -307,7 +303,7 @@ mod tests {
     #[test]
     fn test_turn_evaluation_aggregation() {
         let scores = vec![
-            EvaluationScore::h1(true, "done", None),
+            EvaluationScore::h1(true, None),
             EvaluationScore::h2(true, "test result: ok"),
         ];
         let turn_eval = TurnEvaluation::new(1, scores);

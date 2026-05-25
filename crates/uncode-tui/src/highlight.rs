@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{FontStyle, ThemeSet};
@@ -105,13 +105,13 @@ fn syntect_to_ratatui(s: syntect::highlighting::Style) -> Style {
     let fg = ratatui::style::Color::Rgb(s.foreground.r, s.foreground.g, s.foreground.b);
     let mut style = Style::default().fg(fg);
     if s.font_style.contains(FontStyle::BOLD) {
-        style = style.add_modifier(Modifier::BOLD);
+        style = style.bold();
     }
     if s.font_style.contains(FontStyle::ITALIC) {
-        style = style.add_modifier(Modifier::ITALIC);
+        style = style.italic();
     }
     if s.font_style.contains(FontStyle::UNDERLINE) {
-        style = style.add_modifier(Modifier::UNDERLINED);
+        style = style.underlined();
     }
     style
 }
@@ -123,4 +123,96 @@ pub fn detect_language_from_path(path: &str) -> Option<&'static str> {
         .find_syntax_by_extension(ext)
         .or_else(|| SYNTAX_SET.find_syntax_by_extension(path))?;
     Some(syntax.name.clone().leak() as &str)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_language_from_path_rs() {
+        assert_eq!(detect_language_from_path("file.rs"), Some("Rust"));
+    }
+
+    #[test]
+    fn detect_language_from_path_py() {
+        assert_eq!(detect_language_from_path("file.py"), Some("Python"));
+    }
+
+    #[test]
+    fn detect_language_from_path_js() {
+        assert_eq!(detect_language_from_path("file.js"), Some("JavaScript"));
+    }
+
+    #[test]
+    fn detect_language_from_path_ts() {
+        // syntect's default syntax set may not include TypeScript
+        let result = detect_language_from_path("file.ts");
+        assert!(result.is_none() || result == Some("TypeScript"));
+    }
+
+    #[test]
+    fn detect_language_from_full_path() {
+        assert_eq!(detect_language_from_path("src/main.rs"), Some("Rust"));
+    }
+
+    #[test]
+    fn detect_language_unknown_extension() {
+        assert_eq!(detect_language_from_path("file.xyz"), None);
+    }
+
+    #[test]
+    fn detect_language_empty_path() {
+        assert_eq!(detect_language_from_path(""), None);
+    }
+
+    #[test]
+    fn detect_language_no_extension() {
+        assert_eq!(detect_language_from_path("Makefile"), None);
+    }
+
+    #[test]
+    fn detect_language_multiple_dots() {
+        // Rust's Path::extension returns "ts" for "test.spec.ts"
+        // Whether syntect finds it depends on its bundled syntaxes
+        let result = detect_language_from_path("test.spec.ts");
+        assert!(result.is_none() || result == Some("TypeScript"));
+    }
+
+    #[test]
+    fn detect_language_uppercase_extension() {
+        // syntect's extension matching appears to be case-insensitive
+        assert_eq!(detect_language_from_path("file.RS"), Some("Rust"));
+    }
+
+    #[test]
+    fn highlight_code_empty_input() {
+        let result = highlight_code("", "rust");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn highlight_code_with_theme_empty_input() {
+        let result = highlight_code_with_theme("", "rust", &Theme::default());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn highlight_line_with_theme_empty_input() {
+        let line = highlight_line_with_theme("", "rust", &Theme::default());
+        assert_eq!(line, Line::from(""));
+    }
+
+    #[test]
+    fn highlight_code_unknown_language_fallback() {
+        let result = highlight_code("hello world", "nonexistent_lang_xyz");
+        // Should produce one line with plain text styling
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn highlight_code_preserves_line_count() {
+        let result = highlight_code("line1\nline2\nline3", "rust");
+        assert_eq!(result.len(), 3);
+    }
 }

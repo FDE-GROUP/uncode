@@ -115,7 +115,7 @@ mod tests {
     fn test_names() {
         let cmds = SlashCommands::new();
         let names = cmds.names();
-        assert!(names.contains(&"help".to_string()));
+        assert!(names.contains(&"help".to_owned()));
     }
 
     #[test]

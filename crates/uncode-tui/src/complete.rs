@@ -63,7 +63,7 @@ impl CompletionEngine {
                 if is_dir { format!("{name}/") } else { name }
             })
             .collect();
-        matches.sort();
+        matches.sort_unstable();
         matches
     }
 }
@@ -77,7 +77,7 @@ mod tests {
         let engine = CompletionEngine::new(vec!["help".into(), "quit".into()]);
         let completions = engine.complete("/");
         assert_eq!(completions.len(), 2);
-        assert!(completions.contains(&"/help".to_string()));
+        assert!(completions.contains(&"/help".to_owned()));
     }
 
     #[test]

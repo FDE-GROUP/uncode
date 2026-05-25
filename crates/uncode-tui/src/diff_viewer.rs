@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Paragraph};
 
 use uncode_core::diff::{DiffLine, Patch};
 
@@ -73,7 +73,7 @@ impl DiffViewer {
             format!(" Diff: {}", patch.path)
         };
 
-        let block = Block::default().borders(Borders::ALL).title(title);
+        let block = Block::bordered().title(title);
         let inner = block.inner(area);
         let max_lines = inner.height as usize;
 
@@ -86,7 +86,7 @@ impl DiffViewer {
                         "@@ -{},{} +{},{} @@",
                         hunk.old_start, hunk.old_count, hunk.new_start, hunk.new_count
                     ),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().cyan(),
                 ));
                 let content_lines = hunk.lines.iter().map(|dl| {
                     let (color, prefix) = match dl {

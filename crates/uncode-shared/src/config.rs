@@ -402,3 +402,175 @@ fn default_keep_recent_tokens() -> u64 {
 fn default_reserve_tokens() -> u64 {
     16384
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sandbox_profile_default() {
+        assert_eq!(SandboxProfile::default(), SandboxProfile::Strict);
+    }
+
+    #[test]
+    fn test_bash_tool_config_default() {
+        let config = BashToolConfig::default();
+        assert!(!config.sandbox);
+        assert_eq!(config.sandbox_profile, SandboxProfile::Strict);
+    }
+
+    #[test]
+    fn test_permission_config_default() {
+        let config = PermissionConfig::default();
+        assert!(config.dangerous_bash_detection);
+        assert!(config.protected_paths_enabled);
+        assert!(!config.protected_paths.is_empty());
+        assert!(!config.dangerous_bash_patterns.is_empty());
+        assert!(config.extra_safe_commands.is_empty());
+    }
+
+    #[test]
+    fn test_compaction_config_default() {
+        let config = CompactionConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.threshold_percent, 80);
+        assert_eq!(config.keep_recent_tokens, 20000);
+        assert_eq!(config.reserve_tokens, 16384);
+    }
+
+    #[test]
+    fn test_tools_config_default() {
+        let config = ToolsConfig::default();
+        assert_eq!(config.max_file_bytes, 1024 * 1024);
+        assert_eq!(config.max_grep_results, 50);
+        assert!(!config.bash.sandbox);
+    }
+
+    #[test]
+    fn test_provider_config_construction() {
+        let config = ProviderConfig {
+            api_key: "sk-test123".into(),
+            base_url: Some("https://api.example.com".into()),
+        };
+        assert_eq!(config.api_key, "sk-test123");
+        assert_eq!(config.base_url, Some("https://api.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_app_config_default() {
+        let config = AppConfig::default();
+        assert_eq!(config.model, "deepseek-v3");
+        assert_eq!(config.max_tokens, 8192);
+        assert_eq!(config.temperature, 0.7);
+        assert!(config.providers.deepseek.is_none());
+        assert_eq!(config.models.len(), 3);
+    }
+
+    #[test]
+    fn test_user_compat_config_construction() {
+        let config = UserCompatConfig {
+            supports_developer_role: Some(true),
+            supports_usage_in_streaming: Some(true),
+            done_breaks_stream: Some(false),
+            thinking_format: Some("deepseek-r1".into()),
+            max_tokens_field: Some("max_tokens".into()),
+            send_session_affinity_headers: Some(false),
+            supports_long_cache_retention: Some(true),
+            supports_store: Some(false),
+            requires_reasoning_content_on_assistant_messages: Some(true),
+            supports_eager_tool_input_streaming: Some(true),
+            supports_cache_control_on_tools: Some(false),
+        };
+        assert_eq!(config.supports_developer_role, Some(true));
+        assert_eq!(config.thinking_format, Some("deepseek-r1".to_string()));
+        assert_eq!(config.done_breaks_stream, Some(false));
+    }
+
+    #[test]
+    fn test_model_config_fields() {
+        let config = ModelConfig {
+            id: "test-model".into(),
+            provider: "test-provider".into(),
+            display_name: "Test Model".into(),
+            max_tokens: 32000,
+            supports_vision: true,
+            supports_tools: false,
+        };
+        assert_eq!(config.id, "test-model");
+        assert_eq!(config.provider, "test-provider");
+        assert_eq!(config.display_name, "Test Model");
+        assert_eq!(config.max_tokens, 32000);
+        assert!(config.supports_vision);
+        assert!(!config.supports_tools);
+    }
+
+    #[test]
+    fn test_user_model_config_construction() {
+        let config = UserModelConfig {
+            id: "my-model".into(),
+            api: "anthropic-messages".into(),
+            provider: "anthropic".into(),
+            base_url: Some("https://api.anthropic.com".into()),
+            api_key: Some("sk-ant-xxx".into()),
+            context_window: Some(200000),
+            max_output_tokens: Some(8192),
+            compat: Some(UserCompatConfig {
+                supports_developer_role: Some(false),
+                ..Default::default()
+            }),
+        };
+        assert_eq!(config.id, "my-model");
+        assert_eq!(config.api, "anthropic-messages");
+        assert_eq!(config.provider, "anthropic");
+        assert_eq!(
+            config.base_url,
+            Some("https://api.anthropic.com".to_string())
+        );
+        assert_eq!(config.api_key, Some("sk-ant-xxx".to_string()));
+        assert_eq!(config.context_window, Some(200000));
+        assert_eq!(config.max_output_tokens, Some(8192));
+        assert_eq!(
+            config.compat.unwrap().supports_developer_role,
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn test_permission_config_serde_roundtrip() {
+        let config = PermissionConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: PermissionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            config.dangerous_bash_detection,
+            deserialized.dangerous_bash_detection
+        );
+        assert_eq!(
+            config.protected_paths_enabled,
+            deserialized.protected_paths_enabled
+        );
+        assert_eq!(config.protected_paths, deserialized.protected_paths);
+    }
+
+    #[test]
+    fn test_compaction_config_serde_roundtrip() {
+        let config = CompactionConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: CompactionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.enabled, deserialized.enabled);
+        assert_eq!(config.threshold_percent, deserialized.threshold_percent);
+        assert_eq!(config.keep_recent_tokens, deserialized.keep_recent_tokens);
+        assert_eq!(config.reserve_tokens, deserialized.reserve_tokens);
+    }
+
+    #[test]
+    fn test_bash_tool_config_serde_roundtrip() {
+        let config = BashToolConfig {
+            sandbox: true,
+            sandbox_profile: SandboxProfile::Permissive,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: BashToolConfig = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.sandbox);
+        assert_eq!(deserialized.sandbox_profile, SandboxProfile::Permissive);
+    }
+}

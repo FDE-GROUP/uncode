@@ -26,14 +26,14 @@ fn default_anchor() -> OverlayAnchor {
 }
 
 /// Size value — fixed characters or percentage of screen.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SizeValue {
     Fixed(u16),
     Percent(u16),
 }
 
 /// Anchor position for overlay placement.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum OverlayAnchor {
     #[default]
     Center,
@@ -54,7 +54,7 @@ pub struct OverlayContent {
 }
 
 /// Per-line style descriptor.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct OverlayStyle {
     #[serde(default)]
     pub fg: Option<String>,
@@ -81,6 +81,7 @@ pub enum OverlayAction {
 }
 
 impl OverlayConfig {
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         if self.key.is_empty() {
             return Err("overlay key must not be empty".into());

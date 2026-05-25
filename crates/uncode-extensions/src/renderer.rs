@@ -30,7 +30,7 @@ fn default_result_max_lines() -> usize {
 }
 
 /// 结果渲染样式。
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum ResultStyle {
     /// 纯文本，使用 theme 代码色。
     #[default]
@@ -45,6 +45,7 @@ pub enum ResultStyle {
 
 impl ToolRenderConfig {
     /// 验证配置合法性。
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         if self.tool_name.is_empty() {
             return Err("tool_name must not be empty".into());

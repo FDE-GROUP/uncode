@@ -246,7 +246,7 @@ impl ToolRenderer for EditRenderer {
         let mut out = Vec::new();
 
         let summary = if added == 1 && removed == 1 {
-            "1 addition, 1 deletion".to_string()
+            "1 addition, 1 deletion".to_owned()
         } else if added == 0 && removed > 0 {
             format!("{removed} deletions")
         } else if removed == 0 && added > 0 {
@@ -398,7 +398,7 @@ impl ToolRenderer for BashRenderer {
         let desc = extract_json_field(args, "description");
         let wd = extract_json_field(args, "workdir");
         let title = if desc.is_empty() {
-            "Shell".to_string()
+            "Shell".to_owned()
         } else {
             desc.clone()
         };
@@ -608,7 +608,7 @@ impl ToolRenderer for FallbackRenderer {
 // --- 扩展注册的模板渲染器 ---
 
 /// 渲染结果样式，从 `ToolRenderConfig.result_style` 映射。
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultStyle {
     Plain,
     Code,
@@ -685,7 +685,7 @@ impl ToolRenderer for TemplateToolRenderer {
                         .collect()
                 }
             }
-            ResultStyle::Diff => render_diff_lines(lines, theme, self.result_max_lines),
+            ResultStyle::Diff => render_diff_lines(&lines, theme, self.result_max_lines),
             ResultStyle::Bash => lines
                 .iter()
                 .take(self.result_max_lines)
@@ -701,7 +701,7 @@ impl ToolRenderer for TemplateToolRenderer {
 }
 
 /// Shared diff rendering for EditRenderer and TemplateToolRenderer.
-fn render_diff_lines(lines: Vec<&str>, theme: &Theme, max_lines: usize) -> Vec<Line<'static>> {
+fn render_diff_lines(lines: &[&str], theme: &Theme, max_lines: usize) -> Vec<Line<'static>> {
     lines
         .iter()
         .take(max_lines)
@@ -836,34 +836,34 @@ fn syntect_color_to_ratatui(c: syntect::highlighting::Color) -> Color {
 /// 对标 opencode 的 info() 函数：跳过主字段（如 filePath），其余标量参数用 `[k=v, ...]` 展示
 /// 同时检查 `arguments` 嵌套和 `function.arguments` 嵌套（兼容 OpenAI/Anthropic 格式）
 fn format_extra_args(args: &str, skip_keys: &[&str]) -> String {
-    if let Ok(val) = serde_json::from_str::<serde_json::Value>(args) {
-        let obj = if let Some(inner) = val
-            .get("arguments")
-            .or_else(|| val.get("function").and_then(|f| f.get("arguments")))
-            .and_then(|v| v.as_object())
-        {
-            inner
-        } else if let Some(outer) = val.as_object() {
-            outer
-        } else {
-            return String::new();
-        };
-        let pairs: Vec<String> = obj
-            .iter()
-            .filter(|(k, v)| {
-                if skip_keys.contains(&k.as_str()) {
-                    return false;
-                }
-                v.is_string() || v.is_number() || v.is_boolean()
-            })
-            .map(|(k, v)| format!("{k}={}", val_to_string(v)))
-            .collect();
-        if pairs.is_empty() {
-            return String::new();
-        }
-        return format!("[{}]", pairs.join(", "));
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(args) else {
+        return String::new();
+    };
+    let obj = if let Some(inner) = val
+        .get("arguments")
+        .or_else(|| val.get("function").and_then(|f| f.get("arguments")))
+        .and_then(|v| v.as_object())
+    {
+        inner
+    } else if let Some(outer) = val.as_object() {
+        outer
+    } else {
+        return String::new();
+    };
+    let pairs: Vec<String> = obj
+        .iter()
+        .filter(|(k, v)| {
+            if skip_keys.contains(&k.as_str()) {
+                return false;
+            }
+            v.is_string() || v.is_number() || v.is_boolean()
+        })
+        .map(|(k, v)| format!("{k}={}", val_to_string(v)))
+        .collect();
+    if pairs.is_empty() {
+        return String::new();
     }
-    String::new()
+    format!("[{}]", pairs.join(", "))
 }
 
 /// JSON Value 转展示字符串

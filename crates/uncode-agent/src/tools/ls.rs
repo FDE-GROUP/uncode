@@ -90,7 +90,7 @@ impl ToolExecutor for LsTool {
         if results.is_empty() {
             Ok(ToolResult::ok("(empty)"))
         } else {
-            results.sort();
+            results.sort_unstable();
             Ok(ToolResult::ok(results.join("\n")))
         }
     }

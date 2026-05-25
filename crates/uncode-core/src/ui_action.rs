@@ -14,14 +14,14 @@ pub struct WidgetConfig {
 }
 
 /// Widget placement relative to the input editor.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum WidgetPlacement {
     AboveEditor,
     BelowEditor,
 }
 
 /// Notification severity level.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum NotifyType {
     Info,
     Warning,
@@ -60,6 +60,7 @@ pub enum UiAction {
 }
 
 impl WidgetConfig {
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         if self.key.is_empty() {
             return Err("widget key must not be empty".into());

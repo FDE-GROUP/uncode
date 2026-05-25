@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 /// 扩展发起的对话框请求。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DialogRequest {
     /// 单选列表。
     Select { title: String, options: Vec<String> },
@@ -20,7 +20,7 @@ pub enum DialogRequest {
 }
 
 /// 用户对对话框的响应。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DialogResponse {
     /// Select 返回选中项索引。
     Selected(usize),

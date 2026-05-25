@@ -23,6 +23,9 @@ use super::firewall::{ValidationError, ValidationRule, ValidationVerdict};
 use super::types::{DecisionVerdict, ParsedAction};
 
 /// 模型桥接 — Model ↔ 本体字段的映射工具
+///
+/// 使用 unit struct 而非 free functions 以便将来添加 trait 实现
+/// （如 `Default`、测试 mock trait），同时将相关函数组织在单一命名空间下。
 pub struct ModelBridge;
 
 impl ModelBridge {
@@ -33,7 +36,7 @@ impl ModelBridge {
     /// supports_vision, supports_reasoning, supports_tools, api_protocol,
     /// pricing_input_per_million, pricing_output_per_million
     pub fn model_to_fields(model: &Model) -> HashMap<String, serde_json::Value> {
-        let mut fields = HashMap::new();
+        let mut fields = HashMap::with_capacity(10);
         fields.insert("model_id".into(), serde_json::json!(model.id));
         fields.insert("provider".into(), serde_json::json!(model.provider));
         fields.insert(
@@ -83,21 +86,19 @@ impl ModelBridge {
         };
 
         let fields = Self::model_to_fields(model);
-        let mut results = Vec::new();
-
-        for field_def in &entity.fields {
-            if field_def.required {
-                let result = uncode_ontology::evaluate_constraint(
+        entity
+            .fields
+            .iter()
+            .filter(|field_def| field_def.required)
+            .map(|field_def| {
+                uncode_ontology::evaluate_constraint(
                     &uncode_ontology::Constraint::RequiredField {
                         field: field_def.name.clone(),
                     },
                     &fields,
-                );
-                results.push(result);
-            }
-        }
-
-        results
+                )
+            })
+            .collect()
     }
 
     /// 查询满足条件的模型列表
@@ -120,7 +121,7 @@ impl ModelBridge {
     /// 预估单次 turn 的成本（USD）
     ///
     /// 输入端用 `context_tokens`，输出端用 `max_output_tokens` 作为上界。
-    pub fn estimate_turn_cost(model: &Model, context_tokens: u32) -> f64 {
+    pub fn estimate_turn_cost(model: &Model, context_tokens: u64) -> f64 {
         let input_cost = (context_tokens as f64 / 1_000_000.0) * model.pricing.input;
         let output_cost = (model.max_output_tokens as f64 / 1_000_000.0) * model.pricing.output;
         input_cost + output_cost
@@ -136,8 +137,8 @@ impl ModelBridge {
 /// Phase 1 先做 warn 不做 deny（通过 violations 报告），
 /// 后续可切换为 deny 模式。
 pub struct CostBudgetPolicy {
-    pub budget_per_turn_usd: f64,
-    pub deny_mode: bool,
+    budget_per_turn_usd: f64,
+    deny_mode: bool,
 }
 
 impl CostBudgetPolicy {
@@ -154,7 +155,7 @@ impl CostBudgetPolicy {
     }
 
     /// 检查模型在给定 context tokens 下的预估成本
-    pub fn check(&self, model: &Model, context_tokens: u32) -> DecisionVerdict {
+    pub fn check(&self, model: &Model, context_tokens: u64) -> DecisionVerdict {
         let cost = ModelBridge::estimate_turn_cost(model, context_tokens);
         if cost <= self.budget_per_turn_usd {
             return DecisionVerdict::approved();
@@ -168,11 +169,10 @@ impl CostBudgetPolicy {
         if self.deny_mode {
             DecisionVerdict::denied(msg)
         } else {
-            DecisionVerdict {
-                allowed: true,
-                reason: Some(msg),
-                violations: vec![format!("cost_warning: ${cost:.6}")],
-            }
+            DecisionVerdict::warn(
+                format!("cost_warning: ${cost:.6} per turn (model: {})", model.id),
+                vec![format!("cost_warning: ${cost:.6}")],
+            )
         }
     }
 }
@@ -184,7 +184,7 @@ impl CostBudgetPolicy {
 pub struct CostBudgetPolicyAdapter {
     inner: CostBudgetPolicy,
     model: Arc<Model>,
-    context_tokens: u32,
+    context_tokens: u64,
 }
 
 impl CostBudgetPolicyAdapter {
@@ -192,7 +192,7 @@ impl CostBudgetPolicyAdapter {
         budget_per_turn_usd: f64,
         deny_mode: bool,
         model: Arc<Model>,
-        context_tokens: u32,
+        context_tokens: u64,
     ) -> Self {
         Self {
             inner: CostBudgetPolicy::new(budget_per_turn_usd).with_deny_mode(deny_mode),
@@ -205,20 +205,25 @@ impl CostBudgetPolicyAdapter {
 impl super::adjudication::DecisionPolicy for CostBudgetPolicyAdapter {
     fn evaluate(
         &self,
-        _context: &super::types::DecisionContext,
+        context: &super::types::DecisionContext,
         _action: &super::types::NormalizedAction,
     ) -> Result<DecisionVerdict, super::adjudication::AdjudicationError> {
-        let verdict = self.inner.check(&self.model, self.context_tokens);
+        let effective_tokens = if context.total_input_tokens > 0 {
+            context.total_input_tokens
+        } else {
+            self.context_tokens
+        };
+        let verdict = self.inner.check(&self.model, effective_tokens);
         if !verdict.allowed {
             return Err(super::adjudication::AdjudicationError::Denied {
-                policy: self.name().to_string(),
+                policy: self.name().to_owned(),
                 reason: verdict.reason.unwrap_or_default(),
             });
         }
         Ok(verdict)
     }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "cost_budget"
     }
 }
@@ -231,10 +236,11 @@ impl super::adjudication::DecisionPolicy for CostBudgetPolicyAdapter {
 ///
 /// Phase 1 先做 warn 不做 deny。当检测到能力不匹配时，
 /// 在 violations 中报告建议切换的模型列表。
+#[derive(Debug)]
 pub struct ModelCapabilityRule {
-    pub ontology: uncode_ontology::TypeRegistry,
-    pub models: Arc<Vec<Model>>,
-    pub current_model: Arc<Model>,
+    ontology: uncode_ontology::TypeRegistry,
+    models: Arc<Vec<Model>>,
+    current_model: Arc<Model>,
 }
 
 impl ModelCapabilityRule {
@@ -250,7 +256,32 @@ impl ModelCapabilityRule {
         }
     }
 
-    /// 检查模型是否支持指定能力
+    fn required_capabilities(&self, action: &ParsedAction) -> Vec<String> {
+        let mut caps = Vec::new();
+
+        if action.tool_name == "read"
+            && action
+                .arguments
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(Self::needs_vision)
+                .unwrap_or(false)
+        {
+            caps.push("supports_vision".into());
+        }
+
+        if let Some(action_def) = self.ontology.get_action(&action.tool_name) {
+            if matches!(
+                action_def.execution_category,
+                uncode_ontology::types::ExecutionCategory::Shell
+            ) {
+                caps.push("supports_tools".into());
+            }
+        }
+
+        caps
+    }
+
     pub fn check_capability(&self, model: &Model, capability: &str) -> CapabilityCheckResult {
         let fields = ModelBridge::model_to_fields(model);
         let supported = fields
@@ -262,30 +293,37 @@ impl ModelCapabilityRule {
             return CapabilityCheckResult::Supported;
         }
 
-        let alternatives: Vec<String> = ModelBridge::query_models(
-            &self.models,
-            &[(capability.to_string(), serde_json::json!(true))]
-                .into_iter()
-                .collect(),
-        )
-        .iter()
-        .map(|m| m.id.clone())
-        .collect();
+        let alternatives: Vec<String> = self
+            .models
+            .iter()
+            .filter(|m| {
+                let fields = ModelBridge::model_to_fields(m);
+                fields
+                    .get(capability)
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            })
+            .map(|m| m.id.clone())
+            .collect();
 
         CapabilityCheckResult::Unsupported { alternatives }
     }
 
-    /// 根据文件扩展名判断是否需要 vision 能力
     pub fn needs_vision(path: &str) -> bool {
-        let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
+        let ext = std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
         matches!(
-            ext.as_str(),
+            ext.to_ascii_lowercase().as_str(),
             "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp"
         )
     }
 }
 
 /// 能力检查结果
+#[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum CapabilityCheckResult {
     Supported,
     Unsupported { alternatives: Vec<String> },
@@ -293,38 +331,41 @@ pub enum CapabilityCheckResult {
 
 impl ValidationRule for ModelCapabilityRule {
     fn validate(&self, action: &ParsedAction) -> Result<ValidationVerdict, ValidationError> {
-        let needs_check = action.tool_name == "read"
-            && action
-                .arguments
-                .get("path")
-                .and_then(|v| v.as_str())
-                .map(Self::needs_vision)
-                .unwrap_or(false);
+        let required_caps = self.required_capabilities(action);
 
-        if !needs_check {
+        if required_caps.is_empty() {
             return Ok(ValidationVerdict::approved());
         }
 
-        let result = self.check_capability(&self.current_model, "supports_vision");
-        match result {
-            CapabilityCheckResult::Supported => Ok(ValidationVerdict::approved()),
-            CapabilityCheckResult::Unsupported { alternatives } => {
+        let mut violations = Vec::new();
+        for cap in &required_caps {
+            if let CapabilityCheckResult::Unsupported { alternatives } =
+                self.check_capability(&self.current_model, cap)
+            {
                 let msg = format!(
-                    "model '{}' does not support vision but read targets an image file. \
-                     Consider switching to: {}",
+                    "model '{}' lacks '{}' for action '{}'. Alternatives: {}",
                     self.current_model.id,
+                    cap,
+                    action.tool_name,
                     alternatives.join(", ")
                 );
-                Ok(ValidationVerdict {
-                    approved: true,
-                    reason: Some(msg.clone()),
-                    violations: vec![msg],
-                })
+                violations.push(msg);
             }
+        }
+
+        if violations.is_empty() {
+            Ok(ValidationVerdict::approved())
+        } else {
+            let reason = violations.join("; ");
+            Ok(ValidationVerdict {
+                approved: true,
+                reason: Some(reason),
+                violations,
+            })
         }
     }
 
-    fn name(&self) -> &'static str {
+    fn name(&self) -> &str {
         "model_capability"
     }
 }
@@ -568,5 +609,50 @@ mod tests {
         let verdict = rule.validate(&action).unwrap();
         assert!(verdict.approved);
         assert!(verdict.violations.is_empty());
+    }
+
+    #[test]
+    fn test_required_capabilities_vision_for_image() {
+        let ontology = uncode_ontology::builtin::full_ontology();
+        let model = test_model("m", false, false);
+        let rule =
+            ModelCapabilityRule::new(ontology, Arc::new(vec![model.clone()]), Arc::new(model));
+        let action = ParsedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"path": "/tmp/photo.jpg"}),
+        };
+        let caps = rule.required_capabilities(&action);
+        assert!(caps.contains(&"supports_vision".to_owned()));
+    }
+
+    #[test]
+    fn test_required_capabilities_empty_for_text() {
+        let ontology = uncode_ontology::builtin::full_ontology();
+        let model = test_model("m", false, false);
+        let rule =
+            ModelCapabilityRule::new(ontology, Arc::new(vec![model.clone()]), Arc::new(model));
+        let action = ParsedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"path": "/tmp/main.rs"}),
+        };
+        let caps = rule.required_capabilities(&action);
+        assert!(caps.is_empty());
+    }
+
+    #[test]
+    fn test_required_capabilities_tools_for_bash() {
+        let ontology = uncode_ontology::builtin::full_ontology();
+        let model = test_model("m", false, false);
+        let rule =
+            ModelCapabilityRule::new(ontology, Arc::new(vec![model.clone()]), Arc::new(model));
+        let action = ParsedAction {
+            tool_name: "bash".into(),
+            arguments: serde_json::json!({"command": "ls"}),
+        };
+        let caps = rule.required_capabilities(&action);
+        assert!(
+            caps.contains(&"supports_tools".to_owned()),
+            "Shell actions should require supports_tools"
+        );
     }
 }

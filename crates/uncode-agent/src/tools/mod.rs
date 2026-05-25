@@ -78,17 +78,30 @@ fn normalize_path(full: &std::path::Path) -> Result<std::path::PathBuf, String> 
     while !existing.exists() {
         if let Some(name) = existing.file_name() {
             suffix.push(name.to_os_string());
+        } else {
+            // file_name() returns None for ".." (path traversal) or "" (exhausted path).
+            // ".." must be rejected; empty path is benign — the walk is done.
+            let s = existing.as_os_str().to_string_lossy();
+            if !s.is_empty() {
+                return Err(format!("path traversal rejected in non-existing path: {s}"));
+            }
         }
         if !existing.pop() {
             break;
         }
     }
-    let canonical_base = existing
-        .canonicalize()
-        .map_err(|e| format!("resolve path: {e}"))?;
+    // Fall back to cwd when the entire ancestor chain is nonexistent
+    let canonical_base = if existing.as_os_str().is_empty() || !existing.exists() {
+        std::env::current_dir()
+            .and_then(|d| d.canonicalize())
+            .map_err(|e| format!("resolve path: {e}"))?
+    } else {
+        existing
+            .canonicalize()
+            .map_err(|e| format!("resolve path: {e}"))?
+    };
     let mut result = canonical_base;
     for name in suffix.into_iter().rev() {
-        // Reject path traversal components in the non-existing suffix
         let name_str = name.to_string_lossy();
         if name_str == ".." || name_str == "." {
             return Err(format!("path traversal rejected: {name_str}"));

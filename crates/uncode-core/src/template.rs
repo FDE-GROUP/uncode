@@ -277,17 +277,17 @@ mod tests {
     #[test]
     fn test_parse_vars() {
         let args = vec![
-            "language=rust".to_string(),
-            "focus=error handling".to_string(),
+            "language=rust".to_owned(),
+            "focus=error handling".to_owned(),
         ];
         let vars = parse_vars(&args);
-        assert_eq!(vars.get("language"), Some(&"rust".to_string()));
-        assert_eq!(vars.get("focus"), Some(&"error handling".to_string()));
+        assert_eq!(vars.get("language"), Some(&"rust".to_owned()));
+        assert_eq!(vars.get("focus"), Some(&"error handling".to_owned()));
     }
 
     #[test]
     fn test_parse_vars_no_equals() {
-        let args = vec!["noequals".to_string()];
+        let args = vec!["noequals".to_owned()];
         let vars = parse_vars(&args);
         assert!(vars.is_empty());
     }
@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_positional_args_slice_from() {
-        let args = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let args = vec!["a".to_owned(), "b".to_owned(), "c".to_owned()];
         let result = replace_positional_slices(
             "tail: ${@:2}",
             &args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
@@ -324,10 +324,10 @@ mod tests {
     #[test]
     fn test_positional_args_slice_with_limit() {
         let args = vec![
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-            "d".to_string(),
+            "a".to_owned(),
+            "b".to_owned(),
+            "c".to_owned(),
+            "d".to_owned(),
         ];
         let result = replace_positional_slices(
             "mid: ${@:2:2}",
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn test_positional_args_all() {
-        let args = vec!["x".to_string(), "y".to_string()];
+        let args = vec!["x".to_owned(), "y".to_owned()];
         let result = replace_positional_slices(
             "all: ${@:1}",
             &args.iter().map(|s| s.as_str()).collect::<Vec<_>>(),

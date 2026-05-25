@@ -298,7 +298,7 @@ async fn test_find_respects_gitignore() {
 #[tokio::test]
 async fn test_registry_register_and_get() {
     let registry = ToolRegistry::new();
-    registry.register("read".to_string(), std::sync::Arc::new(ReadTool::new()));
+    registry.register("read".to_owned(), std::sync::Arc::new(ReadTool::new()));
 
     let defs = registry.definitions();
     assert_eq!(defs.len(), 1);
@@ -311,9 +311,9 @@ async fn test_registry_register_and_get() {
 #[tokio::test]
 async fn test_registry_multiple_tools() {
     let registry = ToolRegistry::new();
-    registry.register("read".to_string(), std::sync::Arc::new(ReadTool::new()));
-    registry.register("write".to_string(), std::sync::Arc::new(WriteTool));
-    registry.register("edit".to_string(), std::sync::Arc::new(EditTool));
+    registry.register("read".to_owned(), std::sync::Arc::new(ReadTool::new()));
+    registry.register("write".to_owned(), std::sync::Arc::new(WriteTool));
+    registry.register("edit".to_owned(), std::sync::Arc::new(EditTool));
 
     assert_eq!(registry.definitions().len(), 3);
     let names = registry.list();
@@ -323,8 +323,8 @@ async fn test_registry_multiple_tools() {
 #[tokio::test]
 async fn test_registry_overwrite() {
     let registry = ToolRegistry::new();
-    registry.register("read".to_string(), std::sync::Arc::new(ReadTool::new()));
-    registry.register("read".to_string(), std::sync::Arc::new(ReadTool::new()));
+    registry.register("read".to_owned(), std::sync::Arc::new(ReadTool::new()));
+    registry.register("read".to_owned(), std::sync::Arc::new(ReadTool::new()));
 
     assert_eq!(registry.definitions().len(), 1);
 }
@@ -1056,4 +1056,159 @@ fn test_atomic_write_same_directory() {
     let path = dir.path().join("x.txt");
     super::atomic_write(&path, "payload").unwrap();
     assert_eq!(std::fs::read_to_string(path).unwrap(), "payload");
+}
+
+// ── Path normalization & sandbox tests ──
+
+#[test]
+fn test_normalize_path_existing_file() {
+    let (_dir, _guard) = sandbox_dir();
+    fs::write("real.txt", "data").unwrap();
+
+    let result = super::normalize_path(std::path::Path::new("real.txt")).unwrap();
+    assert!(result.is_absolute());
+    assert!(result.ends_with("real.txt"));
+}
+
+#[test]
+fn test_normalize_path_nonexistent_dotdot_in_suffix_rejected() {
+    let (_dir, _guard) = sandbox_dir();
+    // ".." causes file_name() to return None — must be caught in the walk loop,
+    // not silently dropped (which would produce an incorrect resolved path).
+    let result = super::normalize_path(std::path::Path::new("nonexistent/../escape"));
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("path traversal rejected"),
+        "expected traversal rejection, got: {err}"
+    );
+}
+
+#[test]
+fn test_normalize_path_dotdot_only_none_filename_rejected() {
+    let (_dir, _guard) = sandbox_dir();
+    // Pure ".." — file_name() returns None, must be rejected
+    let result = super::normalize_path(std::path::Path::new("a/../.."));
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("path traversal rejected"),
+        "expected traversal rejection, got: {err}"
+    );
+}
+
+#[test]
+fn test_normalize_path_nonexistent_clean_suffix_ok() {
+    let (_dir, _guard) = sandbox_dir();
+    // 不存在的路径，但没有 .. 或 . 组件
+    let result = super::normalize_path(std::path::Path::new("new/dir/deep/file.txt"));
+    assert!(result.is_ok(), "clean nonexistent path should be ok");
+    let p = result.unwrap();
+    assert!(p.ends_with("new/dir/deep/file.txt"));
+}
+
+#[test]
+fn test_resolve_path_dotdot_traversal_rejected() {
+    let (_dir, _guard) = sandbox_dir();
+    fs::create_dir_all("sub").unwrap();
+
+    let result = super::resolve_path("../etc/passwd", &[]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("outside the project directory"),
+        "expected sandbox rejection, got: {err}"
+    );
+}
+
+#[test]
+fn test_resolve_path_double_dotdot_rejected() {
+    let (_dir, _guard) = sandbox_dir();
+    fs::create_dir_all("a/b").unwrap();
+
+    let result = super::resolve_path("a/../../secrets", &[]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("outside the project directory"),
+        "expected sandbox rejection, got: {err}"
+    );
+}
+
+#[test]
+fn test_resolve_path_absolute_outside_cwd_rejected() {
+    let (_dir, _guard) = sandbox_dir();
+    let result = super::resolve_path("/tmp/uncode_test_escape", &[]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("outside the project directory"),
+        "expected sandbox rejection, got: {err}"
+    );
+}
+
+#[test]
+fn test_resolve_path_relative_within_cwd_ok() {
+    let (_dir, _guard) = sandbox_dir();
+    fs::create_dir_all("myproject").unwrap();
+    fs::write("myproject/file.txt", "hello").unwrap();
+
+    let result = super::resolve_path("myproject/file.txt", &[]).unwrap();
+    assert!(result.is_absolute());
+    assert!(result.ends_with("myproject/file.txt"));
+}
+
+#[test]
+fn test_resolve_path_extra_allowed_prefix() {
+    let (_dir, _guard) = sandbox_dir();
+    // 创建一个在 cwd 之外的目录作为白名单路径
+    let extra_dir = tempfile::tempdir().unwrap();
+    let extra_path = extra_dir.path().to_path_buf();
+    let allowed_file = extra_path.join("allowed.txt");
+    fs::write(&allowed_file, "extra").unwrap();
+
+    let result =
+        super::resolve_path(&allowed_file.to_string_lossy(), &[extra_path.clone()]).unwrap();
+    assert!(result.is_absolute());
+}
+
+#[test]
+fn test_resolve_path_cwd_traversal_via_existing_symlink() {
+    let (_dir, _guard) = sandbox_dir();
+    // 创建指向 /tmp 的符号链接然后通过它逃逸
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("/tmp", "link_to_tmp").unwrap();
+        let result = super::resolve_path("link_to_tmp/uncode_test_escape", &[]);
+        // 符号链接解析后的路径在 /tmp 下，不在 cwd 内，应被拒绝
+        assert!(
+            result.is_err(),
+            "symlink escape should be rejected, got: {result:?}"
+        );
+    }
+}
+
+// ── Mutex poison recovery tests ──
+
+#[test]
+fn test_safe_lock_poison_recovery() {
+    use std::sync::Mutex;
+
+    let mutex = Mutex::new(42u32);
+
+    {
+        let _guard = mutex.lock().unwrap();
+    }
+
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _poisoner = mutex.lock().unwrap();
+        panic!("intentional poison");
+    }))
+    .unwrap_err();
+
+    let recovered = match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    assert_eq!(*recovered, 42);
 }

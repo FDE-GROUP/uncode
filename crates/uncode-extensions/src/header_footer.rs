@@ -27,6 +27,7 @@ pub struct HeaderConfig {
 }
 
 impl HeaderConfig {
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         if self.lines.is_empty() {
             return Err("header lines cannot be empty".into());
@@ -65,6 +66,7 @@ fn default_true() -> bool {
 }
 
 impl FooterConfig {
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         if self.lines.is_empty() {
             return Err("footer lines cannot be empty".into());
@@ -103,7 +105,7 @@ impl HeaderFooterLine {
 /// A styled text span within a header or footer line.
 ///
 /// Colors accept CSS-style names ("red", "cyan") or hex strings ("#ff6600").
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LineSpan {
     pub text: String,
     #[serde(default)]
@@ -127,7 +129,7 @@ impl LineSpan {
 ///
 /// When set, replaces the built-in ●/○ animation with custom frames
 /// displayed at the specified interval.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkingIndicatorConfig {
     /// Animation frames, e.g. `["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]`.
     pub frames: Vec<String>,
@@ -136,6 +138,7 @@ pub struct WorkingIndicatorConfig {
 }
 
 impl WorkingIndicatorConfig {
+    #[must_use]
     pub fn validate(&self) -> Result<(), String> {
         if self.frames.len() < MIN_FRAMES {
             return Err(format!(

@@ -268,9 +268,7 @@ fn apply_legacy_edit(
 
     let count = old_content.matches(old_string).count();
     if count == 0 {
-        return Err(UncodeError::Tool(
-            "old_string not found in file".to_string(),
-        ));
+        return Err(UncodeError::Tool("old_string not found in file".to_owned()));
     }
     if count > 1 {
         return Err(UncodeError::Tool(format!(

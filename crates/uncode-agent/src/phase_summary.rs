@@ -56,7 +56,7 @@ pub fn llm_phase_summary_enabled() -> bool {
     }
     match std::env::var("UNCODE_PHASE_SUMMARY_LLM") {
         Ok(v) => {
-            let v = v.trim().to_ascii_lowercase();
+            let v = v.trim_ascii().to_ascii_lowercase();
             !(v == "0" || v == "false" || v == "no" || v == "off")
         }
         Err(_) => true,
@@ -72,7 +72,7 @@ pub fn build_phase_summary_heuristic(
     token_usage: UsageInfo,
 ) -> PhaseSummaryData {
     let next_steps = if has_more_tool_calls {
-        vec!["模型可能在下一轮继续调用工具。".to_string()]
+        vec!["模型可能在下一轮继续调用工具。".to_owned()]
     } else {
         Vec::new()
     };
@@ -92,17 +92,17 @@ pub async fn try_llm_phase_summary(input: PhaseSummaryLlmInput<'_>) -> Option<Ph
     }
 
     let completed_tools = if input.completed_labels.is_empty() {
-        "（无）".to_string()
+        "（无）".to_owned()
     } else {
         input.completed_labels.join("\n")
     };
     let failed_tools = if input.issue_labels.is_empty() {
-        "（无）".to_string()
+        "（无）".to_owned()
     } else {
         input.issue_labels.join("\n")
     };
     let assistant_block = if input.assistant_snippet.is_empty() {
-        "（无）".to_string()
+        "（无）".to_owned()
     } else {
         input.assistant_snippet.to_string()
     };

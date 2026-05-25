@@ -39,7 +39,7 @@ fn format_directory_listing(
         })
         .take(MAX_DIR_ENTRIES + 1)
         .collect();
-    names.sort();
+    names.sort_unstable();
     let truncated = names.len() > MAX_DIR_ENTRIES;
     if truncated {
         names.truncate(MAX_DIR_ENTRIES);
