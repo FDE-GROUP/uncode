@@ -72,6 +72,10 @@ fn entity_file() -> EntityDef {
                 description: Some("File content".into()),
             },
         ],
+        invariants: vec![Constraint::RequiredField {
+            field: "path".into(),
+        }],
+        extends: None,
         description: Some("Filesystem file".into()),
     }
 }
@@ -88,6 +92,8 @@ fn entity_workspace() -> EntityDef {
             aliases: vec!["dir".into(), "directory".into(), "folder".into()],
             description: Some("Workspace root directory".into()),
         }],
+        invariants: vec![],
+        extends: None,
         description: Some("Project workspace".into()),
     }
 }
@@ -104,6 +110,8 @@ fn entity_module() -> EntityDef {
             aliases: vec![],
             description: Some("Rust module name".into()),
         }],
+        invariants: vec![],
+        extends: None,
         description: Some("Code module / crate".into()),
     }
 }
@@ -565,6 +573,8 @@ fn entity_llm() -> EntityDef {
                 description: Some("Output token cost per million tokens (USD)".into()),
             },
         ],
+        invariants: vec![],
+        extends: None,
         description: Some("LLM model resource".into()),
     }
 }
@@ -599,6 +609,8 @@ fn entity_provider() -> EntityDef {
                 description: Some("Base URL for API requests".into()),
             },
         ],
+        invariants: vec![],
+        extends: None,
         description: Some("LLM provider / API endpoint".into()),
     }
 }
@@ -629,6 +641,8 @@ fn entity_capability() -> EntityDef {
                 ),
             },
         ],
+        invariants: vec![],
+        extends: None,
         description: Some("Model capability declaration".into()),
     }
 }

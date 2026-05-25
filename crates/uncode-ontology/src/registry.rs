@@ -241,6 +241,35 @@ impl TypeRegistry {
         map
     }
 
+    /// Resolve entity with inheritance chain merged.
+    ///
+    /// If `extends` is set, recursively resolves the parent entity,
+    /// prepending parent fields and invariants to the child's own.
+    /// Returns a merged EntityDef (not registered — just computed).
+    pub fn resolve_entity(&self, type_id: &TypeId) -> Option<EntityDef> {
+        let entity = self.get_entity(type_id)?;
+        let mut merged = entity.clone();
+
+        if let Some(ref parent_id) = entity.extends {
+            if let Some(parent) = self.resolve_entity(parent_id) {
+                // Parent fields come first, child fields override
+                let mut all_fields = parent.fields;
+                for child_field in &merged.fields {
+                    all_fields.retain(|f| f.name != child_field.name);
+                    all_fields.push(child_field.clone());
+                }
+                merged.fields = all_fields;
+
+                // Parent invariants come first
+                let mut all_invariants = parent.invariants;
+                all_invariants.extend(merged.invariants.clone());
+                merged.invariants = all_invariants;
+            }
+        }
+
+        Some(merged)
+    }
+
     /// Query entities by category
     #[must_use]
     pub fn entities_by_category(&self, category: EntityCategory) -> Vec<&EntityDef> {
