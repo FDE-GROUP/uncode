@@ -131,3 +131,153 @@ async fn import_single_jsonl(store: &SessionStore, path: &Path) -> SessionResult
 
     Ok(count)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::session::store::SessionStore;
+
+    async fn new_store() -> SessionStore {
+        SessionStore::new_memory().await.unwrap()
+    }
+
+    fn make_header(id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "type": "session",
+            "id": id,
+            "model": "m1",
+            "title": null,
+            "working_dir": "/tmp",
+            "created_at": "2024-01-01T00:00:00Z",
+            "updated_at": "2024-01-01T00:00:00Z"
+        })
+    }
+
+    fn make_message_entry(id: &str, text: &str) -> serde_json::Value {
+        serde_json::json!({
+            "type": "message",
+            "id": id,
+            "timestamp": "2024-01-01T00:00:00Z",
+            "role": "user",
+            "content": [{"type": "text", "text": text}]
+        })
+    }
+
+    fn write_jsonl(
+        path: &std::path::Path,
+        header: &serde_json::Value,
+        entries: &[serde_json::Value],
+    ) {
+        let mut content = header.to_string();
+        content.push('\n');
+        for entry in entries {
+            content.push_str(&entry.to_string());
+            content.push('\n');
+        }
+        std::fs::write(path, content).expect("write jsonl");
+    }
+
+    #[test]
+    fn test_import_stats_default() {
+        let stats = ImportStats::default();
+        assert_eq!(stats.sessions_imported, 0);
+        assert_eq!(stats.entries_imported, 0);
+        assert_eq!(stats.sessions_skipped, 0);
+        assert!(stats.errors.is_empty());
+
+        let display = format!("{stats}");
+        assert!(display.contains("imported 0 sessions (0 entries)"));
+        assert!(display.contains("0 skipped"));
+        assert!(display.contains("0 errors"));
+    }
+
+    #[tokio::test]
+    async fn test_import_nonexistent_dir() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let store = new_store().await;
+        let nonexistent = tmp.path().join("nonexistent");
+        let stats = import_jsonl_dir(&store, &nonexistent)
+            .await
+            .expect("import");
+        assert_eq!(stats.sessions_imported, 0);
+        assert!(stats.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_import_dir_with_valid_jsonl() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let store = new_store().await;
+
+        let jsonl_path = tmp.path().join("test.jsonl");
+        let header = make_header("s1");
+        let entry = make_message_entry("e1", "hello");
+        write_jsonl(&jsonl_path, &header, &[entry]);
+
+        let stats = import_jsonl_dir(&store, tmp.path()).await.expect("import");
+        assert!(stats.sessions_imported >= 1);
+        assert!(stats.entries_imported >= 1);
+        assert!(stats.errors.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_import_dir_skips_non_jsonl() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let store = new_store().await;
+
+        // Create a .jsonl file and a .txt file
+        let jsonl_path = tmp.path().join("sessions.jsonl");
+        let header = make_header("s2");
+        let entry = make_message_entry("e2", "world");
+        write_jsonl(&jsonl_path, &header, &[entry]);
+
+        // Create a .txt file that should be ignored
+        let txt_path = tmp.path().join("readme.txt");
+        std::fs::write(&txt_path, "not a jsonl file").expect("write txt");
+
+        let stats = import_jsonl_dir(&store, tmp.path()).await.expect("import");
+        assert_eq!(stats.sessions_imported, 1);
+        assert_eq!(stats.sessions_skipped, 0);
+        assert_eq!(stats.errors.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_import_dir_skips_existing_session() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let store = new_store().await;
+
+        let jsonl_path = tmp.path().join("test.jsonl");
+        let header = make_header("s3");
+        let entry = make_message_entry("e3", "greetings");
+        write_jsonl(&jsonl_path, &header, &[entry]);
+
+        // First import → session imported
+        let stats1 = import_jsonl_dir(&store, tmp.path()).await.expect("import");
+        assert_eq!(stats1.sessions_imported, 1);
+        assert_eq!(stats1.entries_imported, 1);
+
+        // Second import → session already exists, returns Ok(0)
+        let stats2 = import_jsonl_dir(&store, tmp.path()).await.expect("import");
+        assert_eq!(stats2.sessions_imported, 1);
+        assert_eq!(stats2.entries_imported, 0);
+
+        // Verify session still has only the original entry
+        let entries = store.load_entries("s3").await.expect("load");
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_import_empty_jsonl_is_error() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let store = new_store().await;
+
+        let jsonl_path = tmp.path().join("empty.jsonl");
+        // Write a completely empty file
+        std::fs::write(&jsonl_path, "").expect("write empty");
+
+        let stats = import_jsonl_dir(&store, tmp.path()).await.expect("import");
+        assert_eq!(stats.sessions_skipped, 1);
+        assert_eq!(stats.sessions_imported, 0);
+        assert_eq!(stats.errors.len(), 1);
+        assert!(!stats.errors[0].is_empty());
+    }
+}
