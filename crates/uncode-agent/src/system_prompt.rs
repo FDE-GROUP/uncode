@@ -90,3 +90,91 @@ impl SystemPromptBuilder {
         self.parts.join("\n\n")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn read_tool_def() -> ToolDefinition {
+        ToolDefinition {
+            name: "read".into(),
+            description: "read file".into(),
+            parameters: serde_json::json!({}),
+            label: None,
+            execution_mode: Default::default(),
+        }
+    }
+
+    #[test]
+    fn test_empty_builder() {
+        let s = SystemPromptBuilder::new().build();
+        assert_eq!(s, "");
+    }
+
+    #[test]
+    fn test_base_appends_text() {
+        let s = SystemPromptBuilder::new().base("Hello").build();
+        assert_eq!(s, "Hello");
+    }
+
+    #[test]
+    fn test_add_tool_guide() {
+        let td = read_tool_def();
+        let s = SystemPromptBuilder::new().add_tool_guide(&[td]).build();
+        assert!(s.contains("## 可用工具"));
+        assert!(s.contains("read"));
+        assert!(s.contains("read file"));
+    }
+
+    #[test]
+    fn test_add_context() {
+        let s = SystemPromptBuilder::new().add_context("AGENTS.md").build();
+        assert!(s.contains("## 项目上下文"));
+        assert!(s.contains("AGENTS.md"));
+    }
+
+    #[test]
+    fn test_add_context_empty_skips() {
+        let s = SystemPromptBuilder::new().add_context("").build();
+        assert!(!s.contains("项目上下文"));
+    }
+
+    #[test]
+    fn test_add_working_dir() {
+        let s = SystemPromptBuilder::new()
+            .add_working_dir(Path::new("/tmp"))
+            .build();
+        assert!(s.contains("## 工作目录"));
+        assert!(s.contains("/tmp"));
+    }
+
+    #[test]
+    fn test_add_rules() {
+        let s = SystemPromptBuilder::new().add_rules("no unsafe").build();
+        assert!(s.contains("## 开发规则"));
+        assert!(s.contains("no unsafe"));
+    }
+
+    #[test]
+    fn test_add_rules_empty_skips() {
+        let s = SystemPromptBuilder::new().add_rules("").build();
+        assert!(!s.contains("开发规则"));
+    }
+
+    #[test]
+    fn test_chained_build() {
+        let s = SystemPromptBuilder::new()
+            .base("a")
+            .append("b")
+            .append("c")
+            .build();
+        assert_eq!(s, "a\n\nb\n\nc");
+    }
+
+    #[test]
+    fn test_append_empty_skips() {
+        let s = SystemPromptBuilder::new().append("").build();
+        assert_eq!(s, "");
+    }
+}

@@ -78,3 +78,77 @@ impl ProviderRegistration {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_registration(
+        name: &str,
+        base_url: &str,
+        models: Vec<DynamicModelDescriptor>,
+    ) -> ProviderRegistration {
+        ProviderRegistration {
+            name: name.into(),
+            protocol: ProviderProtocol::OpenAI,
+            base_url: base_url.into(),
+            api_key_env: None,
+            models,
+        }
+    }
+
+    fn make_model(id: &str) -> DynamicModelDescriptor {
+        DynamicModelDescriptor {
+            id: id.into(),
+            name: format!("model-{}", id),
+            context_window: 4096,
+            max_output_tokens: 1024,
+        }
+    }
+
+    #[test]
+    fn test_provider_protocol_api_name() {
+        assert_eq!(ProviderProtocol::OpenAI.api_name(), "openai-completions");
+        assert_eq!(ProviderProtocol::Anthropic.api_name(), "anthropic-messages");
+        assert_eq!(ProviderProtocol::Gemini.api_name(), "google-generative-ai");
+        assert_eq!(ProviderProtocol::Ollama.api_name(), "ollama-native");
+    }
+
+    #[test]
+    fn test_validate_valid() {
+        let reg = make_registration(
+            "my-provider",
+            "https://api.example.com",
+            vec![make_model("gpt-4")],
+        );
+        assert!(reg.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_empty_name() {
+        let reg = make_registration("", "https://api.example.com", vec![make_model("gpt-4")]);
+        assert!(reg.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_empty_base_url() {
+        let reg = make_registration("my-provider", "", vec![make_model("gpt-4")]);
+        assert!(reg.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_empty_models() {
+        let reg = make_registration("my-provider", "https://api.example.com", vec![]);
+        assert!(reg.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_empty_model_id() {
+        let reg = make_registration(
+            "my-provider",
+            "https://api.example.com",
+            vec![make_model("")],
+        );
+        assert!(reg.validate().is_err());
+    }
+}

@@ -44,3 +44,73 @@ fn get_pricing(model: &str) -> (f64, f64) {
         _ => (1.0, 2.0),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uncode_core::message::{Role, ToolCall};
+
+    #[test]
+    fn test_estimate_tokens_empty() {
+        assert_eq!(estimate_tokens(""), 0);
+    }
+
+    #[test]
+    fn test_estimate_tokens_short() {
+        let tokens = estimate_tokens("hello");
+        assert!(tokens > 0);
+        assert!(tokens < 5);
+    }
+
+    #[test]
+    fn test_estimate_tokens_longer() {
+        let short = estimate_tokens("hello");
+        let long = estimate_tokens("hello world, this is a longer text");
+        assert!(long > short);
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_text() {
+        let msg = Message::user("hello world");
+        let tokens = estimate_message_tokens(&msg);
+        assert!(tokens > 0);
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_thinking() {
+        let msg = Message::new(
+            Role::User,
+            vec![ContentBlock::Thinking {
+                text: "thinking about the solution".into(),
+            }],
+        );
+        let tokens = estimate_message_tokens(&msg);
+        assert!(tokens > 0);
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_tool_call() {
+        let msg = Message::new(
+            Role::Assistant,
+            vec![ContentBlock::ToolCall(Box::new(ToolCall {
+                id: "1".into(),
+                name: "read_file".into(),
+                arguments: serde_json::json!({"path": "/foo/bar.rs"}),
+            }))],
+        );
+        let tokens = estimate_message_tokens(&msg);
+        assert!(tokens > 0);
+    }
+
+    #[test]
+    fn test_estimate_cost_deepseek() {
+        let cost = estimate_cost(1000, 500, "deepseek-chat");
+        assert!((cost - 0.82).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_estimate_cost_unknown_model() {
+        let cost = estimate_cost(1000, 500, "nonexistent-model");
+        assert!((cost - 2.0).abs() < 0.01);
+    }
+}

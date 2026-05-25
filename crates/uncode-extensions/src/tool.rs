@@ -61,3 +61,54 @@ pub trait ExtensionTool: Send + Sync {
     /// Execute the tool with validated arguments.
     async fn execute(&self, arguments: serde_json::Value) -> anyhow::Result<String>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_metadata(name: &str, description: &str) -> ExtensionToolMetadata {
+        ExtensionToolMetadata {
+            name: name.into(),
+            description: description.into(),
+            parameters: serde_json::json!({}),
+            label: None,
+            sequential: false,
+        }
+    }
+
+    #[test]
+    fn test_validate_valid() {
+        let meta = make_metadata("my_tool", "desc");
+        assert!(meta.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_empty_name() {
+        let meta = make_metadata("", "desc");
+        assert!(meta.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_name_starts_with_digit() {
+        let meta = make_metadata("123tool", "desc");
+        assert!(meta.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_name_has_whitespace() {
+        let meta = make_metadata("my tool", "desc");
+        assert!(meta.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_name_has_nul() {
+        let meta = make_metadata("bad\0name", "desc");
+        assert!(meta.validate().is_err());
+    }
+
+    #[test]
+    fn test_validate_missing_description() {
+        let meta = make_metadata("my_tool", "");
+        assert!(meta.validate().is_err());
+    }
+}
