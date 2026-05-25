@@ -794,4 +794,90 @@ mod tests {
             .collect();
         assert_eq!(required, vec!["path", "content"]);
     }
+
+    #[test]
+    fn ontology_to_provider_roundtrip() {
+        // End-to-end: ontology → ToolBridge → OpenAI/Anthropic provider JSON
+        let ontology = uncode_ontology::builtin::full_ontology();
+
+        // Generate ToolDefinitions from all domain actions
+        let mut defs = Vec::new();
+        for action_name in [
+            "read",
+            "write",
+            "edit",
+            "grep",
+            "find",
+            "ls",
+            "bash",
+            "web_fetch",
+            "web_search",
+        ] {
+            if let Some(action) = ontology.get_action(&uncode_ontology::TypeId::from(action_name)) {
+                defs.push(ToolBridge::to_tool_definition(&action, None));
+            }
+        }
+
+        // Verify each definition is structurally valid
+        for def in &defs {
+            // Basic identity
+            assert!(!def.name.is_empty(), "tool name must not be empty");
+            assert!(
+                def.parameters["type"] == "object",
+                "{}: must be object type",
+                def.name
+            );
+            assert!(
+                def.parameters["properties"].is_object(),
+                "{}: must have properties",
+                def.name
+            );
+            // Shell tools must be Sequential
+            if def.name == "bash" {
+                assert_eq!(
+                    def.execution_mode,
+                    uncode_ai::tool_def::ExecutionMode::Sequential,
+                    "bash must be Sequential"
+                );
+            }
+        }
+
+        // Simulate OpenAI function-calling format via build_tools_json equivalent
+        let tools_json: Vec<_> = defs
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters
+                    }
+                })
+            })
+            .collect();
+
+        for tool in &tools_json {
+            assert_eq!(tool["type"], "function");
+            let func = &tool["function"];
+            let params = &func["parameters"];
+            assert_eq!(params["type"], "object");
+            // properties object must have at least one entry for non-empty tools
+            let props = params["properties"].as_object().unwrap();
+            assert!(
+                !props.is_empty(),
+                "{}: properties must not be empty",
+                func["name"]
+            );
+            // Each property must have a type
+            for (prop_name, prop_val) in props {
+                assert!(
+                    prop_val["type"].is_string(),
+                    "{}: property '{}' must have type",
+                    func["name"],
+                    prop_name
+                );
+            }
+        }
+    }
 }

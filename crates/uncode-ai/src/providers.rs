@@ -255,3 +255,146 @@ pub(crate) fn build_tools_json(tools: &[ToolDefinition]) -> Option<Value> {
         .collect();
     Some(Value::Array(tools_json))
 }
+
+#[cfg(test)]
+mod tool_schema_tests {
+    use super::*;
+    use crate::tool_def::ExecutionMode;
+
+    /// Build a ToolDefinition that mirrors what the ontology produces via to_json_schema().
+    fn onto_style_tool(
+        name: &str,
+        properties: serde_json::Value,
+        required: serde_json::Value,
+    ) -> ToolDefinition {
+        ToolDefinition {
+            name: name.into(),
+            description: format!("{name} tool").into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": properties,
+                "required": required,
+            }),
+            label: None,
+            execution_mode: ExecutionMode::Parallel,
+        }
+    }
+
+    #[test]
+    fn build_tools_json_from_ontology_style_schemas() {
+        let tools = vec![
+            onto_style_tool(
+                "read",
+                serde_json::json!({
+                    "path": {"type": "string", "description": "File path"},
+                    "offset": {"type": "integer", "description": "Start line"}
+                }),
+                serde_json::json!(["path"]),
+            ),
+            onto_style_tool(
+                "bash",
+                serde_json::json!({
+                    "command": {"type": "string", "description": "Shell command"},
+                    "workdir": {"type": "string", "description": "Working dir"}
+                }),
+                serde_json::json!(["command"]),
+            ),
+        ];
+
+        let result = build_tools_json(&tools).expect("should produce tools JSON");
+        let arr = result.as_array().expect("should be array");
+
+        assert_eq!(arr.len(), 2, "two tools");
+
+        // OpenAI function-calling format
+        for tool in arr {
+            assert_eq!(tool["type"], "function", "OpenAI requires type=function");
+            let func = &tool["function"];
+            assert!(
+                !func["name"].as_str().unwrap_or("").is_empty(),
+                "must have name"
+            );
+            assert_eq!(
+                func["parameters"]["type"], "object",
+                "parameters must be object type"
+            );
+            assert_eq!(func["parameters"]["additionalProperties"], false);
+            assert!(
+                func["parameters"]["properties"].is_object(),
+                "must have properties"
+            );
+        }
+
+        // Verify read tool has path as required
+        let read = &arr[0]["function"];
+        let req: Vec<_> = read["parameters"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(req.contains(&"path"), "read should require path");
+
+        // Verify bash tool has command as required
+        let bash = &arr[1]["function"];
+        let req: Vec<_> = bash["parameters"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(req.contains(&"command"), "bash should require command");
+    }
+
+    #[test]
+    fn build_tools_json_empty_tools_is_none() {
+        assert!(build_tools_json(&[]).is_none());
+    }
+
+    #[test]
+    fn build_tools_json_single_tool_no_required_fields() {
+        let tools = vec![onto_style_tool(
+            "ls",
+            serde_json::json!({"path": {"type": "string"}}),
+            serde_json::json!([]),
+        )];
+        let result = build_tools_json(&tools).unwrap();
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        // No required fields is valid
+        assert!(
+            arr[0]["function"]["parameters"]["required"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn build_tools_json_sequential_mode_not_in_schema() {
+        // ExecutionMode affects AgentLoop routing, NOT the JSON schema sent to LLM
+        // Verify Sequential tools produce valid schema just like Parallel ones
+        let tool = ToolDefinition {
+            name: "bash".into(),
+            description: "run command".into(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {"command": {"type": "string"}},
+                "required": ["command"]
+            }),
+            label: None,
+            execution_mode: ExecutionMode::Sequential,
+        };
+        let result = build_tools_json(&[tool]).unwrap();
+        let func = &result.as_array().unwrap()[0]["function"];
+        assert_eq!(func["name"], "bash");
+        assert!(
+            func["parameters"]["properties"]["command"]["type"]
+                .as_str()
+                .unwrap()
+                == "string"
+        );
+    }
+}
