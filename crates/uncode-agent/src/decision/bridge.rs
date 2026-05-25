@@ -371,12 +371,52 @@ impl ValidationRule for ModelCapabilityRule {
 }
 
 // ═══════════════════════════════════════════════════════════
+// ToolBridge — ActionDef → ToolDefinition 桥接
+// ═══════════════════════════════════════════════════════════
+
+use uncode_ai::tool_def::ToolDefinition;
+
+/// ToolBridge — 将本体 ActionDef 转换为工具系统 ToolDefinition。
+///
+/// 遵循与 `ModelBridge` 相同的模式：单位结构体作为命名空间。
+/// 桥接代码放在 `uncode-agent`（同时依赖 `uncode-ontology` 和 `uncode-ai`）。
+pub struct ToolBridge;
+
+impl ToolBridge {
+    /// 从本体 ActionDef 生成工具系统 ToolDefinition。
+    ///
+    /// - `parameters` 通过 `ActionDef::to_json_schema()` 从 `fields` 动态构造
+    /// - Shell 类别 → ExecutionMode::Sequential，其余 → ExecutionMode::Parallel
+    pub fn to_tool_definition(
+        action: &uncode_ontology::ActionDef,
+        label: Option<&str>,
+    ) -> ToolDefinition {
+        use uncode_ontology::ExecutionCategory;
+        use uncode_ai::tool_def::ExecutionMode;
+
+        ToolDefinition {
+            name: action.name.clone(),
+            description: action.description.clone().unwrap_or_default(),
+            parameters: action.to_json_schema(),
+            label: label.map(String::from),
+            execution_mode: match action.execution_category {
+                ExecutionCategory::Shell => ExecutionMode::Sequential,
+                _ => ExecutionMode::Parallel,
+            },
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
 // 测试
 // ═══════════════════════════════════════════════════════════
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uncode_ontology::{
+        ActionDef, Effect, EntityCategory, ExecutionCategory, FieldDef, TypeId,
+    };
     use uncode_ai::model::ModelPricingPerMillion;
 
     fn test_model(id: &str, reasoning: bool, vision: bool) -> Model {
@@ -654,5 +694,102 @@ mod tests {
             caps.contains(&"supports_tools".to_owned()),
             "Shell actions should require supports_tools"
         );
+    }
+
+    // ── ToolBridge tests ──
+
+    fn mk_tool_field(name: &str, value_type: &str, required: bool) -> FieldDef {
+        FieldDef {
+            name: name.into(),
+            value_type: value_type.into(),
+            required,
+            default: None,
+            aliases: vec![],
+            description: None,
+        }
+    }
+
+    #[test]
+    fn tool_bridge_generates_correct_name_and_desc() {
+        let action = ActionDef {
+            name: "read".into(),
+            fields: vec![mk_tool_field("path", "string", true)],
+            output_type: TypeId::from("string"),
+            category: EntityCategory::Domain,
+            preconditions: vec![],
+            effects: vec![Effect::Read {
+                target: "File".into(),
+                fields: vec!["content".into()],
+            }],
+            execution_category: ExecutionCategory::ReadOnly,
+            description: Some("读取文件内容".into()),
+        };
+        let def = ToolBridge::to_tool_definition(&action, Some("Read File"));
+        assert_eq!(def.name, "read");
+        assert_eq!(def.description, "读取文件内容");
+        assert_eq!(def.label.as_deref(), Some("Read File"));
+    }
+
+    #[test]
+    fn tool_bridge_readonly_is_parallel() {
+        let action = ActionDef {
+            name: "read".into(),
+            fields: vec![mk_tool_field("path", "string", true)],
+            output_type: TypeId::from("string"),
+            category: EntityCategory::Domain,
+            preconditions: vec![],
+            effects: vec![],
+            execution_category: ExecutionCategory::ReadOnly,
+            description: None,
+        };
+        let def = ToolBridge::to_tool_definition(&action, None);
+        assert_eq!(
+            def.execution_mode,
+            uncode_ai::tool_def::ExecutionMode::Parallel
+        );
+    }
+
+    #[test]
+    fn tool_bridge_shell_is_sequential() {
+        let action = ActionDef {
+            name: "bash".into(),
+            fields: vec![mk_tool_field("command", "string", true)],
+            output_type: TypeId::from("string"),
+            category: EntityCategory::Domain,
+            preconditions: vec![],
+            effects: vec![],
+            execution_category: ExecutionCategory::Shell,
+            description: None,
+        };
+        let def = ToolBridge::to_tool_definition(&action, None);
+        assert_eq!(
+            def.execution_mode,
+            uncode_ai::tool_def::ExecutionMode::Sequential
+        );
+    }
+
+    #[test]
+    fn tool_bridge_schema_includes_required_fields() {
+        let action = ActionDef {
+            name: "write".into(),
+            fields: vec![
+                mk_tool_field("path", "string", true),
+                mk_tool_field("content", "string", true),
+            ],
+            output_type: TypeId::from("string"),
+            category: EntityCategory::Domain,
+            preconditions: vec![],
+            effects: vec![],
+            execution_category: ExecutionCategory::Destructive,
+            description: None,
+        };
+        let def = ToolBridge::to_tool_definition(&action, None);
+        let required: Vec<_> = def.parameters["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, vec!["path", "content"]);
     }
 }
