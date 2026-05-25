@@ -526,3 +526,294 @@ data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"
         assert_eq!(v["path"], "a.rs");
     }
 }
+
+#[cfg(test)]
+mod build_functions_tests {
+    use super::*;
+    use crate::api_types::{CompatConfig, MaxTokensField};
+    use crate::message::{ContentBlock, Message, Role, ToolCall, ToolResult};
+    use crate::model::Model;
+    use crate::tool_def::ToolDefinition;
+
+    fn default_message() -> Message {
+        Message {
+            id: String::new(),
+            role: Role::User,
+            content: vec![],
+            usage: None,
+            stop_reason: None,
+            error_message: None,
+            timestamp: None,
+        }
+    }
+
+    // ── build_chat_messages ──
+
+    #[test]
+    fn build_messages_empty_context() {
+        let context = Context::default();
+        let compat = CompatConfig::default();
+        let msgs = build_chat_messages(&context, &compat);
+        assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn build_messages_system_prompt() {
+        let context = Context {
+            system_prompt: Some("You are helpful.".into()),
+            ..Context::default()
+        };
+        let compat = CompatConfig::default();
+        let msgs = build_chat_messages(&context, &compat);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "system");
+        assert_eq!(msgs[0]["content"], "You are helpful.");
+    }
+
+    #[test]
+    fn build_messages_system_prompt_developer_role() {
+        let context = Context {
+            system_prompt: Some("You are helpful.".into()),
+            ..Context::default()
+        };
+        let compat = CompatConfig {
+            supports_developer_role: true,
+            ..CompatConfig::default()
+        };
+        let msgs = build_chat_messages(&context, &compat);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "developer");
+    }
+
+    #[test]
+    fn build_messages_skips_system_role_in_list() {
+        let context = Context {
+            messages: vec![Message::system("system msg"), Message::user("hello")],
+            ..Context::default()
+        };
+        let compat = CompatConfig::default();
+        let msgs = build_chat_messages(&context, &compat);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "user");
+    }
+
+    #[test]
+    fn build_messages_user_message() {
+        let context = Context {
+            messages: vec![Message::user("hello world")],
+            ..Context::default()
+        };
+        let compat = CompatConfig::default();
+        let msgs = build_chat_messages(&context, &compat);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[0]["content"], "hello world");
+    }
+
+    #[test]
+    fn build_messages_assistant_with_text_and_thinking() {
+        let msg = Message {
+            id: "1".into(),
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Text {
+                    text: "result".into(),
+                },
+                ContentBlock::Thinking {
+                    text: "reasoning".into(),
+                },
+            ],
+            ..default_message()
+        };
+        let context = Context {
+            messages: vec![msg],
+            ..Context::default()
+        };
+        let compat = CompatConfig::default();
+        let msgs = build_chat_messages(&context, &compat);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "assistant");
+        assert_eq!(msgs[0]["content"], "result");
+        assert_eq!(msgs[0]["reasoning_content"], "reasoning");
+    }
+
+    #[test]
+    fn build_messages_assistant_with_tool_calls() {
+        let msg = Message {
+            id: "1".into(),
+            role: Role::Assistant,
+            content: vec![ContentBlock::ToolCall(Box::new(ToolCall {
+                id: "call_1".into(),
+                name: "read".into(),
+                arguments: serde_json::json!({"path": "src/main.rs"}),
+            }))],
+            ..default_message()
+        };
+        let context = Context {
+            messages: vec![msg],
+            ..Context::default()
+        };
+        let compat = CompatConfig::default();
+        let msgs = build_chat_messages(&context, &compat);
+        assert_eq!(msgs.len(), 1);
+        let tool_calls = msgs[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["id"], "call_1");
+        assert_eq!(tool_calls[0]["function"]["name"], "read");
+    }
+
+    #[test]
+    fn build_messages_tool_result() {
+        let msg = Message {
+            id: "1".into(),
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult(Box::new(ToolResult {
+                tool_call_id: "call_1".into(),
+                content: "file contents".into(),
+                is_error: false,
+            }))],
+            ..default_message()
+        };
+        let context = Context {
+            messages: vec![msg],
+            ..Context::default()
+        };
+        let compat = CompatConfig::default();
+        let msgs = build_chat_messages(&context, &compat);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "tool");
+        assert_eq!(msgs[0]["tool_call_id"], "call_1");
+        assert_eq!(msgs[0]["content"], "file contents");
+    }
+
+    // ── build_request_body ──
+
+    fn make_model() -> Model {
+        Model {
+            id: "test-model".into(),
+            name: "Test".into(),
+            ..Model::default()
+        }
+    }
+
+    #[test]
+    fn build_body_minimal() {
+        let model = make_model();
+        let context = Context {
+            messages: vec![Message::user("hi")],
+            ..Context::default()
+        };
+        let options = StreamOptions::default();
+        let body = build_request_body(&model, &context, &options);
+        assert_eq!(body["model"], "test-model");
+        assert_eq!(body["messages"].as_array().unwrap().len(), 1);
+        assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn build_body_with_tools() {
+        let model = make_model();
+        let context = Context {
+            messages: vec![Message::user("read file")],
+            tools: vec![ToolDefinition {
+                name: "read".into(),
+                description: "read file".into(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"]
+                }),
+                label: None,
+                execution_mode: Default::default(),
+            }],
+            ..Context::default()
+        };
+        let options = StreamOptions::default();
+        let body = build_request_body(&model, &context, &options);
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["type"], "function");
+    }
+
+    #[test]
+    fn build_body_with_temperature() {
+        let model = make_model();
+        let context = Context::default();
+        let options = StreamOptions {
+            temperature: Some(0.5),
+            ..Default::default()
+        };
+        let body = build_request_body(&model, &context, &options);
+        assert_eq!(body["temperature"], 0.5);
+    }
+
+    #[test]
+    fn build_body_with_max_tokens() {
+        let model = make_model();
+        let context = Context::default();
+        let options = StreamOptions {
+            max_tokens: Some(1024),
+            ..Default::default()
+        };
+        let body = build_request_body(&model, &context, &options);
+        assert_eq!(body["max_tokens"], 1024);
+    }
+
+    #[test]
+    fn build_body_max_completion_tokens_field() {
+        let model = Model {
+            compat: CompatConfig {
+                max_tokens_field: MaxTokensField::MaxCompletionTokens,
+                ..CompatConfig::default()
+            },
+            ..make_model()
+        };
+        let context = Context::default();
+        let options = StreamOptions {
+            max_tokens: Some(512),
+            ..Default::default()
+        };
+        let body = build_request_body(&model, &context, &options);
+        assert_eq!(body["max_completion_tokens"], 512);
+        assert!(body.get("max_tokens").is_none());
+    }
+
+    #[test]
+    fn build_body_session_affinity_headers() {
+        let model = Model {
+            compat: CompatConfig {
+                send_session_affinity_headers: true,
+                ..CompatConfig::default()
+            },
+            ..make_model()
+        };
+        let context = Context::default();
+        let options = StreamOptions {
+            session_id: Some("sess-1".into()),
+            ..Default::default()
+        };
+        let body = build_request_body(&model, &context, &options);
+        assert_eq!(body["prompt_cache_key"], "sess-1");
+    }
+
+    #[test]
+    fn build_body_long_cache_retention() {
+        let model = Model {
+            compat: CompatConfig {
+                supports_long_cache_retention: true,
+                send_session_affinity_headers: true,
+                ..CompatConfig::default()
+            },
+            ..make_model()
+        };
+        let context = Context::default();
+        let options = StreamOptions {
+            session_id: Some("sess-2".into()),
+            cache_retention: Some(crate::api_types::CacheRetention::Long),
+            ..Default::default()
+        };
+        let body = build_request_body(&model, &context, &options);
+        assert_eq!(body["prompt_cache_key"], "sess-2");
+        assert_eq!(body["prompt_cache_retention"], "24h");
+    }
+}
