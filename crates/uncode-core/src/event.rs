@@ -1067,6 +1067,286 @@ mod event_serde_tests {
             "evaluation_score",
         );
     }
+
+    #[test]
+    fn test_all_remaining_variants_serde_roundtrip() {
+        roundtrip(
+            AgentEvent::SessionEnd {
+                data: Box::new(SessionEndData {
+                    session_id: "s1".into(),
+                    total_turns: 3,
+                    total_tokens: UsageInfo::default(),
+                    exit_reason: "completed".into(),
+                }),
+            },
+            "session_end",
+        );
+        roundtrip(
+            AgentEvent::TurnEnd {
+                turn: 2,
+                usage: UsageInfo::default(),
+            },
+            "turn_end",
+        );
+        roundtrip(
+            AgentEvent::MessageStart {
+                role: Role::Assistant,
+                message_id: "msg1".into(),
+            },
+            "message_start",
+        );
+        roundtrip(
+            AgentEvent::MessageEnd {
+                role: Role::Assistant,
+                message_id: "msg1".into(),
+            },
+            "message_end",
+        );
+        roundtrip(
+            AgentEvent::ContentDelta {
+                delta_type: DeltaType::Text,
+                content: "hello".into(),
+                content_index: Some(0),
+            },
+            "content_delta",
+        );
+        roundtrip(
+            AgentEvent::ToolCallStart {
+                tool_id: "t1".into(),
+                tool_name: "read".into(),
+                arguments_summary: "file: foo.txt".into(),
+            },
+            "tool_call_start",
+        );
+        roundtrip(
+            AgentEvent::ToolCallProgress {
+                tool_id: "t1".into(),
+                progress_type: ProgressType::Spinner,
+                detail: "working...".into(),
+            },
+            "tool_call_progress",
+        );
+        roundtrip(
+            AgentEvent::ToolCallAwaitingApproval {
+                tool_id: "t1".into(),
+                tool_name: "bash".into(),
+                arguments_summary: "rm -rf /".into(),
+                tool_description: Some("Execute shell command".into()),
+            },
+            "tool_call_awaiting_approval",
+        );
+        roundtrip(
+            AgentEvent::TaskUpdate {
+                data: Box::new(TaskUpdateData {
+                    task_id: "task1".into(),
+                    status: TaskStatus::Running,
+                    title: "Implement feature".into(),
+                    subtasks: vec!["sub1".into()],
+                    depends_on: vec!["task0".into()],
+                }),
+            },
+            "task_update",
+        );
+        roundtrip(
+            AgentEvent::PhaseSummary {
+                data: Box::new(PhaseSummaryData {
+                    phase: 1,
+                    completed: vec!["item1".into()],
+                    issues: vec![],
+                    next_steps: vec!["step1".into()],
+                    token_usage: UsageInfo::default(),
+                }),
+            },
+            "phase_summary",
+        );
+        roundtrip(
+            AgentEvent::CompactionStart {
+                data: Box::new(CompactionStartData {
+                    session_id: "s1".into(),
+                    reason: CompactionReason::Threshold,
+                    tokens_before: 10000,
+                }),
+            },
+            "compaction_start",
+        );
+        roundtrip(
+            AgentEvent::RetryAttempt {
+                data: Box::new(RetryAttemptData {
+                    attempt: 1,
+                    max_attempts: 3,
+                    delay_ms: 1000,
+                    error: "timeout".into(),
+                    final_success: false,
+                }),
+            },
+            "retry_attempt",
+        );
+        roundtrip(
+            AgentEvent::ModelChanged {
+                data: Box::new(ModelChangedData {
+                    from: Some("deepseek-v3".into()),
+                    to: "deepseek-v4".into(),
+                    source: ModelChangeSource::User,
+                }),
+            },
+            "model_changed",
+        );
+        roundtrip(
+            AgentEvent::ThinkingLevelChanged {
+                data: Box::new(ThinkingLevelChangedData {
+                    from: Some(ThinkingLevel::Low),
+                    to: ThinkingLevel::High,
+                }),
+            },
+            "thinking_level_changed",
+        );
+        roundtrip(
+            AgentEvent::MessageQueued {
+                text: "hello".into(),
+            },
+            "message_queued",
+        );
+        roundtrip(
+            AgentEvent::MessageDelivered {
+                text: "hello".into(),
+            },
+            "message_delivered",
+        );
+        roundtrip(
+            AgentEvent::LlmRequestStart {
+                data: Box::new(LlmRequestStartData {
+                    model_id: "deepseek-v4".into(),
+                    message_count: 5,
+                }),
+            },
+            "llm_request_start",
+        );
+        roundtrip(
+            AgentEvent::LlmRequestEnd {
+                data: Box::new(LlmRequestEndData {
+                    model_id: "deepseek-v4".into(),
+                    duration_ms: 1200,
+                    input_tokens: 500,
+                    output_tokens: 200,
+                    status: LlmRequestStatus::Success,
+                }),
+            },
+            "llm_request_end",
+        );
+        roundtrip(
+            AgentEvent::QueueUpdate {
+                data: Box::new(QueueUpdateData {
+                    steering_count: 0,
+                    follow_up_count: 1,
+                    next_turn_count: 2,
+                }),
+            },
+            "queue_update",
+        );
+        roundtrip(
+            AgentEvent::SessionInfoChanged {
+                data: Box::new(SessionInfoChangedData {
+                    session_id: "s1".into(),
+                    field: "model".into(),
+                    old_value: Some("deepseek-v3".into()),
+                    new_value: Some("deepseek-v4".into()),
+                }),
+            },
+            "session_info_changed",
+        );
+        roundtrip(
+            AgentEvent::ContextThreshold {
+                data: Box::new(ContextThresholdData {
+                    session_id: "s1".into(),
+                    usage_ratio: 0.85,
+                    threshold: 0.8,
+                    context_window: 128000,
+                }),
+            },
+            "context_threshold",
+        );
+        roundtrip(
+            AgentEvent::AgentInterrupted {
+                turn: 5,
+                partial_response: true,
+            },
+            "agent_interrupted",
+        );
+        roundtrip(
+            AgentEvent::UncertaintyEncountered {
+                uncertainty_kind: "cognitive".into(),
+                turn_id: "3".into(),
+                description: "ambiguous tool choice".into(),
+                resolution_strategy: Some("ask_user".into()),
+            },
+            "uncertainty_encountered",
+        );
+        roundtrip(
+            AgentEvent::ProposalReceived {
+                turn_id: "3".into(),
+                proposal_id: "p1".into(),
+                tool_name: "write".into(),
+                intent: "create file".into(),
+            },
+            "proposal_received",
+        );
+        roundtrip(
+            AgentEvent::FirewallCheck {
+                turn_id: "3".into(),
+                proposal_id: "p1".into(),
+                tool_name: "bash".into(),
+                passed: true,
+                stage: "validate".into(),
+                violations: vec![],
+                duration_ms: 5,
+            },
+            "firewall_check",
+        );
+        roundtrip(
+            AgentEvent::ActionExecuted {
+                turn_id: "3".into(),
+                proposal_id: "p1".into(),
+                tool_name: "write".into(),
+                success: true,
+                duration_ms: 42,
+            },
+            "action_executed",
+        );
+        roundtrip(
+            AgentEvent::DecisionAudited {
+                turn_id: "3".into(),
+                proposal_id: "p1".into(),
+                tool_name: "write".into(),
+                verdict_allowed: true,
+                persisted: true,
+            },
+            "decision_audited",
+        );
+        roundtrip(
+            AgentEvent::AgentSettled {
+                session_id: "s1".into(),
+            },
+            "agent_settled",
+        );
+        roundtrip(
+            AgentEvent::ContextInjected {
+                extension_name: "my_ext".into(),
+                count: 3,
+            },
+            "context_injected",
+        );
+        roundtrip(
+            AgentEvent::PhaseTransition {
+                data: Box::new(PhaseTransitionEventData {
+                    from: "Cognize".into(),
+                    to: "Adjudicate".into(),
+                    trigger: "proposal_submitted".into(),
+                    turn: 3,
+                }),
+            },
+            "phase_transition",
+        );
+    }
 }
 
 #[cfg(test)]
