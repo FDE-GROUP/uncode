@@ -2,14 +2,17 @@
 
 use std::collections::HashMap;
 
-use crate::types::{ActionDef, EntityCategory, EntityDef, LinkDef, TypeId};
+use crate::types::{
+    ActionDef, EntityCategory, EntityDef, LinkDef, ReasoningRule, TypeId,
+};
 
-/// Central type registry holding all entity, action, and link definitions.
+/// Central type registry holding all entity, action, link, and reasoning definitions.
 #[derive(Debug, Clone)]
 pub struct TypeRegistry {
     pub entities: HashMap<TypeId, EntityDef>,
     pub actions: HashMap<String, ActionDef>,
     pub links: HashMap<TypeId, LinkDef>,
+    pub reasoning_rules: HashMap<TypeId, ReasoningRule>,
 }
 
 impl TypeRegistry {
@@ -18,6 +21,7 @@ impl TypeRegistry {
             entities: HashMap::new(),
             actions: HashMap::new(),
             links: HashMap::new(),
+            reasoning_rules: HashMap::new(),
         }
     }
 
@@ -33,6 +37,15 @@ impl TypeRegistry {
         self.links.insert(def.id.clone(), def);
     }
 
+    pub fn register_reasoning_rule(&mut self, rule: ReasoningRule) {
+        let id = match &rule {
+            ReasoningRule::Traversal { id, .. } | ReasoningRule::Derivation { id, .. } => {
+                id.clone()
+            }
+        };
+        self.reasoning_rules.insert(id, rule);
+    }
+
     /// Merge another registry into this one. Conflicting keys are overwritten.
     pub fn merge(mut self, other: TypeRegistry) -> Self {
         for (id, entity) in other.entities {
@@ -43,6 +56,9 @@ impl TypeRegistry {
         }
         for (id, link) in other.links {
             self.links.insert(id, link);
+        }
+        for (id, rule) in other.reasoning_rules {
+            self.reasoning_rules.insert(id, rule);
         }
         self
     }
@@ -57,6 +73,21 @@ impl TypeRegistry {
 
     pub fn get_link(&self, id: &TypeId) -> Option<&LinkDef> {
         self.links.get(id)
+    }
+
+    pub fn get_reasoning_rule(&self, id: &TypeId) -> Option<&ReasoningRule> {
+        self.reasoning_rules.get(id)
+    }
+
+    /// Query reasoning rules that apply to a given entity type.
+    pub fn reasoning_rules_for_entity(&self, entity_type: &TypeId) -> Vec<&ReasoningRule> {
+        self.reasoning_rules
+            .values()
+            .filter(|rule| match rule {
+                ReasoningRule::Traversal { source_type, .. } => source_type == entity_type,
+                ReasoningRule::Derivation { entity_type: et, .. } => et == entity_type,
+            })
+            .collect()
     }
 
     /// Query links where source_type matches the given TypeId.

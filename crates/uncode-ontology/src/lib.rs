@@ -14,12 +14,17 @@
 
 pub mod builtin;
 pub mod evaluate;
+pub mod reasoner;
 pub mod registry;
 pub mod types;
 
 pub use evaluate::{ConstraintResult, evaluate_constraint};
+pub use reasoner::{
+    DerivationResult, TraversalResult, evaluate_all_derivations, evaluate_derivation,
+    evaluate_traversal,
+};
 pub use registry::TypeRegistry;
 pub use types::{
-    ActionDef, Cardinality, Constraint, ConstraintLevel, Effect, EntityCategory, EntityDef,
-    ExecutionCategory, FieldDef, LinkDef, TypeId,
+    ActionDef, ArithmeticOp, Cardinality, Constraint, ConstraintLevel, DerivationExpr, Effect,
+    EntityCategory, EntityDef, ExecutionCategory, FieldDef, LinkDef, ReasoningRule, TypeId,
 };

@@ -206,3 +206,80 @@ pub struct LinkDef {
     pub inverse: Option<TypeId>,
     pub description: Option<String>,
 }
+
+/// Reasoning rule — derives implicit knowledge from ontology data.
+///
+/// Two rule types:
+/// - **Traversal**: follow a LinkDef to collect related entities
+/// - **Derivation**: from known field values, compute derived field values
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ReasoningRule {
+    /// Traverse a link to collect related entity IDs.
+    ///
+    /// Example: given Provider "deepseek", follow `Provider_provides_LLM`
+    /// to find all LLM models from that provider.
+    Traversal {
+        id: TypeId,
+        /// The link to follow
+        link_id: TypeId,
+        /// The entity type that provides the starting point
+        source_type: TypeId,
+        /// The entity type discovered at the other end
+        target_type: TypeId,
+        #[serde(default)]
+        description: Option<String>,
+    },
+    /// Derive a field value from other fields on the same entity.
+    ///
+    /// Example: if `supports_vision = true`, derive `input_modalities` contains "Image".
+    Derivation {
+        id: TypeId,
+        /// The entity type this rule applies to
+        entity_type: TypeId,
+        /// Source field(s) to read
+        source_fields: Vec<String>,
+        /// Derived field to write
+        derived_field: String,
+        /// Derivation logic as a declarative expression
+        expression: DerivationExpr,
+        #[serde(default)]
+        description: Option<String>,
+    },
+}
+
+/// Declarative derivation expression.
+///
+/// These are simple, deterministic transformations — not a Turing-complete language.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DerivationExpr {
+    /// If source_field equals expected_value, set derived_field to result_value.
+    FieldEquals {
+        field: String,
+        expected: serde_json::Value,
+        result: serde_json::Value,
+    },
+    /// If source_field is true, set derived_field to result_value.
+    FieldIsTrue {
+        field: String,
+        result: serde_json::Value,
+    },
+    /// Compute a numeric result from two fields.
+    Arithmetic {
+        left_field: String,
+        operator: ArithmeticOp,
+        right_field: String,
+    },
+    /// Copy a field value to another field (alias).
+    Alias { source: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArithmeticOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+}

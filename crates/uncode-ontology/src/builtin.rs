@@ -2,8 +2,8 @@
 
 use crate::registry::TypeRegistry;
 use crate::types::{
-    ActionDef, Cardinality, Constraint, Effect, EntityCategory, EntityDef, ExecutionCategory,
-    FieldDef, LinkDef, TypeId,
+    ActionDef, ArithmeticOp, Cardinality, Constraint, DerivationExpr, Effect, EntityCategory,
+    EntityDef, ExecutionCategory, FieldDef, LinkDef, ReasoningRule, TypeId,
 };
 
 /// Build the complete coding agent domain ontology.
@@ -30,6 +30,9 @@ pub fn coding_agent_ontology() -> TypeRegistry {
     reg.register_link(link_workspace_contains_file());
     reg.register_link(link_workspace_contains_module());
     reg.register_link(link_file_in_module());
+
+    // Reasoning rules — domain
+    reg.register_reasoning_rule(rule_workspace_files_traversal());
 
     reg
 }
@@ -443,6 +446,12 @@ pub fn system_resource_ontology() -> TypeRegistry {
     reg.register_link(link_provider_provides_llm());
     reg.register_link(link_llm_has_capability());
 
+    // Reasoning rules — system resource
+    reg.register_reasoning_rule(rule_provider_models_traversal());
+    reg.register_reasoning_rule(rule_llm_capabilities_traversal());
+    reg.register_reasoning_rule(rule_vision_implies_image_input());
+    reg.register_reasoning_rule(rule_total_cost_derivation());
+
     reg
 }
 
@@ -731,6 +740,73 @@ fn link_llm_has_capability() -> LinkDef {
         cardinality: Cardinality::OneToMany,
         inverse: Some(TypeId("Capability_of_LLM".into())),
         description: Some("LLM model has multiple capabilities".into()),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Reasoning Rules — Domain Semantic
+// ═══════════════════════════════════════════════════════════
+
+fn rule_workspace_files_traversal() -> ReasoningRule {
+    ReasoningRule::Traversal {
+        id: TypeId("workspace_files".into()),
+        link_id: TypeId("Workspace_contains_File".into()),
+        source_type: TypeId("Workspace".into()),
+        target_type: TypeId("File".into()),
+        description: Some("Find all files in a workspace".into()),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Reasoning Rules — System Resource Semantic
+// ═══════════════════════════════════════════════════════════
+
+fn rule_provider_models_traversal() -> ReasoningRule {
+    ReasoningRule::Traversal {
+        id: TypeId("provider_models".into()),
+        link_id: TypeId("Provider_provides_LLM".into()),
+        source_type: TypeId("Provider".into()),
+        target_type: TypeId("LLM".into()),
+        description: Some("Find all LLM models provided by a provider".into()),
+    }
+}
+
+fn rule_llm_capabilities_traversal() -> ReasoningRule {
+    ReasoningRule::Traversal {
+        id: TypeId("llm_capabilities".into()),
+        link_id: TypeId("LLM_has_Capability".into()),
+        source_type: TypeId("LLM".into()),
+        target_type: TypeId("Capability".into()),
+        description: Some("Find all capabilities of an LLM model".into()),
+    }
+}
+
+fn rule_vision_implies_image_input() -> ReasoningRule {
+    ReasoningRule::Derivation {
+        id: TypeId("vision_implies_image_input".into()),
+        entity_type: TypeId("LLM".into()),
+        source_fields: vec!["supports_vision".into()],
+        derived_field: "has_image_input_modality".into(),
+        expression: DerivationExpr::FieldIsTrue {
+            field: "supports_vision".into(),
+            result: serde_json::json!(true),
+        },
+        description: Some("If supports_vision is true, the model has Image input modality".into()),
+    }
+}
+
+fn rule_total_cost_derivation() -> ReasoningRule {
+    ReasoningRule::Derivation {
+        id: TypeId("total_cost_per_million".into()),
+        entity_type: TypeId("LLM".into()),
+        source_fields: vec!["pricing_input_per_million".into(), "pricing_output_per_million".into()],
+        derived_field: "total_cost_per_million".into(),
+        expression: DerivationExpr::Arithmetic {
+            left_field: "pricing_input_per_million".into(),
+            operator: ArithmeticOp::Add,
+            right_field: "pricing_output_per_million".into(),
+        },
+        description: Some("Total cost per million tokens = input + output pricing".into()),
     }
 }
 
