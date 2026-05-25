@@ -82,6 +82,8 @@ pub fn register_coding_tools(
     {
         registry.register("web_search", Arc::new(tool));
     }
+    // Use ontology ActionDefs to drive ToolDefinition generation.
+    registry.set_builtin_ontology();
 }
 
 /// Apply Pi-aligned default: only built-in coding tools visible to the LLM (no `web_*`).
@@ -196,5 +198,93 @@ mod tests {
         assert!(!reg.is_active("llm_query"));
         assert!(!reg.is_active("read"));
         assert_eq!(reg.definitions().len(), 1);
+    }
+
+    #[test]
+    fn ontology_definitions_equal_executor_definitions() {
+        // Build registry WITHOUT ontology for baseline
+        let reg_no_onto = ToolRegistry::new();
+        reg_no_onto.register("read", Arc::new(ReadTool::with_max_file_bytes(1_048_576)));
+        reg_no_onto.register("write", Arc::new(WriteTool));
+        reg_no_onto.register("edit", Arc::new(EditTool));
+        reg_no_onto.register("grep", Arc::new(GrepTool::new(1000, 1_048_576)));
+        reg_no_onto.register("bash", Arc::new(BashTool::new()));
+        reg_no_onto.register("find", Arc::new(FindTool));
+        reg_no_onto.register("ls", Arc::new(LsTool));
+        let baseline: HashMap<_, _> = reg_no_onto
+            .definitions()
+            .into_iter()
+            .map(|d| (d.name.clone(), d))
+            .collect();
+
+        // Build registry WITH ontology
+        let reg_with_onto = ToolRegistry::new();
+        reg_with_onto.set_builtin_ontology();
+        reg_with_onto.register("read", Arc::new(ReadTool::with_max_file_bytes(1_048_576)));
+        reg_with_onto.register("write", Arc::new(WriteTool));
+        reg_with_onto.register("edit", Arc::new(EditTool));
+        reg_with_onto.register("grep", Arc::new(GrepTool::new(1000, 1_048_576)));
+        reg_with_onto.register("bash", Arc::new(BashTool::new()));
+        reg_with_onto.register("find", Arc::new(FindTool));
+        reg_with_onto.register("ls", Arc::new(LsTool));
+        let onto_defs: HashMap<_, _> = reg_with_onto
+            .definitions()
+            .into_iter()
+            .map(|d| (d.name.clone(), d))
+            .collect();
+
+        let mut mismatches = Vec::new();
+        for name in baseline.keys() {
+            let base = &baseline[name];
+            let onto = &onto_defs[name];
+            if onto.name != base.name {
+                mismatches.push(format!("{name}: name {}=>{}", onto.name, base.name));
+            }
+            if onto.execution_mode != base.execution_mode {
+                mismatches.push(format!("{name}: execution_mode mismatch"));
+            }
+            let onto_props = onto.parameters["properties"]
+                .as_object()
+                .unwrap_or_else(|| panic!("onto properties for {name}"));
+            let base_props = base.parameters["properties"]
+                .as_object()
+                .unwrap_or_else(|| panic!("base properties for {name}"));
+            for key in base_props.keys() {
+                if !onto_props.contains_key(key) {
+                    mismatches.push(format!("{name}: onto misses field '{key}'"));
+                } else if onto_props[key]["type"] != base_props[key]["type"]
+                    && base_props[key]["type"] != "array"
+                {
+                    mismatches.push(format!(
+                        "{name}: type mismatch for '{key}' ({}=>{})",
+                        onto_props[key]["type"], base_props[key]["type"]
+                    ));
+                }
+            }
+            // Required fields
+            let onto_req: Vec<_> = onto.parameters["required"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let base_req: Vec<_> = base.parameters["required"]
+                .as_array()
+                .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let mut onto_req_sorted = onto_req.clone();
+            onto_req_sorted.sort_unstable();
+            let mut base_req_sorted = base_req;
+            base_req_sorted.sort_unstable();
+            if onto_req_sorted != base_req_sorted {
+                mismatches.push(format!(
+                    "{name}: required mismatch (onto={:?} base={:?})",
+                    onto_req_sorted, base_req_sorted
+                ));
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "Ontology <-> executor mismatches:\n{}",
+            mismatches.join("\n")
+        );
     }
 }

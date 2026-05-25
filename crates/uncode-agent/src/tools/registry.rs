@@ -3,6 +3,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use uncode_core::tool::{ExecutionMode, ToolDefinition, ToolExecutor};
+use uncode_ontology::TypeRegistry;
+use uncode_ontology::builtin::full_ontology;
+
+use crate::decision::bridge::ToolBridge;
 
 /// Origin of a registered tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,9 +32,10 @@ const RESERVED_TOOL_NAMES: &[&str] = &[
 pub struct ToolRegistry {
     tools: RwLock<HashMap<String, Arc<dyn ToolExecutor>>>,
     sources: RwLock<HashMap<String, ToolSource>>,
-    /// When `Some`, only these tools are exposed to the LLM and may execute.
-    /// **Pi:** `setActiveTools`.
     active_names: RwLock<Option<HashSet<String>>>,
+    /// Optional ontology reference — when set, `definitions()` generates
+    /// ToolDefinitions from ActionDefs instead of calling executor.definition().
+    ontology: RwLock<Option<Arc<TypeRegistry>>>,
 }
 
 impl ToolRegistry {
@@ -39,7 +44,22 @@ impl ToolRegistry {
             tools: RwLock::new(HashMap::with_capacity(8)),
             sources: RwLock::new(HashMap::new()),
             active_names: RwLock::new(None),
+            ontology: RwLock::new(None),
         }
+    }
+
+    /// Attach an ontology to drive ToolDefinition generation from ActionDefs.
+    ///
+    /// When set, `definitions()` prefers ontological definitions over
+    /// hand-written `executor.definition()`.  When a tool has no matching
+    /// `ActionDef`, the executor's own definition is used as fallback.
+    pub fn set_ontology(&self, registry: Arc<TypeRegistry>) {
+        *self.ontology.write() = Some(registry);
+    }
+
+    /// Convenience: use the built-in full ontology (domain + system).
+    pub fn set_builtin_ontology(&self) {
+        self.set_ontology(Arc::new(full_ontology()));
     }
 
     /// Restrict which tools are sent to the LLM and allowed to execute.
@@ -135,6 +155,8 @@ impl ToolRegistry {
         let tools = self.tools.read();
         let active = self.active_names.read();
         let sources = self.sources.read();
+        let ontology = self.ontology.read();
+
         tools
             .iter()
             .filter(|(name, _)| {
@@ -146,7 +168,20 @@ impl ToolRegistry {
                     Some(set) => set.contains(*name),
                 }
             })
-            .map(|(_, t)| t.definition())
+            .map(|(name, t)| {
+                // Prefer ontology ActionDef over hand-written executor definition
+                if let Some(ref reg) = *ontology {
+                    if let Some(action) =
+                        reg.get_action(&uncode_ontology::TypeId::from(name.as_str()))
+                    {
+                        return ToolBridge::to_tool_definition(
+                            &action,
+                            t.definition().label.as_deref(),
+                        );
+                    }
+                }
+                t.definition()
+            })
             .collect()
     }
 
