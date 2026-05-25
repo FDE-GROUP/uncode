@@ -322,4 +322,44 @@ mod tests {
         assert!(AssessmentLevel::Reproducible > AssessmentLevel::Verified);
         assert!(AssessmentLevel::Basic > AssessmentLevel::RawOutput);
     }
+
+    #[test]
+    fn test_verified_evaluator_fallback_to_h1() {
+        let eval = VerifiedEvaluator;
+        let result = make_result(true, "ok");
+        let ctx = EvaluationContext {
+            turn_number: 1,
+            tool_name: "bash".into(),
+            test_output: None,
+            lint_output: None,
+        };
+        let score = eval.evaluate(&result, &ctx);
+        assert!(
+            score.level != AssessmentLevel::Verified,
+            "expected fallback to H1 when test_output is None"
+        );
+        assert_eq!(score.level, AssessmentLevel::Basic);
+    }
+
+    #[test]
+    fn test_turn_evaluation_summary_reproducible() {
+        let score = EvaluationScore {
+            level: AssessmentLevel::Reproducible,
+            quality_score: 0.95,
+            passed: vec!["reproducible test passed".into()],
+            failed: vec![],
+            recommendation: None,
+        };
+        let turn_eval = TurnEvaluation::new(1, vec![score]);
+        let summary = turn_eval.summary();
+        assert!(!summary.is_empty());
+        assert!(
+            summary.contains("H3"),
+            "expected Reproducible (H3) in summary, got: {summary}"
+        );
+        assert!(
+            !summary.contains("Unknown"),
+            "summary should not contain 'Unknown'"
+        );
+    }
 }

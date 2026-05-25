@@ -206,4 +206,25 @@ mod tests {
         let reason = wait.await.unwrap();
         assert_eq!(reason.as_deref(), Some("denied by user"));
     }
+
+    #[test]
+    fn test_needs_confirmation_readonly_false() {
+        let gate = PermissionGate::new_without_events();
+        assert!(!gate.needs_confirmation("read", "{}"));
+        assert!(!gate.needs_confirmation("ls", "{}"));
+    }
+
+    #[test]
+    fn test_needs_confirmation_destructive_true() {
+        let gate = PermissionGate::new_without_events();
+        assert!(gate.needs_confirmation("write", "{}"));
+        assert!(gate.needs_confirmation("edit", "{}"));
+    }
+
+    #[test]
+    fn test_new_with_registry_constructs() {
+        let registry = Arc::new(ToolRegistry::new());
+        let (tx, _rx) = tokio::sync::broadcast::channel(1);
+        let _gate = PermissionGate::new_with_registry(tx, registry);
+    }
 }

@@ -732,4 +732,27 @@ mod tests {
         assert_eq!(adj.policies[0].name(), "turn_limit");
         assert_eq!(adj.policies[1].name(), "cancellation");
     }
+
+    // ── ConcurrencyPolicy ──
+
+    #[test]
+    fn test_concurrency_policy_denies_when_inactive() {
+        let active = Arc::new(AtomicBool::new(false));
+        let policy = ConcurrencyPolicy::new(active);
+        let result = policy.evaluate(&make_context(1), &make_action()).unwrap();
+        assert!(!result.allowed);
+    }
+
+    // ── PhaseGuardPolicy clone ──
+
+    #[test]
+    fn test_phase_guard_clone() {
+        let pg1 = PhaseGuardPolicy::new(AgentHarnessPhase::Idle);
+        let pg2 = pg1.clone();
+        assert_eq!(pg1.current_phase(), pg2.current_phase());
+        pg1.set_phase(AgentHarnessPhase::Turn);
+        // clone is independent — pg2 should still be Idle
+        assert_eq!(pg2.current_phase(), AgentHarnessPhase::Idle);
+        assert_eq!(pg1.current_phase(), AgentHarnessPhase::Turn);
+    }
 }

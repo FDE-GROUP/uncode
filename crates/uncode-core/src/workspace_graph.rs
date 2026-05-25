@@ -246,4 +246,91 @@ mod tests {
             assert_eq!(kind, parsed);
         }
     }
+
+    #[test]
+    fn test_freshness_serde_roundtrip() {
+        let variants = vec![Freshness::Fresh, Freshness::Recent, Freshness::Stale];
+        for v in variants {
+            let json = serde_json::to_string(&v).unwrap();
+            let parsed: Freshness = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, parsed);
+        }
+    }
+
+    #[test]
+    fn test_edge_type_serde_roundtrip() {
+        let variants = vec![
+            EdgeType::Calls,
+            EdgeType::Contains,
+            EdgeType::Implements,
+            EdgeType::References,
+        ];
+        for v in variants {
+            let json = serde_json::to_string(&v).unwrap();
+            let parsed: EdgeType = serde_json::from_str(&json).unwrap();
+            assert_eq!(v, parsed);
+        }
+    }
+
+    #[test]
+    fn test_default_ignore_dirs_not_empty() {
+        assert!(!DEFAULT_IGNORE_DIRS.is_empty());
+        assert!(DEFAULT_IGNORE_DIRS.contains(&"node_modules"));
+        assert!(DEFAULT_IGNORE_DIRS.contains(&".git"));
+    }
+
+    #[test]
+    fn test_graph_node_serde() {
+        let node = GraphNode {
+            id: "src/main.rs:10:Function:run".into(),
+            kind: SymbolKind::Function,
+            name: "run".into(),
+            path: "src/main.rs".into(),
+            line_start: 10,
+            line_end: 15,
+            signature: Some("fn run()".into()),
+            freshness: Freshness::Fresh,
+        };
+        let json = serde_json::to_string(&node).unwrap();
+        let parsed: GraphNode = serde_json::from_str(&json).unwrap();
+        assert_eq!(node.id, parsed.id);
+        assert_eq!(node.kind, parsed.kind);
+        assert_eq!(node.name, parsed.name);
+        assert_eq!(node.path, parsed.path);
+        assert_eq!(node.line_start, parsed.line_start);
+        assert_eq!(node.line_end, parsed.line_end);
+        assert_eq!(node.signature, parsed.signature);
+        assert_eq!(node.freshness, parsed.freshness);
+    }
+
+    #[test]
+    fn test_graph_edge_serde() {
+        let edge = GraphEdge {
+            source: "n1".into(),
+            target: "n2".into(),
+            edge_type: EdgeType::Calls,
+        };
+        let json = serde_json::to_string(&edge).unwrap();
+        let parsed: GraphEdge = serde_json::from_str(&json).unwrap();
+        assert_eq!(edge.source, parsed.source);
+        assert_eq!(edge.target, parsed.target);
+        assert_eq!(edge.edge_type, parsed.edge_type);
+    }
+
+    #[test]
+    fn test_workspace_graph_serde() {
+        let graph = WorkspaceGraph {
+            root: PathBuf::from("/tmp"),
+            nodes: vec![],
+            edges: vec![],
+            built_at: Utc::now(),
+            file_hashes: HashMap::new(),
+        };
+        let json = serde_json::to_string(&graph).unwrap();
+        let parsed: WorkspaceGraph = serde_json::from_str(&json).unwrap();
+        assert_eq!(graph.root, parsed.root);
+        assert!(parsed.nodes.is_empty());
+        assert!(parsed.edges.is_empty());
+        assert!(parsed.file_hashes.is_empty());
+    }
 }
