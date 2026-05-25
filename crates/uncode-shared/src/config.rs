@@ -529,10 +529,7 @@ mod tests {
         assert_eq!(config.api_key, Some("sk-ant-xxx".to_string()));
         assert_eq!(config.context_window, Some(200000));
         assert_eq!(config.max_output_tokens, Some(8192));
-        assert_eq!(
-            config.compat.unwrap().supports_developer_role,
-            Some(false)
-        );
+        assert_eq!(config.compat.unwrap().supports_developer_role, Some(false));
     }
 
     #[test]

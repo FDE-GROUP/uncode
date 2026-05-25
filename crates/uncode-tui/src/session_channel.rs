@@ -46,7 +46,9 @@ mod tests {
         let (tx, mut bridge) = session_channel(8);
         let (rtx, rrx) = std_mpsc::channel();
         let pending = PendingSessionAction {
-            action: SessionAction::SetName { name: "test".into() },
+            action: SessionAction::SetName {
+                name: "test".into(),
+            },
             response_tx: rtx,
         };
         tx.try_send(pending).unwrap();
@@ -63,9 +65,13 @@ mod tests {
         let (tx, mut bridge) = session_channel(4);
         let (rtx, _rrx) = std_mpsc::channel::<Result<SessionResponse, String>>();
         tx.send(PendingSessionAction {
-            action: SessionAction::Fork { entry_id: "e1".into() },
+            action: SessionAction::Fork {
+                entry_id: "e1".into(),
+            },
             response_tx: rtx,
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         let received = bridge.recv().await;
         assert!(received.is_some());
     }

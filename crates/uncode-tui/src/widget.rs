@@ -106,8 +106,12 @@ mod tests {
     use super::*;
     use uncode_core::ui_action::{WidgetConfig, WidgetPlacement};
 
-    fn placement_above() -> WidgetPlacement { WidgetPlacement::AboveEditor }
-    fn placement_below() -> WidgetPlacement { WidgetPlacement::BelowEditor }
+    fn placement_above() -> WidgetPlacement {
+        WidgetPlacement::AboveEditor
+    }
+    fn placement_below() -> WidgetPlacement {
+        WidgetPlacement::BelowEditor
+    }
 
     #[test]
     fn test_new_empty() {

@@ -202,11 +202,13 @@ mod tests {
         // Instead, set CWD to the temp dir.
         let _guard = CwdGuard::new(dir.path());
         let ctx = ContextLoader::new(dir.path().to_path_buf()).load();
-        assert!(ctx
-            .skills
-            .iter()
-            .any(|(n, d)| n == "my-tool" && d == "a handy tool"),
-            "expected my-tool in skills but got {:?}", ctx.skills);
+        assert!(
+            ctx.skills
+                .iter()
+                .any(|(n, d)| n == "my-tool" && d == "a handy tool"),
+            "expected my-tool in skills but got {:?}",
+            ctx.skills
+        );
     }
 
     #[test]
@@ -234,10 +236,11 @@ mod tests {
         fs::write(&skill, b"no description line present").unwrap();
         let _guard = CwdGuard::new(dir.path());
         let ctx = ContextLoader::new(dir.path().to_path_buf()).load();
-        assert!(ctx
-            .skills
-            .iter()
-            .any(|(n, d)| n == "no-desc" && d.is_empty()));
+        assert!(
+            ctx.skills
+                .iter()
+                .any(|(n, d)| n == "no-desc" && d.is_empty())
+        );
     }
 
     #[test]
@@ -246,11 +249,7 @@ mod tests {
         let skills = dir.path().join(".uncode/skills");
         fs::create_dir_all(skills.join("has-skill")).unwrap();
         fs::create_dir_all(skills.join("no-skill")).unwrap();
-        fs::write(
-            skills.join("has-skill/SKILL.md"),
-            b"description: present",
-        )
-        .unwrap();
+        fs::write(skills.join("has-skill/SKILL.md"), b"description: present").unwrap();
         let _guard = CwdGuard::new(dir.path());
         let ctx = ContextLoader::new(dir.path().to_path_buf()).load();
         assert!(ctx.skills.iter().any(|(n, _)| n == "has-skill"));

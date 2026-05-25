@@ -49,9 +49,7 @@ mod tests {
     fn test_overlay_channel_factory() {
         let (tx, mut bridge) = overlay_channel(8);
         let (rtx, _rrx) = std_mpsc::channel();
-        let action = OverlayAction::Hide {
-            key: "test".into(),
-        };
+        let action = OverlayAction::Hide { key: "test".into() };
         let pending = PendingOverlayAction {
             action,
             response_tx: rtx,

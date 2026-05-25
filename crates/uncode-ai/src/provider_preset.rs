@@ -224,7 +224,10 @@ mod tests {
     fn gemini_preset() {
         let p = provider_preset("gemini").unwrap();
         assert_eq!(p.default_api, "google-generative-ai");
-        assert_eq!(p.default_base_url, "https://generativelanguage.googleapis.com/v1beta");
+        assert_eq!(
+            p.default_base_url,
+            "https://generativelanguage.googleapis.com/v1beta"
+        );
     }
 
     #[test]
@@ -247,14 +250,20 @@ mod tests {
         let p = provider_preset("groq").unwrap();
         assert_eq!(p.default_api, "openai-completions");
         assert_eq!(p.default_base_url, "https://api.groq.com/openai/v1");
-        assert_eq!(p.compat.max_tokens_field, MaxTokensField::MaxCompletionTokens);
+        assert_eq!(
+            p.compat.max_tokens_field,
+            MaxTokensField::MaxCompletionTokens
+        );
     }
 
     #[test]
     fn cerebras_preset() {
         let p = provider_preset("cerebras").unwrap();
         assert_eq!(p.default_base_url, "https://api.cerebras.ai/v1");
-        assert_eq!(p.compat.max_tokens_field, MaxTokensField::MaxCompletionTokens);
+        assert_eq!(
+            p.compat.max_tokens_field,
+            MaxTokensField::MaxCompletionTokens
+        );
     }
 
     #[test]
@@ -268,7 +277,10 @@ mod tests {
     fn xai_preset() {
         let p = provider_preset("xai").unwrap();
         assert_eq!(p.default_base_url, "https://api.x.ai/v1");
-        assert_eq!(p.compat.max_tokens_field, MaxTokensField::MaxCompletionTokens);
+        assert_eq!(
+            p.compat.max_tokens_field,
+            MaxTokensField::MaxCompletionTokens
+        );
         assert_eq!(p.compat.thinking_format, Some(ThinkingFormat::OpenAi));
     }
 

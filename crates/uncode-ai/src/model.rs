@@ -650,10 +650,7 @@ mod tests {
         let mut m = Model::default();
         m.provider = "openai".into();
         m.thinking_format = Some(ThinkingFormat::OpenAi);
-        assert_eq!(
-            m.effective_thinking_format(),
-            Some(ThinkingFormat::OpenAi)
-        );
+        assert_eq!(m.effective_thinking_format(), Some(ThinkingFormat::OpenAi));
     }
 
     // ── clamp_thinking_level ──
@@ -678,9 +675,7 @@ mod tests {
     #[test]
     fn clamp_level_in_map_returns_same() {
         let mut model = Model::default();
-        model
-            .thinking_level_map
-            .insert(ThinkingLevel::Medium, None);
+        model.thinking_level_map.insert(ThinkingLevel::Medium, None);
         assert_eq!(
             clamp_thinking_level(ThinkingLevel::Medium, &model),
             ThinkingLevel::Medium
@@ -725,9 +720,7 @@ mod tests {
     #[test]
     fn clamp_map_with_high_levels_medium_available() {
         let mut model = Model::default();
-        model
-            .thinking_level_map
-            .insert(ThinkingLevel::Medium, None);
+        model.thinking_level_map.insert(ThinkingLevel::Medium, None);
         model.thinking_level_map.insert(ThinkingLevel::High, None);
         assert_eq!(
             clamp_thinking_level(ThinkingLevel::Medium, &model),

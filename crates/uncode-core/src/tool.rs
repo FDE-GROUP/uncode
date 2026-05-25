@@ -394,7 +394,11 @@ mod tests {
             detail: "processing".into(),
         };
         match p {
-            ToolProgress::Percentage { current, total, detail } => {
+            ToolProgress::Percentage {
+                current,
+                total,
+                detail,
+            } => {
                 assert_eq!(current, 5);
                 assert_eq!(total, 10);
                 assert_eq!(detail, "processing");
@@ -520,7 +524,10 @@ mod tests {
         let opts = ShellOptions {
             workdir: Some(PathBuf::from("/tmp")),
             timeout_ms: Some(5000),
-            env: Some(std::collections::HashMap::from([("KEY".into(), "val".into())])),
+            env: Some(std::collections::HashMap::from([(
+                "KEY".into(),
+                "val".into(),
+            )])),
         };
         assert_eq!(opts.timeout_ms, Some(5000));
     }

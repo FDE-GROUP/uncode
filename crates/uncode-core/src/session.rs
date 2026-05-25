@@ -591,14 +591,22 @@ mod tests {
     #[test]
     fn session_entry_all_variants_entry_id() {
         for entry in all_variants() {
-            assert!(!entry.entry_id().is_empty(), "entry_id empty for {:?}", entry);
+            assert!(
+                !entry.entry_id().is_empty(),
+                "entry_id empty for {:?}",
+                entry
+            );
         }
     }
 
     #[test]
     fn session_entry_all_variants_parent_id_default_none() {
         for entry in all_variants() {
-            assert!(entry.parent_id().is_none(), "expected None parent_id for {:?}", entry);
+            assert!(
+                entry.parent_id().is_none(),
+                "expected None parent_id for {:?}",
+                entry
+            );
         }
     }
 
@@ -620,7 +628,10 @@ mod tests {
 
     #[test]
     fn message_entry_new_constructor() {
-        let entry = MessageEntry::new(Role::Assistant, vec![ContentBlock::Text { text: "ok".into() }]);
+        let entry = MessageEntry::new(
+            Role::Assistant,
+            vec![ContentBlock::Text { text: "ok".into() }],
+        );
         assert!(!entry.id.is_empty());
         assert!(entry.parent_id.is_none());
         assert_eq!(entry.role, Role::Assistant);

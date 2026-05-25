@@ -96,7 +96,11 @@ mod tests {
             "value1"
         );
         assert_eq!(
-            req.headers().get("Authorization").unwrap().to_str().unwrap(),
+            req.headers()
+                .get("Authorization")
+                .unwrap()
+                .to_str()
+                .unwrap(),
             "Bearer token"
         );
     }

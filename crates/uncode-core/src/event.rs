@@ -1530,9 +1530,12 @@ mod event_router_tests {
         let mut router = EventRouter::new();
         let fired = Arc::new(AtomicBool::new(false));
         let f = fired.clone();
-        router.on("turn_start", Box::new(move |_| {
-            f.store(true, Ordering::SeqCst);
-        }));
+        router.on(
+            "turn_start",
+            Box::new(move |_| {
+                f.store(true, Ordering::SeqCst);
+            }),
+        );
 
         let event = AgentEvent::TurnStart { turn: 1 };
         router.dispatch(&event);
@@ -1544,9 +1547,12 @@ mod event_router_tests {
         let mut router = EventRouter::new();
         let fired = Arc::new(AtomicBool::new(false));
         let f = fired.clone();
-        router.on("turn_start", Box::new(move |_| {
-            f.store(true, Ordering::SeqCst);
-        }));
+        router.on(
+            "turn_start",
+            Box::new(move |_| {
+                f.store(true, Ordering::SeqCst);
+            }),
+        );
 
         router.dispatch(&AgentEvent::TurnEnd {
             turn: 1,
@@ -1561,12 +1567,18 @@ mod event_router_tests {
         let count = Arc::new(AtomicBool::new(false));
         let c1 = count.clone();
         let c2 = count.clone();
-        router.on("turn_start", Box::new(move |_| {
-            c1.store(true, Ordering::SeqCst);
-        }));
-        router.on("turn_start", Box::new(move |_| {
-            c2.store(true, Ordering::SeqCst);
-        }));
+        router.on(
+            "turn_start",
+            Box::new(move |_| {
+                c1.store(true, Ordering::SeqCst);
+            }),
+        );
+        router.on(
+            "turn_start",
+            Box::new(move |_| {
+                c2.store(true, Ordering::SeqCst);
+            }),
+        );
 
         router.dispatch(&AgentEvent::TurnStart { turn: 1 });
         // Both should have fired — we can't distinguish them with AtomicBool,
@@ -1580,13 +1592,19 @@ mod event_router_tests {
         let second_fired = Arc::new(AtomicBool::new(false));
         let s = second_fired.clone();
 
-        router.on_sync_hook("turn_start", Box::new(move |_| {
-            HookResult::Block { reason: "denied".into() }
-        }));
-        router.on_sync_hook("turn_start", Box::new(move |_| {
-            s.store(true, Ordering::SeqCst);
-            HookResult::Continue
-        }));
+        router.on_sync_hook(
+            "turn_start",
+            Box::new(move |_| HookResult::Block {
+                reason: "denied".into(),
+            }),
+        );
+        router.on_sync_hook(
+            "turn_start",
+            Box::new(move |_| {
+                s.store(true, Ordering::SeqCst);
+                HookResult::Continue
+            }),
+        );
 
         let result = router.dispatch_sync_hooks(&AgentEvent::TurnStart { turn: 1 });
         assert!(matches!(result, HookResult::Block { .. }));
@@ -1597,9 +1615,7 @@ mod event_router_tests {
     #[test]
     fn test_sync_hook_continue_passes_through() {
         let mut router = EventRouter::new();
-        router.on_sync_hook("turn_start", Box::new(move |_| {
-            HookResult::Continue
-        }));
+        router.on_sync_hook("turn_start", Box::new(move |_| HookResult::Continue));
 
         let result = router.dispatch_sync_hooks(&AgentEvent::TurnStart { turn: 1 });
         assert!(matches!(result, HookResult::Continue));
@@ -1615,9 +1631,16 @@ mod event_router_tests {
     #[tokio::test]
     async fn test_async_hook_collects_results() {
         let mut router = EventRouter::new();
-        router.on_hook("turn_start", Box::new(move |_| {
-            Box::pin(async { HookResult::Block { reason: "async denied".into() } })
-        }));
+        router.on_hook(
+            "turn_start",
+            Box::new(move |_| {
+                Box::pin(async {
+                    HookResult::Block {
+                        reason: "async denied".into(),
+                    }
+                })
+            }),
+        );
 
         let results = router
             .dispatch_hooks(&AgentEvent::TurnStart { turn: 1 })
@@ -1633,20 +1656,26 @@ mod event_router_tests {
         let c1 = called.clone();
         let c2 = called.clone();
 
-        router.on_hook("turn_start", Box::new(move |_| {
-            let c = c1.clone();
-            Box::pin(async move {
-                c.lock().unwrap().push("first");
-                HookResult::Continue
-            })
-        }));
-        router.on_hook("turn_start", Box::new(move |_| {
-            let c = c2.clone();
-            Box::pin(async move {
-                c.lock().unwrap().push("second");
-                HookResult::Continue
-            })
-        }));
+        router.on_hook(
+            "turn_start",
+            Box::new(move |_| {
+                let c = c1.clone();
+                Box::pin(async move {
+                    c.lock().unwrap().push("first");
+                    HookResult::Continue
+                })
+            }),
+        );
+        router.on_hook(
+            "turn_start",
+            Box::new(move |_| {
+                let c = c2.clone();
+                Box::pin(async move {
+                    c.lock().unwrap().push("second");
+                    HookResult::Continue
+                })
+            }),
+        );
 
         let results = router
             .dispatch_hooks(&AgentEvent::TurnStart { turn: 1 })
@@ -1659,9 +1688,10 @@ mod event_router_tests {
     #[test]
     fn test_has_hook_handlers_true_after_register() {
         let mut router = EventRouter::new();
-        router.on_hook("error", Box::new(|_| {
-            Box::pin(async { HookResult::Continue })
-        }));
+        router.on_hook(
+            "error",
+            Box::new(|_| Box::pin(async { HookResult::Continue })),
+        );
         assert!(router.has_hook_handlers("error"));
     }
 
@@ -1681,11 +1711,10 @@ mod event_router_tests {
     #[test]
     fn test_sync_hook_patch_messages_result() {
         let mut router = EventRouter::new();
-        router.on_sync_hook("turn_start", Box::new(|_| {
-            HookResult::PatchMessages {
-                messages: vec![],
-            }
-        }));
+        router.on_sync_hook(
+            "turn_start",
+            Box::new(|_| HookResult::PatchMessages { messages: vec![] }),
+        );
 
         let result = router.dispatch_sync_hooks(&AgentEvent::TurnStart { turn: 1 });
         assert!(matches!(result, HookResult::PatchMessages { .. }));

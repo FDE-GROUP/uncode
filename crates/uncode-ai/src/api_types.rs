@@ -378,7 +378,11 @@ mod tests {
     // ── InputModality ──
     #[test]
     fn input_modality_serde_roundtrip() {
-        let cases = [InputModality::Text, InputModality::Image, InputModality::Audio];
+        let cases = [
+            InputModality::Text,
+            InputModality::Image,
+            InputModality::Audio,
+        ];
         for original in &cases {
             let json = serde_json::to_string(original).unwrap();
             let decoded: InputModality = serde_json::from_str(&json).unwrap();
@@ -409,7 +413,10 @@ mod tests {
     // ── MaxTokensField ──
     #[test]
     fn max_tokens_field_serde_roundtrip() {
-        let cases = [MaxTokensField::MaxTokens, MaxTokensField::MaxCompletionTokens];
+        let cases = [
+            MaxTokensField::MaxTokens,
+            MaxTokensField::MaxCompletionTokens,
+        ];
         for original in &cases {
             let json = serde_json::to_string(original).unwrap();
             let decoded: MaxTokensField = serde_json::from_str(&json).unwrap();
@@ -543,9 +550,7 @@ mod tests {
         assert_eq!(opts.temperature, Some(0.7));
         assert_eq!(opts.transport, Some(Transport::Auto));
         assert_eq!(
-            opts.metadata
-                .as_ref()
-                .and_then(|m| m.get("key")),
+            opts.metadata.as_ref().and_then(|m| m.get("key")),
             Some(&"value".into())
         );
     }

@@ -563,8 +563,14 @@ mod tests {
         assert_eq!(config.decision.turn_limit, 100);
         assert_eq!(config.decision.max_concurrent_tools, 4);
         assert_eq!(config.decision.tool_timeout_seconds, 300);
-        assert!(matches!(config.firewall.path_safety.mode, PathSafetyMode::Unrestricted));
-        assert!(matches!(config.firewall.tool_whitelist.mode, ToolWhitelistMode::Custom));
+        assert!(matches!(
+            config.firewall.path_safety.mode,
+            PathSafetyMode::Unrestricted
+        ));
+        assert!(matches!(
+            config.firewall.tool_whitelist.mode,
+            ToolWhitelistMode::Custom
+        ));
         assert_eq!(config.firewall.tool_whitelist.blocked, vec!["bash"]);
         assert!((config.cost.budget_per_turn_usd - 0.01).abs() < f64::EPSILON);
         assert!(config.cost.deny_mode);
@@ -573,9 +579,24 @@ mod tests {
     #[test]
     fn test_audit_config_defaults() {
         let config = AuditConfig::default();
-        assert!(config.event_levels.critical.contains(&"SessionStart".into()));
-        assert!(config.event_levels.standard.contains(&"ContentDelta".into()));
-        assert!(config.event_levels.verbose.contains(&"ToolCallProgress".into()));
+        assert!(
+            config
+                .event_levels
+                .critical
+                .contains(&"SessionStart".into())
+        );
+        assert!(
+            config
+                .event_levels
+                .standard
+                .contains(&"ContentDelta".into())
+        );
+        assert!(
+            config
+                .event_levels
+                .verbose
+                .contains(&"ToolCallProgress".into())
+        );
         assert_eq!(config.retention.critical_events, "permanent");
         assert_eq!(config.retention.standard_events, "90_days");
         assert_eq!(config.retention.verbose_events, "7_days");

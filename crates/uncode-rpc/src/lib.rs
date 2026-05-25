@@ -510,10 +510,7 @@ mod tests {
                 },
                 "session_end",
             ),
-            (
-                AgentEvent::TurnStart { turn: 1 },
-                "unknown",
-            ),
+            (AgentEvent::TurnStart { turn: 1 }, "unknown"),
             (
                 AgentEvent::TurnEnd {
                     turn: 1,

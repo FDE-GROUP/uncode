@@ -1103,9 +1103,7 @@ mod tests {
             id: "test".into(),
             role: Role::Assistant,
             content: vec![
-                ContentBlock::Text {
-                    text: "abc".into(),
-                },
+                ContentBlock::Text { text: "abc".into() },
                 ContentBlock::ToolCall(Box::new(ToolCall {
                     id: "tc1".into(),
                     name: "read".into(),

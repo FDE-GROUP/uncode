@@ -44,7 +44,9 @@ mod tests {
         let (tx, mut bridge) = ui_channel(8);
         let (rtx, rrx) = std_mpsc::channel();
         let pending = PendingUiAction {
-            action: UiAction::SetTitle { title: "hello".into() },
+            action: UiAction::SetTitle {
+                title: "hello".into(),
+            },
             response_tx: rtx,
         };
         tx.try_send(pending).unwrap();
@@ -66,7 +68,9 @@ mod tests {
         tx.send(PendingUiAction {
             action: UiAction::SetWorkingVisible { visible: false },
             response_tx: rtx,
-        }).await.unwrap();
+        })
+        .await
+        .unwrap();
         let received = bridge.recv().await;
         assert!(received.is_some());
     }

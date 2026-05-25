@@ -294,7 +294,9 @@ mod tests {
 
     #[test]
     fn test_content_block_text_serde() {
-        let block = ContentBlock::Text { text: "hello".into() };
+        let block = ContentBlock::Text {
+            text: "hello".into(),
+        };
         let json = serde_json::to_string(&block).unwrap();
         let de: ContentBlock = serde_json::from_str(&json).unwrap();
         assert!(matches!(de, ContentBlock::Text { text } if text == "hello"));
@@ -488,7 +490,9 @@ mod tests {
         let msg = Message {
             id: "id".into(),
             role: Role::Assistant,
-            content: vec![ContentBlock::Thinking { text: "reasoning".into() }],
+            content: vec![ContentBlock::Thinking {
+                text: "reasoning".into(),
+            }],
             usage: None,
             stop_reason: None,
             error_message: None,
@@ -496,7 +500,9 @@ mod tests {
         };
         let result = convert_to_llm(vec![msg]);
         assert_eq!(result.len(), 1);
-        assert!(matches!(&result[0].content[0], ContentBlock::Thinking { text } if text == "reasoning"));
+        assert!(
+            matches!(&result[0].content[0], ContentBlock::Thinking { text } if text == "reasoning")
+        );
     }
 
     #[test]
@@ -706,10 +712,7 @@ mod tests {
 
     #[test]
     fn test_convert_multiple_messages() {
-        let msgs = vec![
-            Message::user("hello"),
-            Message::assistant("world"),
-        ];
+        let msgs = vec![Message::user("hello"), Message::assistant("world")];
         let result = convert_to_llm(msgs);
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].role, Role::User);

@@ -2288,7 +2288,10 @@ mod tests {
         assert_eq!(AgentHarnessPhase::Idle.to_string(), "idle");
         assert_eq!(AgentHarnessPhase::Turn.to_string(), "turn");
         assert_eq!(AgentHarnessPhase::Compaction.to_string(), "compaction");
-        assert_eq!(AgentHarnessPhase::BranchSummary.to_string(), "branch_summary");
+        assert_eq!(
+            AgentHarnessPhase::BranchSummary.to_string(),
+            "branch_summary"
+        );
         assert_eq!(AgentHarnessPhase::Retry.to_string(), "retry");
     }
 
@@ -2324,7 +2327,10 @@ mod tests {
             "test".into(),
             "mock".into(),
         );
-        let harness = AgentHarness::new(agent, Arc::new(SessionStore::new_memory().await.expect("store")));
+        let harness = AgentHarness::new(
+            agent,
+            Arc::new(SessionStore::new_memory().await.expect("store")),
+        );
 
         // Setting active tools to a known tool should work
         assert!(harness.set_active_tools(&["echo"]).is_ok());
@@ -2353,7 +2359,10 @@ mod tests {
             "test".into(),
             "mock".into(),
         );
-        let harness = AgentHarness::new(agent, Arc::new(SessionStore::new_memory().await.expect("store")));
+        let harness = AgentHarness::new(
+            agent,
+            Arc::new(SessionStore::new_memory().await.expect("store")),
+        );
 
         let mut rx = harness.subscribe();
         let tx = harness.event_sender();
