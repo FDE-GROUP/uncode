@@ -27,6 +27,8 @@ fn register_and_get_entity() {
         description: Some("A test entity".into()),
         category: EntityCategory::Domain,
         fields: vec![],
+        invariants: vec![],
+        extends: None,
     });
     let entity = reg.get_entity(&id);
     assert!(entity.is_some());
@@ -125,6 +127,8 @@ fn merge_registry_preserves_higher_version() {
         description: None,
         category: EntityCategory::Domain,
         fields: vec![],
+        invariants: vec![],
+        extends: None,
     });
     let mut r2 = TypeRegistry::with_version(OntologyVersion::new(2, 0, 0));
     r2.register_entity(EntityDef {
@@ -132,6 +136,8 @@ fn merge_registry_preserves_higher_version() {
         description: None,
         category: EntityCategory::Domain,
         fields: vec![],
+        invariants: vec![],
+        extends: None,
     });
     let merged = r1.merge(&r2);
     assert_eq!(merged.version, OntologyVersion::new(2, 0, 0));
@@ -189,4 +195,110 @@ fn reasoning_rule_derivation_evaluation() {
     let r = result.unwrap();
     assert_eq!(r.derived_field, "supports_images");
     assert_eq!(r.value, serde_json::json!(true));
+}
+
+#[test]
+fn resolve_entity_no_extends() {
+    let mut reg = TypeRegistry::new();
+    reg.register_entity(EntityDef {
+        id: TypeId::from("File"),
+        description: None,
+        category: EntityCategory::Domain,
+        fields: vec![FieldDef {
+            name: "path".into(),
+            value_type: "string".into(),
+            required: true,
+            default: None,
+            aliases: vec![],
+            description: None,
+        }],
+        invariants: vec![Constraint::RequiredField {
+            field: "path".into(),
+        }],
+        extends: None,
+    });
+    let resolved = reg.resolve_entity(&TypeId::from("File")).unwrap();
+    assert_eq!(resolved.id, TypeId::from("File"));
+    assert_eq!(resolved.fields.len(), 1);
+    assert_eq!(resolved.invariants.len(), 1);
+}
+
+#[test]
+fn resolve_entity_with_extends_merges_fields() {
+    let mut reg = TypeRegistry::new();
+    reg.register_entity(EntityDef {
+        id: TypeId::from("Base"),
+        description: None,
+        category: EntityCategory::Domain,
+        fields: vec![FieldDef {
+            name: "id".into(),
+            value_type: "string".into(),
+            required: true,
+            default: None,
+            aliases: vec![],
+            description: None,
+        }],
+        invariants: vec![Constraint::RequiredField {
+            field: "id".into(),
+        }],
+        extends: None,
+    });
+    reg.register_entity(EntityDef {
+        id: TypeId::from("Derived"),
+        description: None,
+        category: EntityCategory::Domain,
+        fields: vec![FieldDef {
+            name: "name".into(),
+            value_type: "string".into(),
+            required: false,
+            default: None,
+            aliases: vec![],
+            description: None,
+        }],
+        invariants: vec![],
+        extends: Some(TypeId::from("Base")),
+    });
+    let resolved = reg.resolve_entity(&TypeId::from("Derived")).unwrap();
+    assert_eq!(resolved.id, TypeId::from("Derived"));
+    assert_eq!(resolved.fields.len(), 2);
+    assert_eq!(resolved.invariants.len(), 1);
+}
+
+#[test]
+fn resolve_entity_child_field_overrides_parent() {
+    let mut reg = TypeRegistry::new();
+    reg.register_entity(EntityDef {
+        id: TypeId::from("Base"),
+        description: None,
+        category: EntityCategory::Domain,
+        fields: vec![FieldDef {
+            name: "x".into(),
+            value_type: "integer".into(),
+            required: true,
+            default: None,
+            aliases: vec![],
+            description: None,
+        }],
+        invariants: vec![],
+        extends: None,
+    });
+    reg.register_entity(EntityDef {
+        id: TypeId::from("Derived"),
+        description: None,
+        category: EntityCategory::Domain,
+        fields: vec![FieldDef {
+            name: "x".into(),
+            value_type: "string".into(),
+            required: false,
+            default: None,
+            aliases: vec![],
+            description: None,
+        }],
+        invariants: vec![],
+        extends: Some(TypeId::from("Base")),
+    });
+    let resolved = reg.resolve_entity(&TypeId::from("Derived")).unwrap();
+    assert_eq!(resolved.fields.len(), 1, "child field overrides parent");
+    assert_eq!(resolved.fields[0].value_type, "string");
+    assert!(!resolved.fields[0].required);
 }

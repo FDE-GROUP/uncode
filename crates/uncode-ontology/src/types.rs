@@ -87,12 +87,22 @@ impl Borrow<str> for TypeId {
 }
 
 /// Entity type definition (≈ Palantir Object Type).
+///
+/// Fields, invariants, and extends together define the entity's complete
+/// shape after inheritance resolution. `extends` chains are resolved lazily
+/// by `TypeRegistry::resolve_entity()`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EntityDef {
     pub id: TypeId,
     pub fields: Vec<FieldDef>,
-    /// Category: Domain (domain semantics) or System (resource semantics).
+    /// Entity-level constraints that apply to all actions referencing this entity.
+    #[serde(default)]
+    pub invariants: Vec<Constraint>,
+    /// Parent entity type to inherit fields and invariants from.
+    #[serde(default)]
+    pub extends: Option<TypeId>,
+    /// Category: Domain or System.
     #[serde(default)]
     pub category: EntityCategory,
     pub description: Option<String>,
