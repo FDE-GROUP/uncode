@@ -12,6 +12,7 @@ pub mod find;
 pub mod grep;
 mod grep_rg;
 pub mod hashline;
+pub mod llm_query;
 pub mod local_env;
 pub mod ls;
 #[cfg(test)]
@@ -36,6 +37,7 @@ pub use edit::EditTool;
 pub use find::FindTool;
 pub use grep::GrepTool;
 pub use hashline::{compute_line_hash, parse_anchor, validate_anchors};
+pub use llm_query::LLMQueryTool;
 pub use local_env::{
     LocalExecutionEnv, LocalFileSystem, LocalShell, clean_binary_output, truncate_output,
 };

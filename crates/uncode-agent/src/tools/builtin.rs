@@ -9,8 +9,8 @@ use std::sync::Arc;
 use uncode_core::config::ToolsConfig;
 
 use super::{
-    BashTool, EditTool, FindTool, GrepTool, LsTool, ReadTool, ToolRegistry, WebFetchTool,
-    WebSearchTool, WriteTool,
+    BashTool, EditTool, FindTool, GrepTool, LLMQueryTool, LsTool, ReadTool, ToolRegistry,
+    WebFetchTool, WebSearchTool, WriteTool,
 };
 
 /// Pi `coding-agent` built-in tool names (no web tools).
@@ -61,6 +61,12 @@ pub fn register_coding_tools(
     registry.register("find", Arc::new(FindTool));
     registry.register("ls", Arc::new(LsTool));
     registry.register("web_fetch", Arc::new(WebFetchTool::new()));
+    registry.register(
+        "llm_query",
+        Arc::new(LLMQueryTool::new(std::sync::Arc::new(
+            uncode_ai::model::builtin_models(),
+        ))),
+    );
 
     if let Some(key) = api_keys.get("tavily")
         && let Some(tool) = WebSearchTool::try_new(key)
@@ -178,7 +184,8 @@ mod tests {
         )
         .unwrap();
         assert!(reg.is_active("web_fetch"));
+        assert!(reg.is_active("llm_query"));
         assert!(!reg.is_active("read"));
-        assert_eq!(reg.definitions().len(), 1);
+        assert_eq!(reg.definitions().len(), 2);
     }
 }

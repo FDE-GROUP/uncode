@@ -2,6 +2,22 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Entity category: distinguishes domain semantics from system resource semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityCategory {
+    /// Domain entities: File, Workspace, Module, Action — consumed by the semantic firewall.
+    Domain,
+    /// System resource entities: LLM, Provider, Capability — consumed by model routing / cost governance.
+    System,
+}
+
+impl Default for EntityCategory {
+    fn default() -> Self {
+        Self::Domain
+    }
+}
+
 /// String-based type identifier for debuggability and LLM context clarity.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TypeId(pub String);
@@ -21,6 +37,9 @@ impl std::fmt::Display for TypeId {
 pub struct EntityDef {
     pub id: TypeId,
     pub fields: Vec<FieldDef>,
+    /// Category: Domain (domain semantics) or System (resource semantics).
+    #[serde(default)]
+    pub category: EntityCategory,
     pub description: Option<String>,
 }
 
@@ -30,6 +49,9 @@ pub struct ActionDef {
     pub name: String,
     pub fields: Vec<FieldDef>,
     pub output_type: TypeId,
+    /// Category: Domain (domain actions like read/write) or System (system actions like model_query).
+    #[serde(default)]
+    pub category: EntityCategory,
     pub preconditions: Vec<Constraint>,
     pub effects: Vec<Effect>,
     pub execution_category: ExecutionCategory,
@@ -163,4 +185,24 @@ impl ActionDef {
     pub fn is_read_only(&self) -> bool {
         self.effects.iter().all(|e| e.is_read_only())
     }
+}
+
+/// Link cardinality.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Cardinality {
+    OneToOne,
+    OneToMany,
+    ManyToMany,
+}
+
+/// Link definition — declares a relationship between two entity types.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkDef {
+    pub id: TypeId,
+    pub source_type: TypeId,
+    pub target_type: TypeId,
+    pub cardinality: Cardinality,
+    pub inverse: Option<TypeId>,
+    pub description: Option<String>,
 }

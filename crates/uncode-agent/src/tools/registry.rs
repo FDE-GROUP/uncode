@@ -22,6 +22,7 @@ const RESERVED_TOOL_NAMES: &[&str] = &[
     "ls",
     "web_fetch",
     "web_search",
+    "llm_query",
 ];
 
 pub struct ToolRegistry {

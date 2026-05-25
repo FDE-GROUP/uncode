@@ -181,11 +181,11 @@ impl DeclarativeNormalizer {
         }
     }
 
-    /// Build from an ontology TypeRegistry — eliminates hardcoded mappings.
+    /// Build from an ontology TypeRegistry — uses Domain category only.
     pub fn from_registry(registry: &uncode_ontology::TypeRegistry) -> Self {
         Self {
-            field_mapping: registry.all_field_aliases(),
-            defaults: registry.all_defaults(),
+            field_mapping: registry.field_aliases_by_category(uncode_ontology::EntityCategory::Domain),
+            defaults: registry.defaults_by_category(uncode_ontology::EntityCategory::Domain),
         }
     }
 
