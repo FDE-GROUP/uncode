@@ -46,7 +46,7 @@ fn register_and_get_action() {
         execution_category: ExecutionCategory::ReadOnly,
         fields: vec![FieldDef {
             name: "path".into(),
-            value_type: "string".into(),
+            value_type: TypeId::string(),
             required: true,
             default: None,
             aliases: vec!["file".into(), "filepath".into()],

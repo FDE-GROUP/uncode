@@ -46,7 +46,21 @@ impl std::fmt::Display for EntityCategory {
 pub struct TypeId(pub String);
 
 impl TypeId {
-    pub const STRING: Self = TypeId(String::new());
+    pub fn string() -> Self {
+        TypeId("string".into())
+    }
+    pub fn number() -> Self {
+        TypeId("number".into())
+    }
+    pub fn boolean() -> Self {
+        TypeId("boolean".into())
+    }
+    pub fn unit() -> Self {
+        TypeId("unit".into())
+    }
+    pub fn any() -> Self {
+        TypeId("any".into())
+    }
 }
 
 impl std::fmt::Display for TypeId {
@@ -129,7 +143,7 @@ pub struct ActionDef {
 #[serde(deny_unknown_fields)]
 pub struct FieldDef {
     pub name: String,
-    pub value_type: String,
+    pub value_type: TypeId,
     pub required: bool,
     #[serde(default)]
     pub default: Option<serde_json::Value>,
@@ -180,6 +194,13 @@ pub enum Constraint {
     RegexMatch {
         field: String,
         pattern: String,
+        description: String,
+        #[serde(default = "default_hard")]
+        level: ConstraintLevel,
+    },
+    Referential {
+        field: String,
+        target_type: String,
         description: String,
         #[serde(default = "default_hard")]
         level: ConstraintLevel,

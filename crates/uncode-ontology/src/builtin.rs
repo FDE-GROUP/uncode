@@ -52,7 +52,7 @@ fn entity_file() -> EntityDef {
         fields: vec![
             FieldDef {
                 name: "path".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec![
@@ -65,7 +65,7 @@ fn entity_file() -> EntityDef {
             },
             FieldDef {
                 name: "content".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: false,
                 default: None,
                 aliases: vec!["body".into()],
@@ -86,7 +86,7 @@ fn entity_workspace() -> EntityDef {
         category: EntityCategory::Domain,
         fields: vec![FieldDef {
             name: "root".into(),
-            value_type: "string".into(),
+            value_type: TypeId::string(),
             required: true,
             default: None,
             aliases: vec!["dir".into(), "directory".into(), "folder".into()],
@@ -104,7 +104,7 @@ fn entity_module() -> EntityDef {
         category: EntityCategory::Domain,
         fields: vec![FieldDef {
             name: "name".into(),
-            value_type: "string".into(),
+            value_type: TypeId::string(),
             required: true,
             default: None,
             aliases: vec![],
@@ -123,7 +123,7 @@ fn action_read() -> ActionDef {
         fields: vec![
             FieldDef {
                 name: "path".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec![
@@ -136,7 +136,7 @@ fn action_read() -> ActionDef {
             },
             FieldDef {
                 name: "offset".into(),
-                value_type: "integer".into(),
+                value_type: TypeId::number(),
                 required: false,
                 default: Some(serde_json::json!(0)),
                 aliases: vec![],
@@ -144,14 +144,14 @@ fn action_read() -> ActionDef {
             },
             FieldDef {
                 name: "limit".into(),
-                value_type: "integer".into(),
+                value_type: TypeId::number(),
                 required: false,
                 default: None,
                 aliases: vec![],
                 description: None,
             },
         ],
-        output_type: TypeId::STRING,
+        output_type: TypeId::string(),
         preconditions: vec![Constraint::RequiredField {
             field: "path".into(),
         }],
@@ -171,7 +171,7 @@ fn action_write() -> ActionDef {
         fields: vec![
             FieldDef {
                 name: "path".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec![
@@ -184,14 +184,14 @@ fn action_write() -> ActionDef {
             },
             FieldDef {
                 name: "content".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec!["body".into()],
                 description: Some("Content to write".into()),
             },
         ],
-        output_type: TypeId::STRING,
+        output_type: TypeId::string(),
         preconditions: vec![
             Constraint::RequiredField {
                 field: "path".into(),
@@ -215,7 +215,7 @@ fn action_edit() -> ActionDef {
         category: EntityCategory::Domain,
         fields: vec![FieldDef {
             name: "path".into(),
-            value_type: "string".into(),
+            value_type: TypeId::string(),
             required: true,
             default: None,
             aliases: vec![
@@ -226,7 +226,7 @@ fn action_edit() -> ActionDef {
             ],
             description: Some("File path to edit".into()),
         }],
-        output_type: TypeId::STRING,
+        output_type: TypeId::string(),
         preconditions: vec![Constraint::RequiredField {
             field: "path".into(),
         }],
@@ -246,7 +246,7 @@ fn action_grep() -> ActionDef {
         fields: vec![
             FieldDef {
                 name: "pattern".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec!["query".into(), "regex".into(), "search".into()],
@@ -254,7 +254,7 @@ fn action_grep() -> ActionDef {
             },
             FieldDef {
                 name: "path".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: false,
                 default: None,
                 aliases: vec![
@@ -267,14 +267,14 @@ fn action_grep() -> ActionDef {
             },
             FieldDef {
                 name: "case_sensitive".into(),
-                value_type: "boolean".into(),
+                value_type: TypeId::boolean(),
                 required: false,
                 default: Some(serde_json::json!(false)),
                 aliases: vec![],
                 description: None,
             },
         ],
-        output_type: TypeId::STRING,
+        output_type: TypeId::string(),
         preconditions: vec![Constraint::RequiredField {
             field: "pattern".into(),
         }],
@@ -293,7 +293,7 @@ fn action_find() -> ActionDef {
         category: EntityCategory::Domain,
         fields: vec![FieldDef {
             name: "path".into(),
-            value_type: "string".into(),
+            value_type: TypeId::string(),
             required: false,
             default: None,
             aliases: vec![
@@ -304,7 +304,7 @@ fn action_find() -> ActionDef {
             ],
             description: None,
         }],
-        output_type: TypeId::STRING,
+        output_type: TypeId::string(),
         preconditions: vec![],
         effects: vec![Effect::Read {
             target: "Workspace".into(),
@@ -322,7 +322,7 @@ fn action_ls() -> ActionDef {
         fields: vec![
             FieldDef {
                 name: "path".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: false,
                 default: None,
                 aliases: vec![
@@ -335,14 +335,14 @@ fn action_ls() -> ActionDef {
             },
             FieldDef {
                 name: "show_hidden".into(),
-                value_type: "boolean".into(),
+                value_type: TypeId::boolean(),
                 required: false,
                 default: Some(serde_json::json!(false)),
                 aliases: vec![],
                 description: None,
             },
         ],
-        output_type: TypeId::STRING,
+        output_type: TypeId::string(),
         preconditions: vec![],
         effects: vec![Effect::Read {
             target: "Workspace".into(),
@@ -360,7 +360,7 @@ fn action_bash() -> ActionDef {
         fields: vec![
             FieldDef {
                 name: "command".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec!["cmd".into(), "command_line".into(), "script".into()],
@@ -368,7 +368,7 @@ fn action_bash() -> ActionDef {
             },
             FieldDef {
                 name: "workdir".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: false,
                 default: None,
                 aliases: vec![],
@@ -376,14 +376,14 @@ fn action_bash() -> ActionDef {
             },
             FieldDef {
                 name: "timeout".into(),
-                value_type: "integer".into(),
+                value_type: TypeId::number(),
                 required: false,
                 default: None,
                 aliases: vec![],
                 description: None,
             },
         ],
-        output_type: TypeId::STRING,
+        output_type: TypeId::string(),
         preconditions: vec![Constraint::RequiredField {
             field: "command".into(),
         }],
@@ -401,13 +401,13 @@ fn action_web_fetch() -> ActionDef {
         category: EntityCategory::Domain,
         fields: vec![FieldDef {
             name: "url".into(),
-            value_type: "string".into(),
+            value_type: TypeId::string(),
             required: true,
             default: None,
             aliases: vec!["uri".into(), "link".into(), "href".into()],
             description: Some("URL to fetch".into()),
         }],
-        output_type: TypeId::STRING,
+        output_type: TypeId::string(),
         preconditions: vec![Constraint::RequiredField {
             field: "url".into(),
         }],
@@ -425,13 +425,13 @@ fn action_web_search() -> ActionDef {
         category: EntityCategory::Domain,
         fields: vec![FieldDef {
             name: "query".into(),
-            value_type: "string".into(),
+            value_type: TypeId::string(),
             required: true,
             default: None,
             aliases: vec!["q".into(), "term".into(), "search".into()],
             description: Some("Search query".into()),
         }],
-        output_type: TypeId::STRING,
+        output_type: TypeId::string(),
         preconditions: vec![Constraint::RequiredField {
             field: "query".into(),
         }],
@@ -494,7 +494,7 @@ fn entity_llm() -> EntityDef {
         fields: vec![
             FieldDef {
                 name: "model_id".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec!["model".into(), "id".into()],
@@ -502,7 +502,7 @@ fn entity_llm() -> EntityDef {
             },
             FieldDef {
                 name: "provider".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec!["vendor".into()],
@@ -510,7 +510,7 @@ fn entity_llm() -> EntityDef {
             },
             FieldDef {
                 name: "context_window".into(),
-                value_type: "integer".into(),
+                value_type: TypeId::number(),
                 required: true,
                 default: Some(serde_json::json!(128_000)),
                 aliases: vec!["max_context".into(), "context_length".into()],
@@ -518,7 +518,7 @@ fn entity_llm() -> EntityDef {
             },
             FieldDef {
                 name: "max_output_tokens".into(),
-                value_type: "integer".into(),
+                value_type: TypeId::number(),
                 required: false,
                 default: Some(serde_json::json!(8192)),
                 aliases: vec!["max_tokens".into(), "max_completion_tokens".into()],
@@ -526,7 +526,7 @@ fn entity_llm() -> EntityDef {
             },
             FieldDef {
                 name: "supports_vision".into(),
-                value_type: "boolean".into(),
+                value_type: TypeId::boolean(),
                 required: false,
                 default: Some(serde_json::json!(false)),
                 aliases: vec!["vision".into(), "image_input".into()],
@@ -534,7 +534,7 @@ fn entity_llm() -> EntityDef {
             },
             FieldDef {
                 name: "supports_reasoning".into(),
-                value_type: "boolean".into(),
+                value_type: TypeId::boolean(),
                 required: false,
                 default: Some(serde_json::json!(false)),
                 aliases: vec!["reasoning".into(), "thinking".into()],
@@ -542,7 +542,7 @@ fn entity_llm() -> EntityDef {
             },
             FieldDef {
                 name: "supports_tools".into(),
-                value_type: "boolean".into(),
+                value_type: TypeId::boolean(),
                 required: false,
                 default: Some(serde_json::json!(true)),
                 aliases: vec!["tool_use".into(), "function_calling".into()],
@@ -550,7 +550,7 @@ fn entity_llm() -> EntityDef {
             },
             FieldDef {
                 name: "api_protocol".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: false,
                 default: Some(serde_json::json!("openai-completions")),
                 aliases: vec!["api".into(), "protocol".into()],
@@ -558,7 +558,7 @@ fn entity_llm() -> EntityDef {
             },
             FieldDef {
                 name: "pricing_input_per_million".into(),
-                value_type: "number".into(),
+                value_type: TypeId::number(),
                 required: false,
                 default: Some(serde_json::json!(0.0)),
                 aliases: vec!["input_cost".into()],
@@ -566,7 +566,7 @@ fn entity_llm() -> EntityDef {
             },
             FieldDef {
                 name: "pricing_output_per_million".into(),
-                value_type: "number".into(),
+                value_type: TypeId::number(),
                 required: false,
                 default: Some(serde_json::json!(0.0)),
                 aliases: vec!["output_cost".into()],
@@ -586,7 +586,7 @@ fn entity_provider() -> EntityDef {
         fields: vec![
             FieldDef {
                 name: "provider_id".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec!["provider".into(), "vendor".into()],
@@ -594,7 +594,7 @@ fn entity_provider() -> EntityDef {
             },
             FieldDef {
                 name: "default_api_protocol".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec!["api".into(), "protocol".into()],
@@ -602,7 +602,7 @@ fn entity_provider() -> EntityDef {
             },
             FieldDef {
                 name: "base_url".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec!["endpoint".into(), "api_url".into()],
@@ -622,7 +622,7 @@ fn entity_capability() -> EntityDef {
         fields: vec![
             FieldDef {
                 name: "name".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec!["capability".into()],
@@ -632,7 +632,7 @@ fn entity_capability() -> EntityDef {
             },
             FieldDef {
                 name: "capability_type".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec!["type".into(), "category".into()],
@@ -654,7 +654,7 @@ fn action_llm_query() -> ActionDef {
         fields: vec![
             FieldDef {
                 name: "query".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec!["query_type".into(), "type".into()],
@@ -662,7 +662,7 @@ fn action_llm_query() -> ActionDef {
             },
             FieldDef {
                 name: "model_id".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: false,
                 default: None,
                 aliases: vec!["model".into()],
@@ -670,7 +670,7 @@ fn action_llm_query() -> ActionDef {
             },
             FieldDef {
                 name: "min_context_window".into(),
-                value_type: "integer".into(),
+                value_type: TypeId::number(),
                 required: false,
                 default: None,
                 aliases: vec!["min_ctx".into()],
@@ -678,7 +678,7 @@ fn action_llm_query() -> ActionDef {
             },
             FieldDef {
                 name: "context_tokens".into(),
-                value_type: "integer".into(),
+                value_type: TypeId::number(),
                 required: false,
                 default: None,
                 aliases: vec![],
@@ -686,7 +686,7 @@ fn action_llm_query() -> ActionDef {
             },
             FieldDef {
                 name: "max_results".into(),
-                value_type: "integer".into(),
+                value_type: TypeId::number(),
                 required: false,
                 default: Some(serde_json::json!(3)),
                 aliases: vec![],
@@ -713,7 +713,7 @@ fn action_model_switch() -> ActionDef {
         fields: vec![
             FieldDef {
                 name: "model_id".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: true,
                 default: None,
                 aliases: vec!["model".into(), "target_model".into()],
@@ -721,7 +721,7 @@ fn action_model_switch() -> ActionDef {
             },
             FieldDef {
                 name: "reason".into(),
-                value_type: "string".into(),
+                value_type: TypeId::string(),
                 required: false,
                 default: None,
                 aliases: vec!["rationale".into()],
