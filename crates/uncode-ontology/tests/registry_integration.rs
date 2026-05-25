@@ -297,6 +297,6 @@ fn resolve_entity_child_field_overrides_parent() {
     });
     let resolved = reg.resolve_entity(&TypeId::from("Derived")).unwrap();
     assert_eq!(resolved.fields.len(), 1, "child field overrides parent");
-    assert_eq!(resolved.fields[0].value_type, "string");
+    assert_eq!(resolved.fields[0].value_type, TypeId::from("string"));
     assert!(!resolved.fields[0].required);
 }

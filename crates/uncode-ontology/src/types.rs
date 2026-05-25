@@ -294,7 +294,7 @@ impl ActionDef {
             let mut prop = serde_json::Map::new();
             prop.insert(
                 "type".into(),
-                serde_json::Value::String(field.value_type.clone()),
+                serde_json::Value::String(field.value_type.0.clone()),
             );
             if let Some(ref desc) = field.description {
                 prop.insert(
@@ -438,7 +438,7 @@ mod tests {
         let action = ActionDef {
             name: "empty".into(),
             fields: vec![],
-            output_type: TypeId::STRING,
+            output_type: TypeId::string(),
             category: EntityCategory::Domain,
             preconditions: vec![],
             effects: vec![],
@@ -457,7 +457,7 @@ mod tests {
         let action = ActionDef {
             name: "read".into(),
             fields: vec![mk_field("path", "string", true)],
-            output_type: TypeId::STRING,
+            output_type: TypeId::string(),
             category: EntityCategory::Domain,
             preconditions: vec![],
             effects: vec![],
@@ -490,7 +490,7 @@ mod tests {
                     description: Some("跳过的行数".into()),
                 },
             ],
-            output_type: TypeId::STRING,
+            output_type: TypeId::string(),
             category: EntityCategory::Domain,
             preconditions: vec![],
             effects: vec![],
@@ -522,7 +522,7 @@ mod tests {
                 aliases: vec![],
                 description: Some("行号#哈希锚点".into()),
             }],
-            output_type: TypeId::STRING,
+            output_type: TypeId::string(),
             category: EntityCategory::Domain,
             preconditions: vec![],
             effects: vec![],
