@@ -1,6 +1,16 @@
 //! Constraint evaluation engine.
 
+use std::collections::HashMap;
+
+use regex::Regex;
+
 use crate::types::{Constraint, ConstraintLevel};
+
+/// Callback for custom constraint validation.
+///
+/// Receives a `FieldLookup` for the action's arguments and returns a `ConstraintResult`.
+/// Register callbacks via `evaluate_constraint_with_rules`'s `custom_rules` map.
+pub type CustomRuleFn = Box<dyn Fn(&dyn FieldLookup) -> ConstraintResult + Send + Sync>;
 
 /// Result of evaluating a single constraint.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,7 +88,7 @@ impl FieldLookup for serde_json::Map<String, serde_json::Value> {
     }
 }
 
-/// Evaluate a constraint against field values.
+/// Evaluate a constraint against field values (no custom rules).
 ///
 /// # Examples
 ///
@@ -105,9 +115,22 @@ impl FieldLookup for serde_json::Map<String, serde_json::Value> {
 /// let result = evaluate_constraint(&constraint, &fields);
 /// assert!(!result.is_pass());
 /// ```
-pub fn evaluate_constraint<F: FieldLookup + ?Sized>(
+pub fn evaluate_constraint<F: FieldLookup>(
     constraint: &Constraint,
     fields: &F,
+) -> ConstraintResult {
+    evaluate_constraint_with_rules(constraint, fields, None)
+}
+
+/// Evaluate a constraint against field values, with optional custom rule callbacks.
+///
+/// When a `Constraint::CustomRule { name, .. }` is encountered and `custom_rules`
+/// contains a matching entry, the callback is invoked.  If no callback matches, the
+/// constraint fails (Hard) or warns (Soft).
+pub fn evaluate_constraint_with_rules<F: FieldLookup>(
+    constraint: &Constraint,
+    fields: &F,
+    custom_rules: Option<&HashMap<String, CustomRuleFn>>,
 ) -> ConstraintResult {
     match constraint {
         Constraint::RequiredField { field } => {
@@ -238,9 +261,8 @@ pub fn evaluate_constraint<F: FieldLookup + ?Sized>(
             let Some(value) = fields.get_field(field) else {
                 return ConstraintResult::Pass;
             };
-            let matched = value
-                .as_str()
-                .map_or(false, |s| s.contains(pattern.as_str()));
+            let value_str = value.as_str().unwrap_or_default();
+            let matched = Regex::new(pattern).map_or(false, |re| re.is_match(value_str));
             if matched {
                 ConstraintResult::Pass
             } else {
@@ -264,13 +286,25 @@ pub fn evaluate_constraint<F: FieldLookup + ?Sized>(
             name,
             description,
             level,
-        } => {
-            // Custom rule evaluation requires a callback mechanism that will be added later.
-            // Currently passes unconditionally; future versions will invoke registered
-            // custom validators based on the rule name.
-            let _ = (name, description, level);
-            ConstraintResult::Pass
-        }
+        } => match custom_rules.and_then(|r| r.get(name.as_str())) {
+            Some(callback) => callback(fields as &dyn FieldLookup),
+            None => {
+                let detail =
+                    format!("no callback registered for custom rule '{name}': {description}");
+                match level {
+                    ConstraintLevel::Soft => ConstraintResult::Warn {
+                        constraint: "custom_rule".into(),
+                        field: name.clone(),
+                        detail,
+                    },
+                    ConstraintLevel::Hard => ConstraintResult::Fail {
+                        constraint: "custom_rule".into(),
+                        field: name.clone(),
+                        detail,
+                    },
+                }
+            }
+        },
     }
 }
 
@@ -312,6 +346,93 @@ mod tests {
         };
         let r = evaluate_constraint(&c, &fields());
         assert!(matches!(r, ConstraintResult::Fail { .. }));
+    }
+
+    #[test]
+    fn test_regex_match_pass() {
+        let c = Constraint::RegexMatch {
+            field: "path".into(),
+            pattern: r"^src/.+\.rs$".into(),
+            description: "must be a Rust source file".into(),
+            level: ConstraintLevel::Hard,
+        };
+        assert!(evaluate_constraint(&c, &fields()).is_pass());
+    }
+
+    #[test]
+    fn test_regex_match_fail() {
+        let c = Constraint::RegexMatch {
+            field: "path".into(),
+            pattern: r"\.py$".into(),
+            description: "must be Python".into(),
+            level: ConstraintLevel::Hard,
+        };
+        let r = evaluate_constraint(&c, &fields());
+        assert!(!r.is_pass());
+    }
+
+    #[test]
+    fn test_regex_match_missing_field_passes() {
+        let c = Constraint::RegexMatch {
+            field: "nonexistent".into(),
+            pattern: r".".into(),
+            description: ".".into(),
+            level: ConstraintLevel::Hard,
+        };
+        assert!(evaluate_constraint(&c, &fields()).is_pass());
+    }
+
+    #[test]
+    fn test_regex_match_invalid_regex_fails() {
+        let c = Constraint::RegexMatch {
+            field: "path".into(),
+            pattern: "[".into(), // unmatched bracket
+            description: "bad".into(),
+            level: ConstraintLevel::Hard,
+        };
+        assert!(!evaluate_constraint(&c, &fields()).is_pass());
+    }
+
+    #[test]
+    fn test_custom_rule_with_callback() {
+        use std::collections::HashMap;
+        let c = Constraint::CustomRule {
+            name: "my_rule".into(),
+            description: "test rule".into(),
+            level: ConstraintLevel::Hard,
+        };
+        let mut rules: HashMap<String, CustomRuleFn> = HashMap::new();
+        rules.insert(
+            "my_rule".into(),
+            Box::new(|f| {
+                if f.get_field("path")
+                    .map_or(false, |v| v.as_str().unwrap_or("") == "src/main.rs")
+                {
+                    ConstraintResult::Pass
+                } else {
+                    ConstraintResult::Fail {
+                        constraint: "my_rule".into(),
+                        field: "path".into(),
+                        detail: "bad path".into(),
+                    }
+                }
+            }),
+        );
+        let result = evaluate_constraint_with_rules(&c, &fields(), Some(&rules));
+        assert!(result.is_pass());
+    }
+
+    #[test]
+    fn test_custom_rule_no_callback_fails() {
+        use std::collections::HashMap;
+        let c = Constraint::CustomRule {
+            name: "missing_rule".into(),
+            description: "no callback".into(),
+            level: ConstraintLevel::Hard,
+        };
+        let rules: HashMap<String, CustomRuleFn> = HashMap::new();
+        let result = evaluate_constraint_with_rules(&c, &fields(), Some(&rules));
+        assert!(!result.is_pass());
     }
 
     #[test]

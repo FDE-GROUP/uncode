@@ -18,7 +18,9 @@ pub mod reasoner;
 pub mod registry;
 pub mod types;
 
-pub use evaluate::{ConstraintResult, evaluate_constraint};
+pub use evaluate::{
+    ConstraintResult, CustomRuleFn, evaluate_constraint, evaluate_constraint_with_rules,
+};
 pub use reasoner::{
     DerivationResult, TraversalResult, evaluate_all_derivations, evaluate_derivation,
     evaluate_traversal,

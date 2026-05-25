@@ -10,6 +10,7 @@ publish = false
 authors.workspace = true
 
 [dependencies]
+regex.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 
