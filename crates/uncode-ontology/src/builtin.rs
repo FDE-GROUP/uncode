@@ -3,12 +3,15 @@
 use crate::registry::TypeRegistry;
 use crate::types::{
     ActionDef, ArithmeticOp, Cardinality, Constraint, DerivationExpr, Effect, EntityCategory,
-    EntityDef, ExecutionCategory, FieldDef, LinkDef, ReasoningRule, TypeId,
+    EntityDef, ExecutionCategory, FieldDef, LinkDef, OntologyVersion, ReasoningRule, TypeId,
 };
+
+/// Current ontology version — bump on schema changes.
+const ONTOLOGY_VERSION: OntologyVersion = OntologyVersion::new(1, 0, 0);
 
 /// Build the complete coding agent domain ontology.
 pub fn coding_agent_ontology() -> TypeRegistry {
-    let mut reg = TypeRegistry::new();
+    let mut reg = TypeRegistry::with_version(ONTOLOGY_VERSION);
 
     // Entities
     reg.register_entity(entity_file());
@@ -433,7 +436,7 @@ fn action_web_search() -> ActionDef {
 
 /// Build the system resource ontology — LLM, Provider, Capability.
 pub fn system_resource_ontology() -> TypeRegistry {
-    let mut reg = TypeRegistry::new();
+    let mut reg = TypeRegistry::with_version(ONTOLOGY_VERSION);
 
     reg.register_entity(entity_llm());
     reg.register_entity(entity_provider());
@@ -1066,5 +1069,78 @@ mod tests {
         assert_eq!(link.source_type, TypeId("LLM".into()));
         assert_eq!(link.target_type, TypeId("Capability".into()));
         assert_eq!(link.cardinality, Cardinality::OneToMany);
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // Version Tests
+    // ═══════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_ontology_version_is_set() {
+        let reg = full_ontology();
+        assert_eq!(reg.version.major, 1);
+        assert_eq!(reg.version.minor, 0);
+        assert_eq!(reg.version.patch, 0);
+        assert_eq!(reg.version.to_string(), "1.0.0");
+    }
+
+    #[test]
+    fn test_merge_takes_higher_version() {
+        let reg1 = TypeRegistry::with_version(OntologyVersion::new(1, 2, 0));
+        let reg2 = TypeRegistry::with_version(OntologyVersion::new(1, 3, 0));
+        let merged = reg1.merge(reg2);
+        assert_eq!(merged.version, OntologyVersion::new(1, 3, 0));
+    }
+
+    #[test]
+    fn test_merge_keeps_higher_on_left() {
+        let reg1 = TypeRegistry::with_version(OntologyVersion::new(2, 0, 0));
+        let reg2 = TypeRegistry::with_version(OntologyVersion::new(1, 9, 9));
+        let merged = reg1.merge(reg2);
+        assert_eq!(merged.version, OntologyVersion::new(2, 0, 0));
+    }
+
+    #[test]
+    fn test_version_compatibility_same_major() {
+        let v = OntologyVersion::new(1, 2, 3);
+        assert!(v.is_compatible_with(&OntologyVersion::new(1, 2, 3)));
+        assert!(v.is_compatible_with(&OntologyVersion::new(1, 2, 0)));
+        assert!(v.is_compatible_with(&OntologyVersion::new(1, 1, 9)));
+        assert!(!v.is_compatible_with(&OntologyVersion::new(1, 3, 0)));
+    }
+
+    #[test]
+    fn test_version_compatibility_different_major() {
+        let v = OntologyVersion::new(1, 5, 0);
+        assert!(!v.is_compatible_with(&OntologyVersion::new(2, 0, 0)));
+        assert!(!v.is_compatible_with(&OntologyVersion::new(0, 9, 9)));
+    }
+
+    #[test]
+    fn test_registry_version_check() {
+        let reg = full_ontology();
+        assert!(reg.is_version_compatible(&OntologyVersion::new(1, 0, 0)));
+        assert!(!reg.is_version_compatible(&OntologyVersion::new(2, 0, 0)));
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // ReasoningRule Tests
+    // ═══════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_full_ontology_has_5_reasoning_rules() {
+        let reg = full_ontology();
+        assert_eq!(
+            reg.reasoning_rules.len(),
+            5,
+            "1 domain + 4 system reasoning rules"
+        );
+    }
+
+    #[test]
+    fn test_reasoning_rules_for_llm() {
+        let reg = full_ontology();
+        let rules = reg.reasoning_rules_for_entity(&TypeId("LLM".into()));
+        assert!(rules.len() >= 3, "LLM should have traversal + derivation rules");
     }
 }

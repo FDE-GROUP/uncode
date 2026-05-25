@@ -3,12 +3,13 @@
 use std::collections::HashMap;
 
 use crate::types::{
-    ActionDef, EntityCategory, EntityDef, LinkDef, ReasoningRule, TypeId,
+    ActionDef, EntityCategory, EntityDef, LinkDef, OntologyVersion, ReasoningRule, TypeId,
 };
 
 /// Central type registry holding all entity, action, link, and reasoning definitions.
 #[derive(Debug, Clone)]
 pub struct TypeRegistry {
+    pub version: OntologyVersion,
     pub entities: HashMap<TypeId, EntityDef>,
     pub actions: HashMap<String, ActionDef>,
     pub links: HashMap<TypeId, LinkDef>,
@@ -18,6 +19,18 @@ pub struct TypeRegistry {
 impl TypeRegistry {
     pub fn new() -> Self {
         Self {
+            version: OntologyVersion::new(0, 1, 0),
+            entities: HashMap::new(),
+            actions: HashMap::new(),
+            links: HashMap::new(),
+            reasoning_rules: HashMap::new(),
+        }
+    }
+
+    /// Create with explicit version.
+    pub fn with_version(version: OntologyVersion) -> Self {
+        Self {
+            version,
             entities: HashMap::new(),
             actions: HashMap::new(),
             links: HashMap::new(),
@@ -47,7 +60,11 @@ impl TypeRegistry {
     }
 
     /// Merge another registry into this one. Conflicting keys are overwritten.
+    /// Takes the higher version.
     pub fn merge(mut self, other: TypeRegistry) -> Self {
+        if other.version > self.version {
+            self.version = other.version;
+        }
         for (id, entity) in other.entities {
             self.entities.insert(id, entity);
         }
@@ -88,6 +105,11 @@ impl TypeRegistry {
                 ReasoningRule::Derivation { entity_type: et, .. } => et == entity_type,
             })
             .collect()
+    }
+
+    /// Check if this registry's version is compatible with a required version.
+    pub fn is_version_compatible(&self, required: &OntologyVersion) -> bool {
+        self.version.is_compatible_with(required)
     }
 
     /// Query links where source_type matches the given TypeId.

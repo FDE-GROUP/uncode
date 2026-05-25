@@ -26,5 +26,6 @@ pub use reasoner::{
 pub use registry::TypeRegistry;
 pub use types::{
     ActionDef, ArithmeticOp, Cardinality, Constraint, ConstraintLevel, DerivationExpr, Effect,
-    EntityCategory, EntityDef, ExecutionCategory, FieldDef, LinkDef, ReasoningRule, TypeId,
+    EntityCategory, EntityDef, ExecutionCategory, FieldDef, LinkDef, OntologyVersion,
+    ReasoningRule, TypeId,
 };

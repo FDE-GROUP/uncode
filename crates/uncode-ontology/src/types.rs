@@ -275,6 +275,7 @@ pub enum DerivationExpr {
     Alias { source: String },
 }
 
+/// Arithmetic operation for derivation expressions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ArithmeticOp {
@@ -282,4 +283,41 @@ pub enum ArithmeticOp {
     Subtract,
     Multiply,
     Divide,
+}
+
+/// Ontology version — semver-compatible.
+///
+/// Version bump rules:
+/// - **Patch** (0.0.x): bug fixes, no schema change
+/// - **Minor** (0.x.0): backward-compatible additions (new entities, new fields with defaults, new links/rules)
+/// - **Major** (x.0.0): breaking changes (removed entities/fields, changed field types)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct OntologyVersion {
+    pub major: u32,
+    pub minor: u32,
+    pub patch: u32,
+}
+
+impl OntologyVersion {
+    pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
+        Self {
+            major,
+            minor,
+            patch,
+        }
+    }
+
+    /// Two versions are compatible if they share the same major version
+    /// and the stored version is >= the required version at the minor level.
+    pub fn is_compatible_with(&self, required: &OntologyVersion) -> bool {
+        self.major == required.major
+            && (self.minor > required.minor
+                || (self.minor == required.minor && self.patch >= required.patch))
+    }
+}
+
+impl std::fmt::Display for OntologyVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
 }
