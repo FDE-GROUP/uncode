@@ -249,6 +249,53 @@ impl ActionDef {
     pub fn is_read_only(&self) -> bool {
         self.effects.iter().all(|e| e.is_read_only())
     }
+
+    /// Generate JSON Schema for this action's parameters from `fields`.
+    ///
+    /// Returns a JSON Schema `{ "type": "object", "properties": { ... }, "required": [ ... ] }`
+    /// suitable for use as `ToolDefinition.parameters`.
+    #[must_use]
+    pub fn to_json_schema(&self) -> serde_json::Value {
+        let mut properties = serde_json::Map::new();
+        let mut required = Vec::new();
+
+        for field in &self.fields {
+            let mut prop = serde_json::Map::new();
+            prop.insert(
+                "type".into(),
+                serde_json::Value::String(field.value_type.clone()),
+            );
+            if let Some(ref desc) = field.description {
+                prop.insert(
+                    "description".into(),
+                    serde_json::Value::String(desc.clone()),
+                );
+            }
+            if field.required {
+                required.push(serde_json::Value::String(field.name.clone()));
+            }
+            properties.insert(field.name.clone(), serde_json::Value::Object(prop));
+        }
+
+        let mut schema = serde_json::Map::new();
+        schema.insert("type".into(), serde_json::Value::String("object".into()));
+        schema.insert(
+            "additionalProperties".into(),
+            serde_json::Value::Bool(false),
+        );
+        schema.insert(
+            "properties".into(),
+            serde_json::Value::Object(properties),
+        );
+        if !required.is_empty() {
+            schema.insert(
+                "required".into(),
+                serde_json::Value::Array(required),
+            );
+        }
+
+        serde_json::Value::Object(schema)
+    }
 }
 
 /// Link cardinality.
@@ -341,6 +388,125 @@ pub enum DerivationExpr {
     },
     /// Copy a field value to another field (alias).
     Alias { source: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn mk_field(name: &str, value_type: &str, required: bool) -> FieldDef {
+        FieldDef {
+            name: name.into(),
+            value_type: value_type.into(),
+            required,
+            default: None,
+            aliases: vec![],
+            description: None,
+        }
+    }
+
+    // ── to_json_schema tests ──
+
+    #[test]
+    fn test_to_json_schema_empty() {
+        let action = ActionDef {
+            name: "empty".into(),
+            fields: vec![],
+            output_type: TypeId::STRING,
+            category: EntityCategory::Domain,
+            preconditions: vec![],
+            effects: vec![],
+            execution_category: ExecutionCategory::ReadOnly,
+            description: None,
+        };
+        let schema = action.to_json_schema();
+        assert_eq!(schema["type"], "object");
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(schema["properties"], json!({}));
+        assert!(schema.get("required").is_none());
+    }
+
+    #[test]
+    fn test_to_json_schema_single_field() {
+        let action = ActionDef {
+            name: "read".into(),
+            fields: vec![mk_field("path", "string", true)],
+            output_type: TypeId::STRING,
+            category: EntityCategory::Domain,
+            preconditions: vec![],
+            effects: vec![],
+            execution_category: ExecutionCategory::ReadOnly,
+            description: None,
+        };
+        let schema = action.to_json_schema();
+        assert_eq!(schema["properties"]["path"]["type"], "string");
+        let required: Vec<_> = schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, vec!["path"]);
+    }
+
+    #[test]
+    fn test_to_json_schema_optional_field() {
+        let action = ActionDef {
+            name: "read".into(),
+            fields: vec![
+                mk_field("path", "string", true),
+                FieldDef {
+                    name: "offset".into(),
+                    value_type: "integer".into(),
+                    required: false,
+                    default: Some(json!(0)),
+                    aliases: vec![],
+                    description: Some("跳过的行数".into()),
+                },
+            ],
+            output_type: TypeId::STRING,
+            category: EntityCategory::Domain,
+            preconditions: vec![],
+            effects: vec![],
+            execution_category: ExecutionCategory::ReadOnly,
+            description: None,
+        };
+        let schema = action.to_json_schema();
+        assert_eq!(schema["properties"]["offset"]["type"], "integer");
+        assert_eq!(schema["properties"]["offset"]["description"], "跳过的行数");
+        // offset is optional, should not appear in required
+        let required: Vec<_> = schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(required, vec!["path"]);
+    }
+
+    #[test]
+    fn test_to_json_schema_boolean_field() {
+        let action = ActionDef {
+            name: "read".into(),
+            fields: vec![FieldDef {
+                name: "hashline".into(),
+                value_type: "boolean".into(),
+                required: false,
+                default: Some(json!(false)),
+                aliases: vec![],
+                description: Some("行号#哈希锚点".into()),
+            }],
+            output_type: TypeId::STRING,
+            category: EntityCategory::Domain,
+            preconditions: vec![],
+            effects: vec![],
+            execution_category: ExecutionCategory::ReadOnly,
+            description: None,
+        };
+        let schema = action.to_json_schema();
+        assert_eq!(schema["properties"]["hashline"]["type"], "boolean");
+    }
 }
 
 /// Arithmetic operation for derivation expressions.
