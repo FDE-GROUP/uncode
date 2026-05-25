@@ -535,10 +535,10 @@ impl SurrealSessionStore {
         self.init_session(&new_id, &header.model, &header.working_dir)
             .await?;
 
-        self.db
-            .query("UPDATE session SET parent_session = $pid WHERE id = $sid")
-            .bind(("pid", parent_id.to_string()))
-            .bind(("sid", new_id.clone()))
+        let _: Option<serde_json::Value> = self
+            .db
+            .update(("session", new_id.clone()))
+            .merge(serde_json::json!({"parent_session": parent_id.to_string()}))
             .await
             .map_err(db_err("set parent_session"))?;
 

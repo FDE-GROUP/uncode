@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use chrono::{TimeDelta, Utc};
     use uncode_core::message::Message;
     use uncode_core::session::{MessageEntry, SessionEntry};
 
@@ -560,5 +561,151 @@ mod tests {
 
         let header = store.read_header("s1").await.unwrap();
         assert_eq!(header.title.as_deref(), Some("New Title"));
+    }
+
+    // ── P0: Untested methods ───────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_build_tree_single_session() {
+        let store = new_store().await;
+        store.init_session("s1", "m1", "/test").await.unwrap();
+        let entry = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("hello"))));
+        store.append_entry("s1", &entry).await.unwrap();
+
+        let tree = store.build_tree("s1").await.unwrap();
+        assert_eq!(tree.root.id, "s1");
+        assert!(tree.root.message_count >= 1);
+        assert!(tree.root.children.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_build_tree_with_forked_child() {
+        let store = new_store().await;
+        store
+            .init_session("parent", "model", "/test")
+            .await
+            .unwrap();
+        let entry = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("hi"))));
+        store.append_entry("parent", &entry).await.unwrap();
+
+        let child_id = store.fork_session("parent", "test branch").await.unwrap();
+
+        let child_entry =
+            SessionEntry::Message(Box::new(MessageEntry::from(Message::user("child"))));
+        store.append_entry(&child_id, &child_entry).await.unwrap();
+
+        let tree = store.build_tree("parent").await.unwrap();
+        assert_eq!(tree.root.children.len(), 1);
+        assert_eq!(tree.root.children[0].id, child_id);
+    }
+
+    #[tokio::test]
+    async fn test_get_children_empty() {
+        let store = new_store().await;
+        store.init_session("s1", "model", "/test").await.unwrap();
+
+        let children = store.get_children("s1").await.unwrap();
+        assert!(children.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_get_children_after_fork() {
+        let store = new_store().await;
+        store
+            .init_session("parent", "model", "/test")
+            .await
+            .unwrap();
+        let entry = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("hi"))));
+        store.append_entry("parent", &entry).await.unwrap();
+
+        let child_id = store.fork_session("parent", "explore").await.unwrap();
+
+        let children = store.get_children("parent").await.unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].id, child_id);
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_by_date_empty_range() {
+        let store = new_store().await;
+        store.init_session("s1", "model", "/test").await.unwrap();
+        let entry = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("hi"))));
+        store.append_entry("s1", &entry).await.unwrap();
+
+        let now = Utc::now();
+        let past_start = now - TimeDelta::days(30);
+        let past_end = now - TimeDelta::days(20);
+        let results = store
+            .list_sessions_by_date(&past_start, &past_end)
+            .await
+            .unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_by_date_with_results() {
+        let store = new_store().await;
+        store.init_session("s1", "m1", "/test").await.unwrap();
+
+        let now = Utc::now();
+        let yesterday = now - TimeDelta::hours(24);
+        let tomorrow = now + TimeDelta::hours(24);
+        let results = store
+            .list_sessions_by_date(&yesterday, &tomorrow)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "s1");
+    }
+
+    // ── P1: Strengthen existing ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_fork_session_raw_store() {
+        let store = new_store().await;
+        store
+            .init_session("parent", "deepseek", "/test")
+            .await
+            .unwrap();
+
+        let new_id = store
+            .fork_session("parent", "explore alternative")
+            .await
+            .unwrap();
+
+        let header = store.read_header(&new_id).await.unwrap();
+        assert_eq!(header.model, "deepseek");
+        assert_eq!(header.working_dir, "/test");
+
+        let entries = store.load_entries(&new_id).await.unwrap();
+        let has_branch = entries.iter().any(|e| matches!(e, SessionEntry::Branch(_)));
+        assert!(has_branch);
+    }
+
+    #[tokio::test]
+    async fn test_append_and_load_many_entries() {
+        let store = new_store().await;
+        store.init_session("s1", "model", "/test").await.unwrap();
+
+        for i in 0..50 {
+            let msg = Message::user(format!("msg {i}"));
+            let entry = SessionEntry::Message(Box::new(MessageEntry::from(msg)));
+            store.append_entry("s1", &entry).await.unwrap();
+        }
+
+        let entries = store.load_entries("s1").await.unwrap();
+        assert!(entries.len() >= 50);
+    }
+
+    // ── P2: Edge cases ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_default_dir_ends_with_sessions_db() {
+        let dir = SessionStore::default_dir().unwrap();
+        let path_str = dir.to_string_lossy();
+        assert!(
+            path_str.ends_with("sessions.db") || path_str.ends_with("sessions"),
+            "unexpected default dir: {path_str}"
+        );
     }
 }
