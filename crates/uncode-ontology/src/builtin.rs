@@ -136,7 +136,7 @@ fn action_read() -> ActionDef {
             },
             FieldDef {
                 name: "offset".into(),
-                value_type: TypeId::number(),
+                value_type: TypeId::integer(),
                 required: false,
                 default: Some(serde_json::json!(0)),
                 aliases: vec![],
@@ -144,11 +144,21 @@ fn action_read() -> ActionDef {
             },
             FieldDef {
                 name: "limit".into(),
-                value_type: TypeId::number(),
+                value_type: TypeId::integer(),
                 required: false,
                 default: None,
                 aliases: vec![],
                 description: None,
+            },
+            FieldDef {
+                name: "hashline".into(),
+                value_type: TypeId::boolean(),
+                required: false,
+                default: Some(serde_json::json!(false)),
+                aliases: vec![],
+                description: Some(
+                    "Prefix each line with line#hash anchor for edit hashline mode".into(),
+                ),
             },
         ],
         output_type: TypeId::string(),
@@ -213,19 +223,45 @@ fn action_edit() -> ActionDef {
     ActionDef {
         name: "edit".into(),
         category: EntityCategory::Domain,
-        fields: vec![FieldDef {
-            name: "path".into(),
-            value_type: TypeId::string(),
-            required: true,
-            default: None,
-            aliases: vec![
-                "filepath".into(),
-                "file_path".into(),
-                "file".into(),
-                "filename".into(),
-            ],
-            description: Some("File path to edit".into()),
-        }],
+        fields: vec![
+            FieldDef {
+                name: "path".into(),
+                value_type: TypeId::string(),
+                required: true,
+                default: None,
+                aliases: vec![
+                    "filepath".into(),
+                    "file_path".into(),
+                    "file".into(),
+                    "filename".into(),
+                ],
+                description: Some("File path to edit".into()),
+            },
+            FieldDef {
+                name: "edits".into(),
+                value_type: TypeId::string(),
+                required: false,
+                default: None,
+                aliases: vec![],
+                description: Some("Hashline edit operations array".into()),
+            },
+            FieldDef {
+                name: "old_string".into(),
+                value_type: TypeId::string(),
+                required: false,
+                default: None,
+                aliases: vec![],
+                description: Some("String to replace (legacy mode)".into()),
+            },
+            FieldDef {
+                name: "new_string".into(),
+                value_type: TypeId::string(),
+                required: false,
+                default: None,
+                aliases: vec![],
+                description: Some("Replacement string (legacy mode)".into()),
+            },
+        ],
         output_type: TypeId::string(),
         preconditions: vec![Constraint::RequiredField {
             field: "path".into(),
@@ -273,6 +309,14 @@ fn action_grep() -> ActionDef {
                 aliases: vec![],
                 description: None,
             },
+            FieldDef {
+                name: "include".into(),
+                value_type: TypeId::string(),
+                required: false,
+                default: None,
+                aliases: vec![],
+                description: Some("File pattern to filter (e.g. \"*.rs\")".into()),
+            },
         ],
         output_type: TypeId::string(),
         preconditions: vec![Constraint::RequiredField {
@@ -291,21 +335,33 @@ fn action_find() -> ActionDef {
     ActionDef {
         name: "find".into(),
         category: EntityCategory::Domain,
-        fields: vec![FieldDef {
-            name: "path".into(),
-            value_type: TypeId::string(),
-            required: false,
-            default: None,
-            aliases: vec![
-                "dir".into(),
-                "directory".into(),
-                "folder".into(),
-                "root".into(),
-            ],
-            description: None,
-        }],
+        fields: vec![
+            FieldDef {
+                name: "pattern".into(),
+                value_type: TypeId::string(),
+                required: true,
+                default: None,
+                aliases: vec![],
+                description: Some("Pattern to search for in file names".into()),
+            },
+            FieldDef {
+                name: "path".into(),
+                value_type: TypeId::string(),
+                required: false,
+                default: None,
+                aliases: vec![
+                    "dir".into(),
+                    "directory".into(),
+                    "folder".into(),
+                    "root".into(),
+                ],
+                description: None,
+            },
+        ],
         output_type: TypeId::string(),
-        preconditions: vec![],
+        preconditions: vec![Constraint::RequiredField {
+            field: "pattern".into(),
+        }],
         effects: vec![Effect::Read {
             target: "Workspace".into(),
             fields: vec!["files".into()],
@@ -367,6 +423,14 @@ fn action_bash() -> ActionDef {
                 description: Some("Shell command to execute".into()),
             },
             FieldDef {
+                name: "description".into(),
+                value_type: TypeId::string(),
+                required: false,
+                default: None,
+                aliases: vec![],
+                description: Some("Human-readable description of what the command does".into()),
+            },
+            FieldDef {
                 name: "workdir".into(),
                 value_type: TypeId::string(),
                 required: false,
@@ -376,7 +440,7 @@ fn action_bash() -> ActionDef {
             },
             FieldDef {
                 name: "timeout".into(),
-                value_type: TypeId::number(),
+                value_type: TypeId::integer(),
                 required: false,
                 default: None,
                 aliases: vec![],

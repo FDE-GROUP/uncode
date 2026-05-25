@@ -49,6 +49,9 @@ impl TypeId {
     pub fn string() -> Self {
         TypeId("string".into())
     }
+    pub fn integer() -> Self {
+        TypeId("integer".into())
+    }
     pub fn number() -> Self {
         TypeId("number".into())
     }

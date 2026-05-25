@@ -916,7 +916,7 @@ mod tests {
         let normalized = normalizer.normalize(&validated).unwrap();
         assert_eq!(normalized.arguments["path"], "src/main.rs");
         assert_eq!(normalized.arguments["offset"], 0);
-        assert_eq!(normalized.normalized_fields.len(), 2);
+        assert_eq!(normalized.normalized_fields.len(), 3, "expected alias + offset default + hashline default");
     }
 
     // ── OntologyConstraintRule ──
