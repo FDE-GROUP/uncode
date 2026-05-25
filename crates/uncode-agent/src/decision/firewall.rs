@@ -525,8 +525,31 @@ impl ValidationRule for OntologyConstraintRule {
             return Ok(ValidationVerdict::approved());
         };
 
+        // Collect all entity types referenced by this action's effects,
+        // resolve each entity (merging extends chains), and append their invariants.
+        let mut constraints = Vec::with_capacity(action_def.preconditions.len() + 8);
+        constraints.extend(action_def.preconditions.clone());
+
+        for effect in &action_def.effects {
+            let entity_name = match effect {
+                uncode_ontology::Effect::Read { target, .. } => Some(target.as_str()),
+                uncode_ontology::Effect::Modify { entity, .. } => Some(entity.as_str()),
+                uncode_ontology::Effect::Create { entity, .. } => Some(entity.as_str()),
+                uncode_ontology::Effect::Delete { entity, .. } => Some(entity.as_str()),
+                _ => None,
+            };
+            if let Some(name) = entity_name {
+                if let Some(resolved) = self
+                    .registry
+                    .resolve_entity(&uncode_ontology::TypeId::from(name))
+                {
+                    constraints.extend(resolved.invariants);
+                }
+            }
+        }
+
         let mut violations = Vec::new();
-        for constraint in &action_def.preconditions {
+        for constraint in &constraints {
             let result = uncode_ontology::evaluate_constraint(constraint, map);
             match result {
                 uncode_ontology::ConstraintResult::Pass => {}
@@ -916,7 +939,11 @@ mod tests {
         let normalized = normalizer.normalize(&validated).unwrap();
         assert_eq!(normalized.arguments["path"], "src/main.rs");
         assert_eq!(normalized.arguments["offset"], 0);
-        assert_eq!(normalized.normalized_fields.len(), 3, "expected alias + offset default + hashline default");
+        assert_eq!(
+            normalized.normalized_fields.len(),
+            3,
+            "expected alias + offset default + hashline default"
+        );
     }
 
     // ── OntologyConstraintRule ──
@@ -955,5 +982,136 @@ mod tests {
         };
         let verdict = rule.validate(&action).unwrap();
         assert!(verdict.approved, "unknown tool should pass through");
+    }
+
+    #[test]
+    fn test_entity_invariants_are_enforced() {
+        use uncode_ontology::*;
+
+        let mut reg = TypeRegistry::new();
+        // Register a File entity with RequiredField("path") invariant
+        reg.register_entity(EntityDef {
+            id: TypeId::from("File"),
+            category: EntityCategory::Domain,
+            fields: vec![FieldDef {
+                name: "path".into(),
+                value_type: TypeId::string(),
+                required: true,
+                default: None,
+                aliases: vec![],
+                description: None,
+            }],
+            invariants: vec![Constraint::RequiredField {
+                field: "path".into(),
+            }],
+            extends: None,
+            description: None,
+        });
+        // Register an action that modifies File but doesn't declare RequiredField("path")
+        // itself — the entity invariant should be enforced
+        reg.register_action(ActionDef {
+            name: "touch".into(),
+            category: EntityCategory::Domain,
+            fields: vec![FieldDef {
+                name: "path".into(),
+                value_type: TypeId::string(),
+                required: false,
+                default: None,
+                aliases: vec![],
+                description: None,
+            }],
+            effects: vec![Effect::Modify {
+                entity: "File".into(),
+                fields: vec!["content".into()],
+            }],
+            output_type: TypeId::string(),
+            preconditions: vec![], // ← no RequiredField here!
+            execution_category: ExecutionCategory::Destructive,
+            description: None,
+        });
+
+        let rule = OntologyConstraintRule::new(reg);
+        // Without path — should be blocked by entity invariant
+        let action = ParsedAction {
+            tool_name: "touch".into(),
+            arguments: serde_json::json!({}),
+        };
+        let verdict = rule.validate(&action).unwrap();
+        assert!(
+            !verdict.approved,
+            "touch without path should be blocked by entity invariant"
+        );
+        // With path — should pass
+        let action = ParsedAction {
+            tool_name: "touch".into(),
+            arguments: serde_json::json!({"path": "/tmp/x"}),
+        };
+        let verdict = rule.validate(&action).unwrap();
+        assert!(verdict.approved, "touch with path should pass");
+    }
+
+    #[test]
+    fn test_entity_invariants_through_extends_chain() {
+        use uncode_ontology::*;
+
+        let mut reg = TypeRegistry::new();
+        // Base entity with RequiredField("id") invariant
+        reg.register_entity(EntityDef {
+            id: TypeId::from("Base"),
+            category: EntityCategory::Domain,
+            fields: vec![FieldDef {
+                name: "id".into(),
+                value_type: TypeId::string(),
+                required: true,
+                default: None,
+                aliases: vec![],
+                description: None,
+            }],
+            invariants: vec![Constraint::RequiredField { field: "id".into() }],
+            extends: None,
+            description: None,
+        });
+        // Derived entity extends Base — should inherit RequiredField("id")
+        reg.register_entity(EntityDef {
+            id: TypeId::from("Derived"),
+            category: EntityCategory::Domain,
+            fields: vec![],
+            invariants: vec![],
+            extends: Some(TypeId::from("Base")),
+            description: None,
+        });
+        // Action that modifies Derived, has NO preconditions of its own
+        reg.register_action(ActionDef {
+            name: "op".into(),
+            category: EntityCategory::Domain,
+            fields: vec![FieldDef {
+                name: "id".into(),
+                value_type: TypeId::string(),
+                required: false,
+                default: None,
+                aliases: vec![],
+                description: None,
+            }],
+            effects: vec![Effect::Modify {
+                entity: "Derived".into(),
+                fields: vec![],
+            }],
+            output_type: TypeId::string(),
+            preconditions: vec![],
+            execution_category: ExecutionCategory::Destructive,
+            description: None,
+        });
+
+        let rule = OntologyConstraintRule::new(reg);
+        // Without "id" — entity invariant from Base should be enforced through extends chain
+        let action = ParsedAction {
+            tool_name: "op".into(),
+            arguments: serde_json::json!({}),
+        };
+        let verdict = rule.validate(&action).unwrap();
+        assert!(
+            !verdict.approved,
+            "extends chain: missing id should be blocked by Base entity invariant"
+        );
     }
 }
