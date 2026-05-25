@@ -49,7 +49,7 @@ pub struct ActionDef {
     pub name: String,
     pub fields: Vec<FieldDef>,
     pub output_type: TypeId,
-    /// Category: Domain (domain actions like read/write) or System (system actions like model_query).
+    /// Category: Domain (domain actions like read/write) or System (system actions like llm_query).
     #[serde(default)]
     pub category: EntityCategory,
     pub preconditions: Vec<Constraint>,

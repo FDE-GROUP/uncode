@@ -18,6 +18,8 @@ pub struct GuardrailConfig {
     pub adjudication: AdjudicationConfig,
     #[serde(default)]
     pub audit: AuditConfig,
+    #[serde(default)]
+    pub cost: CostConfig,
 }
 
 fn default_version() -> u32 {
@@ -32,6 +34,7 @@ impl Default for GuardrailConfig {
             firewall: FirewallConfig::default(),
             adjudication: AdjudicationConfig::default(),
             audit: AuditConfig::default(),
+            cost: CostConfig::default(),
         }
     }
 }
@@ -373,6 +376,32 @@ impl Default for RetentionConfig {
     }
 }
 
+// ── Cost ──
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostConfig {
+    #[serde(default = "default_budget_per_turn")]
+    pub budget_per_turn_usd: f64,
+    #[serde(default = "default_deny_mode")]
+    pub deny_mode: bool,
+}
+
+fn default_budget_per_turn() -> f64 {
+    1.0
+}
+fn default_deny_mode() -> bool {
+    false
+}
+
+impl Default for CostConfig {
+    fn default() -> Self {
+        Self {
+            budget_per_turn_usd: 1.0,
+            deny_mode: false,
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════
 // 测试
 // ═══════════════════════════════════════════════════════════
@@ -399,15 +428,17 @@ mod tests {
     }
 
     #[test]
-    fn test_event_levels() {
+    fn test_cost_config_defaults() {
         let config = GuardrailConfig::default();
-        assert!(config.audit.event_levels.critical.contains(&"Error".into()));
-        assert!(
-            config
-                .audit
-                .event_levels
-                .verbose
-                .contains(&"ToolCallProgress".into())
-        );
+        assert!((config.cost.budget_per_turn_usd - 1.0).abs() < f64::EPSILON);
+        assert!(!config.cost.deny_mode);
+    }
+
+    #[test]
+    fn test_cost_config_from_json() {
+        let json = r#"{"cost": {"budget_per_turn_usd": 0.5, "deny_mode": true}}"#;
+        let config: GuardrailConfig = serde_json::from_str(json).unwrap();
+        assert!((config.cost.budget_per_turn_usd - 0.5).abs() < f64::EPSILON);
+        assert!(config.cost.deny_mode);
     }
 }

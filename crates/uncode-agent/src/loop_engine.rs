@@ -451,6 +451,7 @@ impl AgentLoop {
 
     pub fn set_model_id(&mut self, model_id: String) {
         self.model_id = model_id;
+        *self.firewall.lock().unwrap() = None;
     }
 
     pub fn set_cancel_token(&mut self, token: CancellationToken) {
@@ -1875,24 +1876,24 @@ impl AgentLoop {
                                                 model_info,
                                             ),
                                         );
-                                        drop(gc);
 
-                                        // Wire CostBudgetPolicy into adjudicator (warn mode)
+                                        // Wire CostBudgetPolicy into adjudicator
                                         let mut adj = self.adjudicator.lock().unwrap();
                                         if let (Some(adjudicator), Some(model)) =
                                             (&mut *adj, &current_model)
                                         {
-                                            let budget_per_turn_usd = 1.0;
+                                            let budget = gc.cost.budget_per_turn_usd;
                                             let estimated_tokens =
                                                 (model.context_window as f64 * 0.8) as u32;
                                             adjudicator.add_policy(Box::new(
                                                 crate::decision::bridge::CostBudgetPolicyAdapter::new(
-                                                    budget_per_turn_usd,
+                                                    budget,
                                                     std::sync::Arc::new(model.clone()),
                                                     estimated_tokens,
                                                 ),
                                             ));
                                         }
+                                        drop(gc);
                                     }
                                     let mut denied = HashSet::new();
                                     if let Some(ref firewall) = *fw {

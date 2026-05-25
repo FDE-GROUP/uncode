@@ -442,7 +442,7 @@ pub fn system_resource_ontology() -> TypeRegistry {
     reg.register_entity(entity_provider());
     reg.register_entity(entity_capability());
 
-    reg.register_action(action_model_query());
+    reg.register_action(action_llm_query());
     reg.register_action(action_model_switch());
 
     // Links — system resource semantic
@@ -619,36 +619,62 @@ fn entity_capability() -> EntityDef {
     }
 }
 
-fn action_model_query() -> ActionDef {
+fn action_llm_query() -> ActionDef {
     ActionDef {
-        name: "model_query".into(),
+        name: "llm_query".into(),
         category: EntityCategory::System,
         fields: vec![
             FieldDef {
-                name: "criteria".into(),
-                value_type: "object".into(),
-                required: false,
+                name: "query".into(),
+                value_type: "string".into(),
+                required: true,
                 default: None,
-                aliases: vec!["filter".into(), "query".into()],
-                description: Some("Query criteria (e.g. {\"supports_vision\": true})".into()),
+                aliases: vec!["query_type".into(), "type".into()],
+                description: Some("Query type: capabilities, cheapest, list, recommend".into()),
             },
             FieldDef {
-                name: "sort_by".into(),
+                name: "model_id".into(),
                 value_type: "string".into(),
                 required: false,
-                default: Some(serde_json::json!("cost")),
+                default: None,
+                aliases: vec!["model".into()],
+                description: Some("Model ID (required for capabilities query)".into()),
+            },
+            FieldDef {
+                name: "min_context_window".into(),
+                value_type: "integer".into(),
+                required: false,
+                default: None,
+                aliases: vec!["min_ctx".into()],
+                description: Some("Minimum context window for cheapest/recommend".into()),
+            },
+            FieldDef {
+                name: "context_tokens".into(),
+                value_type: "integer".into(),
+                required: false,
+                default: None,
                 aliases: vec![],
-                description: Some("Sort field for results".into()),
+                description: Some("Current context tokens for recommend".into()),
+            },
+            FieldDef {
+                name: "max_results".into(),
+                value_type: "integer".into(),
+                required: false,
+                default: Some(serde_json::json!(3)),
+                aliases: vec![],
+                description: Some("Max results for recommend query".into()),
             },
         ],
         output_type: TypeId("LLM".into()),
-        preconditions: vec![],
+        preconditions: vec![Constraint::RequiredField {
+            field: "query".into(),
+        }],
         effects: vec![Effect::Read {
             target: "LLM".into(),
             fields: vec!["all".into()],
         }],
         execution_category: ExecutionCategory::ReadOnly,
-        description: Some("Query available LLM models by capability".into()),
+        description: Some("Query LLM model capabilities, cost, and recommendations".into()),
     }
 }
 
@@ -926,7 +952,7 @@ mod tests {
     #[test]
     fn test_system_actions_are_system_category() {
         let reg = system_resource_ontology();
-        let query = reg.get_action("model_query").unwrap();
+        let query = reg.get_action("llm_query").unwrap();
         assert_eq!(query.category, EntityCategory::System);
         let switch = reg.get_action("model_switch").unwrap();
         assert_eq!(switch.category, EntityCategory::System);
@@ -956,8 +982,8 @@ mod tests {
     fn test_system_action_field_aliases() {
         let reg = system_resource_ontology();
         let aliases = reg.field_aliases_by_category(EntityCategory::System);
-        assert_eq!(aliases.get("filter").unwrap(), "criteria");
-        assert_eq!(aliases.get("target_model").unwrap(), "model_id");
+        assert_eq!(aliases.get("query_type").unwrap(), "query");
+        assert_eq!(aliases.get("model").unwrap(), "model_id");
     }
 
     #[test]
@@ -977,13 +1003,13 @@ mod tests {
     fn test_llm_entity_defaults() {
         let reg = system_resource_ontology();
         let defaults = reg.defaults_by_category(EntityCategory::System);
-        assert_eq!(defaults["model_query"]["sort_by"], "cost");
+        assert_eq!(defaults["llm_query"]["max_results"], 3);
     }
 
     #[test]
-    fn test_model_query_is_readonly() {
+    fn test_llm_query_is_readonly() {
         let reg = system_resource_ontology();
-        let query = reg.get_action("model_query").unwrap();
+        let query = reg.get_action("llm_query").unwrap();
         assert!(query.is_read_only());
     }
 
