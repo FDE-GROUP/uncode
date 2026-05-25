@@ -216,22 +216,62 @@ pub fn evaluate_constraint<F: FieldLookup + ?Sized>(
                 },
             }
         }
+        Constraint::Referential {
+            field,
+            target_type: _,
+            description,
+            level: _,
+        } => match fields.get_field(field) {
+            Some(serde_json::Value::String(s)) if !s.is_empty() => ConstraintResult::Pass,
+            _ => ConstraintResult::Fail {
+                constraint: "referential".into(),
+                field: field.clone(),
+                detail: description.clone(),
+            },
+        },
         Constraint::RegexMatch {
             field,
             pattern,
             description,
             level,
         } => {
-            // Regex evaluation requires the regex crate; skip at ontology level
-            // and handle in the agent's firewall rules instead.
-            let _ = (field, pattern, description, level);
-            ConstraintResult::Pass
+            let Some(value) = fields.get_field(field) else {
+                return ConstraintResult::Pass;
+            };
+            let matched = value
+                .as_str()
+                .map_or(false, |s| s.contains(pattern.as_str()));
+            if matched {
+                ConstraintResult::Pass
+            } else {
+                let detail = format!(
+                    "field '{field}' does not match pattern '{pattern}': {description}"
+                );
+                match level {
+                    ConstraintLevel::Soft => ConstraintResult::Warn {
+                        constraint: "regex_match".into(),
+                        field: field.clone(),
+                        detail,
+                    },
+                    ConstraintLevel::Hard => ConstraintResult::Fail {
+                        constraint: "regex_match".into(),
+                        field: field.clone(),
+                        detail,
+                    },
+                }
+            }
         }
         Constraint::CustomRule {
-            name: _,
-            description: _,
-            level: _,
-        } => ConstraintResult::Pass,
+            name,
+            description,
+            level,
+        } => {
+            // Custom rule evaluation requires a callback mechanism that will be added later.
+            // Currently passes unconditionally; future versions will invoke registered
+            // custom validators based on the rule name.
+            let _ = (name, description, level);
+            ConstraintResult::Pass
+        }
     }
 }
 
