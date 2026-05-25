@@ -380,7 +380,7 @@ impl Api for AnthropicMessagesApi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::{ContentBlock, Message, Role};
+    use crate::message::{ContentBlock, Message, Role, ToolCall, ToolResult};
     use crate::provider_preset::apply_provider_preset;
 
     fn claude_model() -> Model {
@@ -519,5 +519,155 @@ data: {"type":"content_block_stop","index":0}
             e,
             StreamEvent::ToolCallEnd(d) if d.name == "read" && d.arguments["path"] == "x"
         )));
+    }
+
+    #[test]
+    fn test_build_body_with_image_block() {
+        let model = claude_model();
+        let context = Context {
+            messages: vec![Message {
+                id: "x".into(),
+                role: Role::User,
+                content: vec![ContentBlock::Image {
+                    mime_type: "image/png".into(),
+                    data: "base64data".into(),
+                }],
+                usage: None,
+                stop_reason: None,
+                error_message: None,
+                timestamp: None,
+            }],
+            ..Default::default()
+        };
+        let options = StreamOptions::default();
+        let body = build_anthropic_body(&model, &context, &options);
+        let content = body["messages"][0]["content"].as_str().unwrap();
+        assert!(content.contains("image"));
+        assert!(content.contains("base64"));
+        assert!(content.contains("image/png"));
+        assert!(content.contains("base64data"));
+    }
+
+    #[test]
+    fn test_build_body_assistant_with_thinking_block() {
+        let model = claude_model();
+        let context = Context {
+            messages: vec![Message {
+                id: "x".into(),
+                role: Role::Assistant,
+                content: vec![ContentBlock::Thinking {
+                    text: "I need to analyze...".into(),
+                }],
+                usage: None,
+                stop_reason: None,
+                error_message: None,
+                timestamp: None,
+            }],
+            ..Default::default()
+        };
+        let options = StreamOptions::default();
+        let body = build_anthropic_body(&model, &context, &options);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[0]["thinking"], "I need to analyze...");
+    }
+
+    #[test]
+    fn test_build_body_tool_use_with_arguments() {
+        let model = claude_model();
+        let context = Context {
+            messages: vec![Message {
+                id: "x".into(),
+                role: Role::Assistant,
+                content: vec![ContentBlock::ToolCall(Box::new(ToolCall {
+                    id: "tc1".into(),
+                    name: "read".into(),
+                    arguments: serde_json::json!({"path": "src/main.rs"}),
+                }))],
+                usage: None,
+                stop_reason: None,
+                error_message: None,
+                timestamp: None,
+            }],
+            ..Default::default()
+        };
+        let options = StreamOptions::default();
+        let body = build_anthropic_body(&model, &context, &options);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "tool_use");
+        assert_eq!(content[0]["id"], "tc1");
+        assert_eq!(content[0]["name"], "read");
+        assert_eq!(content[0]["input"]["path"], "src/main.rs");
+    }
+
+    #[test]
+    fn test_build_body_assistant_multi_block() {
+        let model = claude_model();
+        let context = Context {
+            messages: vec![Message {
+                id: "x".into(),
+                role: Role::Assistant,
+                content: vec![
+                    ContentBlock::Thinking {
+                        text: "plan".into(),
+                    },
+                    ContentBlock::Text {
+                        text: "hello".into(),
+                    },
+                ],
+                usage: None,
+                stop_reason: None,
+                error_message: None,
+                timestamp: None,
+            }],
+            ..Default::default()
+        };
+        let options = StreamOptions::default();
+        let body = build_anthropic_body(&model, &context, &options);
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 2);
+        assert_eq!(content[0]["type"], "thinking");
+        assert_eq!(content[1]["type"], "text");
+    }
+
+    #[test]
+    fn test_build_body_tool_result() {
+        let model = claude_model();
+        let context = Context {
+            messages: vec![Message {
+                id: "x".into(),
+                role: Role::Tool,
+                content: vec![ContentBlock::ToolResult(Box::new(ToolResult {
+                    tool_call_id: "tc1".into(),
+                    content: "file content".into(),
+                    is_error: false,
+                }))],
+                usage: None,
+                stop_reason: None,
+                error_message: None,
+                timestamp: None,
+            }],
+            ..Default::default()
+        };
+        let options = StreamOptions::default();
+        let body = build_anthropic_body(&model, &context, &options);
+        let msg = &body["messages"][0];
+        assert_eq!(msg["role"], "user");
+        let content = msg["content"].as_array().unwrap();
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "tc1");
+        assert_eq!(content[0]["content"], "file content");
+    }
+
+    #[test]
+    fn test_build_body_system_as_top_level() {
+        let model = claude_model();
+        let context = Context {
+            system_prompt: Some("You are a helpful assistant.".into()),
+            ..Default::default()
+        };
+        let options = StreamOptions::default();
+        let body = build_anthropic_body(&model, &context, &options);
+        assert_eq!(body["system"], "You are a helpful assistant.");
     }
 }

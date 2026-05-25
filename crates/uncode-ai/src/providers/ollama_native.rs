@@ -335,3 +335,148 @@ mod stream_buffer_tests {
         assert!(msg.contains("partial"));
     }
 }
+
+#[cfg(test)]
+mod build_tests {
+    use super::*;
+    use crate::message::{ContentBlock, Message, Role, ToolCall, ToolResult};
+    use crate::model::Model;
+    use crate::tool_def::ToolDefinition;
+
+    #[test]
+    fn empty_context() {
+        let ctx = Context::default();
+        let messages = build_chat_messages(&ctx);
+        assert!(messages.is_empty());
+    }
+
+    #[test]
+    fn system_prompt() {
+        let mut ctx = Context::default();
+        ctx.system_prompt = Some("Be helpful".into());
+        let messages = build_chat_messages(&ctx);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[0]["content"], "Be helpful");
+    }
+
+    #[test]
+    fn user_message() {
+        let mut ctx = Context::default();
+        ctx.messages = vec![Message::user("hello")];
+        let messages = build_chat_messages(&ctx);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "hello");
+    }
+
+    #[test]
+    fn assistant_with_text_and_tool_call() {
+        let mut ctx = Context::default();
+        let tc = ToolCall {
+            id: "call_1".into(),
+            name: "get_weather".into(),
+            arguments: serde_json::json!({"city": "NYC"}),
+        };
+        let msg = Message {
+            id: "x".into(),
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Text {
+                    text: "Let me check".into(),
+                },
+                ContentBlock::ToolCall(Box::new(tc)),
+            ],
+            usage: None,
+            stop_reason: None,
+            error_message: None,
+            timestamp: None,
+        };
+        ctx.messages = vec![msg];
+        let messages = build_chat_messages(&ctx);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "assistant");
+        assert_eq!(messages[0]["content"], "Let me check");
+        let tool_calls = messages[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0]["function"]["name"], "get_weather");
+    }
+
+    #[test]
+    fn tool_result() {
+        let mut ctx = Context::default();
+        let tr = ToolResult {
+            tool_call_id: "call_1".into(),
+            content: "sunny".into(),
+            is_error: false,
+        };
+        let msg = Message {
+            id: "x".into(),
+            role: Role::Tool,
+            content: vec![ContentBlock::ToolResult(Box::new(tr))],
+            usage: None,
+            stop_reason: None,
+            error_message: None,
+            timestamp: None,
+        };
+        ctx.messages = vec![msg];
+        let messages = build_chat_messages(&ctx);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "tool");
+        assert_eq!(messages[0]["content"], "sunny");
+        assert_eq!(messages[0]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn skips_system_role_messages() {
+        let mut ctx = Context::default();
+        ctx.messages = vec![Message::system("internal"), Message::user("hello")];
+        let messages = build_chat_messages(&ctx);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0]["role"], "user");
+        assert_eq!(messages[0]["content"], "hello");
+    }
+
+    #[test]
+    fn body_minimal() {
+        let model = Model::default();
+        let mut ctx = Context::default();
+        ctx.messages = vec![Message::user("hi")];
+        let options = StreamOptions::default();
+        let body = build_ollama_body(&model, &ctx, &options);
+        assert!(body["model"].is_string());
+        assert!(body["messages"].is_array());
+        assert_eq!(body["stream"], true);
+    }
+
+    #[test]
+    fn body_with_temperature() {
+        let model = Model::default();
+        let ctx = Context::default();
+        let options = StreamOptions {
+            temperature: Some(0.7),
+            ..Default::default()
+        };
+        let body = build_ollama_body(&model, &ctx, &options);
+        let t = body["options"]["temperature"].as_f64().unwrap();
+        assert!((t - 0.7).abs() < 0.01);
+    }
+
+    #[test]
+    fn body_with_tools() {
+        let model = Model::default();
+        let mut ctx = Context::default();
+        ctx.tools = vec![ToolDefinition {
+            name: "search".into(),
+            description: "search the web".into(),
+            parameters: serde_json::json!({"type": "object"}),
+            label: None,
+            execution_mode: Default::default(),
+        }];
+        let options = StreamOptions::default();
+        let body = build_ollama_body(&model, &ctx, &options);
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["function"]["name"], "search");
+    }
+}

@@ -254,3 +254,98 @@ mod stream_buffer_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod build_tests {
+    use super::*;
+    use crate::message::Message;
+    use crate::model::Model;
+    use crate::tool_def::ToolDefinition;
+
+    #[test]
+    fn build_body_with_user_message() {
+        let model = Model::default();
+        let mut ctx = Context::default();
+        ctx.messages = vec![Message::user("hello")];
+        let options = StreamOptions::default();
+        let body = build_gemini_body(&model, &ctx, &options);
+        let contents = body["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn build_body_with_system_prompt() {
+        let model = Model::default();
+        let mut ctx = Context::default();
+        ctx.system_prompt = Some("Be helpful".into());
+        let options = StreamOptions::default();
+        let body = build_gemini_body(&model, &ctx, &options);
+        let contents = body["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 2);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "System: Be helpful");
+        assert_eq!(contents[1]["role"], "model");
+        assert_eq!(contents[1]["parts"][0]["text"], "Understood.");
+    }
+
+    #[test]
+    fn build_body_role_mapping() {
+        let model = Model::default();
+        let mut ctx = Context::default();
+        ctx.messages = vec![Message::user("hi"), Message::assistant("hello")];
+        let options = StreamOptions::default();
+        let body = build_gemini_body(&model, &ctx, &options);
+        let contents = body["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 2);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[1]["role"], "model");
+    }
+
+    #[test]
+    fn build_body_with_temperature() {
+        let model = Model::default();
+        let ctx = Context::default();
+        let options = StreamOptions {
+            temperature: Some(0.5),
+            ..Default::default()
+        };
+        let body = build_gemini_body(&model, &ctx, &options);
+        let t = body["generationConfig"]["temperature"].as_f64().unwrap();
+        assert!((t - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn build_body_max_output_tokens() {
+        let model = Model::default();
+        let ctx = Context::default();
+        let options = StreamOptions {
+            max_tokens: Some(1024),
+            ..Default::default()
+        };
+        let body = build_gemini_body(&model, &ctx, &options);
+        assert_eq!(body["generationConfig"]["maxOutputTokens"], 1024);
+    }
+
+    #[test]
+    fn build_body_with_tools() {
+        let model = Model::default();
+        let mut ctx = Context::default();
+        ctx.tools = vec![ToolDefinition {
+            name: "get_weather".into(),
+            description: "Gets weather".into(),
+            parameters: serde_json::json!({"type": "object", "properties": {"city": {"type": "string"}}}),
+            label: None,
+            execution_mode: Default::default(),
+        }];
+        let options = StreamOptions::default();
+        let body = build_gemini_body(&model, &ctx, &options);
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 1);
+        let fd = &tools[0]["functionDeclarations"][0];
+        assert_eq!(fd["name"], "get_weather");
+        assert_eq!(fd["description"], "Gets weather");
+        assert!(fd["parameters"].is_object());
+    }
+}
