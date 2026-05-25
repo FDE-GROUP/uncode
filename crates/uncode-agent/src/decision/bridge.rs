@@ -719,6 +719,7 @@ mod tests {
                 target: "File".into(),
                 fields: vec!["content".into()],
             }],
+            path_fields: vec![],
             execution_category: ExecutionCategory::ReadOnly,
             description: Some("读取文件内容".into()),
         };
@@ -737,6 +738,7 @@ mod tests {
             category: EntityCategory::Domain,
             preconditions: vec![],
             effects: vec![],
+            path_fields: vec![],
             execution_category: ExecutionCategory::ReadOnly,
             description: None,
         };
@@ -756,6 +758,7 @@ mod tests {
             category: EntityCategory::Domain,
             preconditions: vec![],
             effects: vec![],
+            path_fields: vec![],
             execution_category: ExecutionCategory::Shell,
             description: None,
         };
@@ -778,6 +781,7 @@ mod tests {
             category: EntityCategory::Domain,
             preconditions: vec![],
             effects: vec![],
+            path_fields: vec![],
             execution_category: ExecutionCategory::Destructive,
             description: None,
         };

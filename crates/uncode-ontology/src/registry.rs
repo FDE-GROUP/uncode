@@ -90,6 +90,7 @@ impl TypeRegistry {
     ///     fields: vec![],
     ///     preconditions: vec![],
     ///     effects: vec![],
+    ///     path_fields: vec![],
     /// });
     ///
     /// let mut r2 = TypeRegistry::new();
@@ -102,6 +103,7 @@ impl TypeRegistry {
     ///     fields: vec![],
     ///     preconditions: vec![],
     ///     effects: vec![],
+    ///     path_fields: vec![],
     /// });
     ///
     /// let merged = r1.merge(&r2);

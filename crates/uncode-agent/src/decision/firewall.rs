@@ -21,10 +21,10 @@
 //!
 //! 参见 `docs/ai-agent-archi/cognition-decision-driven-design.md` §3.3 语义防火墙
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::tools::ToolRegistry;
+use crate::tools::{ToolRegistry, resolve_path};
 
 use super::types::{ActionProposal, NormalizedAction, ParsedAction, ValidatedAction};
 
@@ -172,6 +172,10 @@ impl NormalizeStrategy for DefaultNormalizer {
 pub struct DeclarativeNormalizer {
     field_mapping: std::collections::HashMap<String, String>,
     defaults: uncode_ontology::registry::FieldDefaults,
+    /// Optional ontology reference for PathField resolution.
+    ontology: Option<Arc<uncode_ontology::TypeRegistry>>,
+    /// Workspace root for relative path resolution.
+    cwd: PathBuf,
 }
 
 impl DeclarativeNormalizer {
@@ -182,6 +186,8 @@ impl DeclarativeNormalizer {
         Self {
             field_mapping,
             defaults,
+            ontology: None,
+            cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         }
     }
 
@@ -191,6 +197,8 @@ impl DeclarativeNormalizer {
             field_mapping: registry
                 .field_aliases_by_category(uncode_ontology::EntityCategory::Domain),
             defaults: registry.defaults_by_category(uncode_ontology::EntityCategory::Domain),
+            ontology: Some(Arc::new(registry.clone())),
+            cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         }
     }
 
@@ -234,6 +242,63 @@ impl NormalizeStrategy for DeclarativeNormalizer {
                     if !map.contains_key(field) {
                         map.insert(field.clone(), default.clone());
                         normalized_fields.push(format!("{field} = default"));
+                    }
+                }
+            }
+        }
+
+        // Path resolution — canonicalize paths declared in ontology PathField metadata
+        if let Some(ref reg) = self.ontology {
+            if let Some(action_def) =
+                reg.get_action(&uncode_ontology::TypeId::from(action.tool_name.as_str()))
+            {
+                for pf in &action_def.path_fields {
+                    if let serde_json::Value::Object(ref mut map) = args {
+                        let path_val = match map.get(&pf.field_name) {
+                            Some(serde_json::Value::String(s)) if !s.is_empty() => s.clone(),
+                            None | Some(_) if pf.default.is_some() => pf.default.clone().unwrap(),
+                            _ => continue,
+                        };
+                        match resolve_path(&path_val, &[]) {
+                            Ok(resolved) => {
+                                let display = crate::tools::display_path_within_project(&resolved);
+                                map.insert(
+                                    pf.field_name.clone(),
+                                    serde_json::Value::String(display),
+                                );
+                                normalized_fields.push(format!(
+                                    "{} → ~/{}",
+                                    pf.field_name,
+                                    resolved
+                                        .strip_prefix(&self.cwd)
+                                        .unwrap_or(&resolved)
+                                        .display()
+                                ));
+                            }
+                            Err(e) => {
+                                // Non-existent but valid relative path — resolve to
+                                // display form anyway (e.g. new file for write)
+                                let p = Path::new(&path_val);
+                                if p.is_relative() {
+                                    let full = self.cwd.join(p);
+                                    map.insert(
+                                        pf.field_name.clone(),
+                                        serde_json::Value::String(full.display().to_string()),
+                                    );
+                                    normalized_fields.push(format!(
+                                        "{} → {}",
+                                        pf.field_name,
+                                        full.display()
+                                    ));
+                                } else if !pf.must_exist {
+                                    map.insert(
+                                        pf.field_name.clone(),
+                                        serde_json::Value::String(path_val),
+                                    );
+                                }
+                                let _ = e;
+                            }
+                        }
                     }
                 }
             }
@@ -918,13 +983,18 @@ mod tests {
         let normalizer = DeclarativeNormalizer::builtin();
         let validated = ValidatedAction {
             tool_name: "bash".into(),
-            arguments: serde_json::json!({"command": "ls"}),
+            arguments: serde_json::json!({"command": "ls", "workdir": "."}),
             applied_rules: vec![],
         };
         let normalized = normalizer.normalize(&validated).unwrap();
         assert_eq!(normalized.arguments["command"], "ls");
-        // bash has no defaults, and "command" is already canonical
-        assert!(normalized.normalized_fields.is_empty());
+        // "workdir" path resolution produces one normalized field entry
+        assert_eq!(normalized.normalized_fields.len(), 1);
+        assert!(
+            normalized.normalized_fields[0].starts_with("workdir →"),
+            "expected path resolution, got: {:?}",
+            normalized.normalized_fields
+        );
     }
 
     #[test]
@@ -941,8 +1011,8 @@ mod tests {
         assert_eq!(normalized.arguments["offset"], 0);
         assert_eq!(
             normalized.normalized_fields.len(),
-            3,
-            "expected alias + offset default + hashline default"
+            4,
+            "expected alias + offset default + hashline default + path resolution"
         );
     }
 
@@ -1024,6 +1094,7 @@ mod tests {
                 entity: "File".into(),
                 fields: vec!["content".into()],
             }],
+            path_fields: vec![],
             output_type: TypeId::string(),
             preconditions: vec![], // ← no RequiredField here!
             execution_category: ExecutionCategory::Destructive,
@@ -1096,6 +1167,7 @@ mod tests {
                 entity: "Derived".into(),
                 fields: vec![],
             }],
+            path_fields: vec![],
             output_type: TypeId::string(),
             preconditions: vec![],
             execution_category: ExecutionCategory::Destructive,

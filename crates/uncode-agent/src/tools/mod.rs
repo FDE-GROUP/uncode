@@ -146,7 +146,7 @@ pub(crate) fn atomic_write(path: &std::path::Path, content: &str) -> Result<(), 
 /// - The result is canonicalized to eliminate `..` traversal.
 /// - Paths that escape the current working directory via `..` are rejected
 ///   unless they fall under one of the `extra_allowed` prefixes.
-fn resolve_path(
+pub fn resolve_path(
     raw: &str,
     extra_allowed: &[std::path::PathBuf],
 ) -> Result<std::path::PathBuf, String> {

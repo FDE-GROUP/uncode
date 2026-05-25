@@ -54,6 +54,7 @@ fn register_and_get_action() {
         }],
         preconditions: vec![],
         effects: vec![],
+        path_fields: vec![],
     });
     let action = reg.get_action("test_action");
     assert!(action.is_some());
@@ -157,6 +158,7 @@ fn entity_category_queries() {
         fields: vec![],
         preconditions: vec![],
         effects: vec![],
+        path_fields: vec![],
     });
     reg.register_action(ActionDef {
         name: "system_action".into(),
@@ -167,6 +169,7 @@ fn entity_category_queries() {
         fields: vec![],
         preconditions: vec![],
         effects: vec![],
+        path_fields: vec![],
     });
     let domain = reg.actions_by_category(EntityCategory::Domain);
     assert_eq!(domain.len(), 1);

@@ -3,7 +3,8 @@
 use crate::registry::TypeRegistry;
 use crate::types::{
     ActionDef, ArithmeticOp, Cardinality, Constraint, DerivationExpr, Effect, EntityCategory,
-    EntityDef, ExecutionCategory, FieldDef, LinkDef, OntologyVersion, ReasoningRule, TypeId,
+    EntityDef, ExecutionCategory, FieldDef, LinkDef, OntologyVersion, PathField, PathType,
+    ReasoningRule, TypeId,
 };
 
 /// Current ontology version — bump on schema changes.
@@ -169,6 +170,12 @@ fn action_read() -> ActionDef {
             target: "File".into(),
             fields: vec!["content".into()],
         }],
+        path_fields: vec![PathField {
+            field_name: "path".into(),
+            path_type: PathType::FilePath,
+            default: None,
+            must_exist: true,
+        }],
         execution_category: ExecutionCategory::ReadOnly,
         description: Some("Read file contents".into()),
     }
@@ -213,6 +220,12 @@ fn action_write() -> ActionDef {
         effects: vec![Effect::Modify {
             entity: "File".into(),
             fields: vec!["content".into()],
+        }],
+        path_fields: vec![PathField {
+            field_name: "path".into(),
+            path_type: PathType::FilePath,
+            default: None,
+            must_exist: false,
         }],
         execution_category: ExecutionCategory::Destructive,
         description: Some("Write file contents".into()),
@@ -270,6 +283,12 @@ fn action_edit() -> ActionDef {
             entity: "File".into(),
             fields: vec!["content".into()],
         }],
+        path_fields: vec![PathField {
+            field_name: "path".into(),
+            path_type: PathType::FilePath,
+            default: None,
+            must_exist: true,
+        }],
         execution_category: ExecutionCategory::Destructive,
         description: Some("Edit file with search/replace".into()),
     }
@@ -326,6 +345,12 @@ fn action_grep() -> ActionDef {
             target: "Workspace".into(),
             fields: vec!["files".into()],
         }],
+        path_fields: vec![PathField {
+            field_name: "path".into(),
+            path_type: PathType::DirectoryPath,
+            default: Some(".".into()),
+            must_exist: true,
+        }],
         execution_category: ExecutionCategory::ReadOnly,
         description: Some("Search file contents".into()),
     }
@@ -366,6 +391,12 @@ fn action_find() -> ActionDef {
             target: "Workspace".into(),
             fields: vec!["files".into()],
         }],
+        path_fields: vec![PathField {
+            field_name: "path".into(),
+            path_type: PathType::DirectoryPath,
+            default: Some(".".into()),
+            must_exist: true,
+        }],
         execution_category: ExecutionCategory::ReadOnly,
         description: Some("Find files by name".into()),
     }
@@ -403,6 +434,12 @@ fn action_ls() -> ActionDef {
         effects: vec![Effect::Read {
             target: "Workspace".into(),
             fields: vec!["files".into()],
+        }],
+        path_fields: vec![PathField {
+            field_name: "path".into(),
+            path_type: PathType::DirectoryPath,
+            default: Some(".".into()),
+            must_exist: true,
         }],
         execution_category: ExecutionCategory::ReadOnly,
         description: Some("List directory contents".into()),
@@ -454,6 +491,12 @@ fn action_bash() -> ActionDef {
         effects: vec![Effect::Exec {
             command: "[dynamic]".into(),
         }],
+        path_fields: vec![PathField {
+            field_name: "workdir".into(),
+            path_type: PathType::WorkDir,
+            default: Some(".".into()),
+            must_exist: true,
+        }],
         execution_category: ExecutionCategory::Shell,
         description: Some("Execute shell command".into()),
     }
@@ -478,6 +521,7 @@ fn action_web_fetch() -> ActionDef {
         effects: vec![Effect::Network {
             destination: "[dynamic]".into(),
         }],
+        path_fields: vec![],
         execution_category: ExecutionCategory::Network,
         description: Some("Fetch web page content".into()),
     }
@@ -502,6 +546,7 @@ fn action_web_search() -> ActionDef {
         effects: vec![Effect::Network {
             destination: "[search]".into(),
         }],
+        path_fields: vec![],
         execution_category: ExecutionCategory::Network,
         description: Some("Search the web".into()),
     }
@@ -765,6 +810,7 @@ fn action_llm_query() -> ActionDef {
             target: "LLM".into(),
             fields: vec!["all".into()],
         }],
+        path_fields: vec![],
         execution_category: ExecutionCategory::ReadOnly,
         description: Some("Query LLM model capabilities, cost, and recommendations".into()),
     }
@@ -800,6 +846,7 @@ fn action_model_switch() -> ActionDef {
             entity: "LLM".into(),
             fields: vec!["active_model".into()],
         }],
+        path_fields: vec![],
         execution_category: ExecutionCategory::Destructive,
         description: Some("Switch the active LLM model".into()),
     }

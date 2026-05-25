@@ -103,6 +103,31 @@ impl Borrow<str> for TypeId {
     }
 }
 
+/// Path type classification for tool argument fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PathType {
+    FilePath,
+    DirectoryPath,
+    WorkDir,
+}
+
+/// Declares a tool argument as a filesystem path field.
+///
+/// When attached to an `ActionDef`, the normalizer uses this metadata
+/// to automatically resolve relative paths against the workspace root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PathField {
+    /// The argument name (e.g. "path", "workdir").
+    pub field_name: String,
+    /// Type of path (file, directory, or working directory).
+    pub path_type: PathType,
+    /// Optional default value (e.g. "." for current directory).
+    pub default: Option<String>,
+    /// Whether the target must already exist (true for read/edit, false for write).
+    pub must_exist: bool,
+}
+
 /// Entity type definition (≈ Palantir Object Type).
 ///
 /// Fields, invariants, and extends together define the entity's complete
@@ -137,6 +162,9 @@ pub struct ActionDef {
     pub category: EntityCategory,
     pub preconditions: Vec<Constraint>,
     pub effects: Vec<Effect>,
+    /// Path fields in this action's arguments; used by the normalizer for auto-resolution.
+    #[serde(default)]
+    pub path_fields: Vec<PathField>,
     pub execution_category: ExecutionCategory,
     pub description: Option<String>,
 }
@@ -445,6 +473,7 @@ mod tests {
             category: EntityCategory::Domain,
             preconditions: vec![],
             effects: vec![],
+            path_fields: vec![],
             execution_category: ExecutionCategory::ReadOnly,
             description: None,
         };
@@ -464,6 +493,7 @@ mod tests {
             category: EntityCategory::Domain,
             preconditions: vec![],
             effects: vec![],
+            path_fields: vec![],
             execution_category: ExecutionCategory::ReadOnly,
             description: None,
         };
@@ -497,6 +527,7 @@ mod tests {
             category: EntityCategory::Domain,
             preconditions: vec![],
             effects: vec![],
+            path_fields: vec![],
             execution_category: ExecutionCategory::ReadOnly,
             description: None,
         };
@@ -529,6 +560,7 @@ mod tests {
             category: EntityCategory::Domain,
             preconditions: vec![],
             effects: vec![],
+            path_fields: vec![],
             execution_category: ExecutionCategory::ReadOnly,
             description: None,
         };
