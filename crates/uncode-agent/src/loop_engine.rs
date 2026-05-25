@@ -1883,21 +1883,24 @@ impl AgentLoop {
                                             (&mut *adj, &current_model)
                                         {
                                             let budget = gc.cost.budget_per_turn_usd;
+                                            let deny = gc.cost.deny_mode;
                                             let estimated_tokens =
                                                 (model.context_window as f64 * 0.8) as u32;
-                                            adjudicator.add_policy(Box::new(
-                                                crate::decision::bridge::CostBudgetPolicyAdapter::new(
-                                                    budget,
-                                                    std::sync::Arc::new(model.clone()),
-                                                    estimated_tokens,
+                                            adjudicator.replace_policy_by_name(
+                                                "cost_budget",
+                                                Box::new(
+                                                    crate::decision::bridge::CostBudgetPolicyAdapter::new(
+                                                        budget,
+                                                        deny,
+                                                        std::sync::Arc::new(model.clone()),
+                                                        estimated_tokens,
+                                                    ),
                                                 ),
-                                            ));
+                                            );
                                         }
-                                        drop(gc);
                                     }
                                     let mut denied = HashSet::new();
                                     if let Some(ref firewall) = *fw {
-                                        let adj = self.adjudicator.lock().unwrap();
                                         let gc = self.guardrail_config.lock().unwrap();
                                         let max_turns = if gc.decision.turn_limit > 0 {
                                             gc.decision.turn_limit
@@ -1905,6 +1908,7 @@ impl AgentLoop {
                                             crate::loop_engine::DEFAULT_MAX_TURNS as u32
                                         };
                                         drop(gc);
+                                        let adj = self.adjudicator.lock().unwrap();
                                         let decision_ctx =
                                             crate::decision::types::DecisionContext {
                                                 turn_number: turn as u32,

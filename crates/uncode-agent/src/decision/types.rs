@@ -123,6 +123,7 @@ pub struct NormalizedAction {
 pub struct ApprovedAction {
     pub action: NormalizedAction,
     pub adjudicated_at: chrono::DateTime<chrono::Utc>,
+    pub warnings: Vec<String>,
 }
 
 /// 裁决结果
@@ -240,6 +241,7 @@ mod tests {
         let approved = ApprovedAction {
             action,
             adjudicated_at: chrono::Utc::now(),
+            warnings: vec![],
         };
         assert_eq!(approved.action.tool_name, "read");
     }

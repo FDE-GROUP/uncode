@@ -57,12 +57,23 @@ impl Adjudicator {
         self.policies.push(policy);
     }
 
+    pub fn remove_policy_by_name(&mut self, name: &str) {
+        self.policies.retain(|p| p.name() != name);
+    }
+
+    pub fn replace_policy_by_name(&mut self, name: &str, policy: Box<dyn DecisionPolicy>) {
+        self.remove_policy_by_name(name);
+        self.policies.push(policy);
+    }
+
     /// 对所有策略依次裁决。任一策略拒绝则立即返回。
+    /// 通过时聚合所有策略的 violations 到 warnings。
     pub fn adjudicate(
         &self,
         action: &NormalizedAction,
         context: &DecisionContext,
     ) -> Result<ApprovedAction, AdjudicationError> {
+        let mut warnings = Vec::new();
         for policy in &self.policies {
             let verdict = policy.evaluate(context, action)?;
             if !verdict.allowed {
@@ -71,10 +82,12 @@ impl Adjudicator {
                     reason: verdict.reason.unwrap_or_default(),
                 });
             }
+            warnings.extend(verdict.violations);
         }
         Ok(ApprovedAction {
             action: action.clone(),
             adjudicated_at: chrono::Utc::now(),
+            warnings,
         })
     }
 }
@@ -239,11 +252,14 @@ impl DecisionPolicy for ConcurrencyPolicy {
 
 // ── EffectBasedPolicy ────────────────────────────────────
 
-/// 基于本体 Effect 的裁决策略 — ReadOnly 效果自动批准
+/// 基于本体 Effect 的裁决策略 — 记录只读/非只读状态
 ///
-/// 查询 TypeRegistry 中 ActionDef 的 effects，如果所有 effect 均为 ReadOnly，
-/// 则自动批准；否则交给后续策略（如 permission gate）处理。
-/// 当 `auto_approve_readonly=true` 时，该策略对只读动作直接放行。
+/// 在 Policy chain 中，每个 policy 返回 `approved()` 表示"本策略不拒绝"，
+/// 返回 `Denied` 表示"本策略阻止"。
+///
+/// 当前实现不阻止任何动作（所有分支都 approved），仅作为 Effect 信息的占位。
+/// 后续可通过在 verdict.violations 中记录非只读警告，或对特定非只读动作
+/// 返回 Denied 来增强。
 pub struct EffectBasedPolicy {
     registry: uncode_ontology::TypeRegistry,
     auto_approve_readonly: bool,
@@ -269,16 +285,26 @@ impl DecisionPolicy for EffectBasedPolicy {
         }
 
         let Some(action_def) = self.registry.get_action(&action.tool_name) else {
-            // 未知工具不在本体范围内，不干预
             return Ok(DecisionVerdict::approved());
         };
 
         if action_def.is_read_only() {
-            // ReadOnly 效果的动作直接批准
             Ok(DecisionVerdict::approved())
         } else {
-            // 非只读动作需要后续策略（如 permission gate）判定
-            Ok(DecisionVerdict::approved())
+            Ok(DecisionVerdict {
+                allowed: true,
+                reason: Some(format!(
+                    "action '{}' has non-read effects: {}",
+                    action.tool_name,
+                    action_def
+                        .effects
+                        .iter()
+                        .map(|e| format!("{e}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )),
+                violations: vec![],
+            })
         }
     }
 

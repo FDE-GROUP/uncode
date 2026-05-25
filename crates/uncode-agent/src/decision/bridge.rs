@@ -188,9 +188,14 @@ pub struct CostBudgetPolicyAdapter {
 }
 
 impl CostBudgetPolicyAdapter {
-    pub fn new(budget_per_turn_usd: f64, model: Arc<Model>, context_tokens: u32) -> Self {
+    pub fn new(
+        budget_per_turn_usd: f64,
+        deny_mode: bool,
+        model: Arc<Model>,
+        context_tokens: u32,
+    ) -> Self {
         Self {
-            inner: CostBudgetPolicy::new(budget_per_turn_usd),
+            inner: CostBudgetPolicy::new(budget_per_turn_usd).with_deny_mode(deny_mode),
             model,
             context_tokens,
         }
@@ -275,7 +280,7 @@ impl ModelCapabilityRule {
         let ext = path.rsplit('.').next().unwrap_or("").to_lowercase();
         matches!(
             ext.as_str(),
-            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "svg"
+            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp"
         )
     }
 }
@@ -526,7 +531,7 @@ mod tests {
         assert!(ModelCapabilityRule::needs_vision("photo.jpg"));
         assert!(ModelCapabilityRule::needs_vision("pic.JPEG"));
         assert!(ModelCapabilityRule::needs_vision("anim.gif"));
-        assert!(ModelCapabilityRule::needs_vision("icon.svg"));
+        assert!(!ModelCapabilityRule::needs_vision("icon.svg"));
         assert!(!ModelCapabilityRule::needs_vision("main.rs"));
         assert!(!ModelCapabilityRule::needs_vision("data.json"));
         assert!(!ModelCapabilityRule::needs_vision("readme.md"));

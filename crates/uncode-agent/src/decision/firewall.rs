@@ -741,13 +741,12 @@ mod tests {
         let cwd = std::env::current_dir().unwrap();
         let firewall = build_default_firewall(policy, registry, cwd);
 
-        // 注意：read 需要 tool 在 registry 中注册才能通过 SchemaCoercionRule
         let raw = make_proposal("grep", serde_json::json!({"pattern": "fn main"}));
         let result = firewall.process(&raw);
-        // grep 不注册会失败在 SchemaCoercion
-        // 验证流程能运行到 SchemaCoercion 阶段
-        assert!(true); // schema check may fail but pipeline structure is verified
-        let _ = result;
+        assert!(
+            result.is_err(),
+            "unregistered grep should fail at SchemaCoercion"
+        );
     }
 
     #[test]

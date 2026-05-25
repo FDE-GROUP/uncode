@@ -458,11 +458,17 @@ pub fn system_resource_ontology() -> TypeRegistry {
     reg
 }
 
-/// Build the full ontology — domain + system resource.
+static FULL_ONTOLOGY: std::sync::OnceLock<TypeRegistry> = std::sync::OnceLock::new();
+
+/// Build the full ontology — domain + system resource (cached).
 pub fn full_ontology() -> TypeRegistry {
-    let domain = coding_agent_ontology();
-    let system = system_resource_ontology();
-    domain.merge(system)
+    FULL_ONTOLOGY
+        .get_or_init(|| {
+            let domain = coding_agent_ontology();
+            let system = system_resource_ontology();
+            domain.merge(system)
+        })
+        .clone()
 }
 
 fn entity_llm() -> EntityDef {

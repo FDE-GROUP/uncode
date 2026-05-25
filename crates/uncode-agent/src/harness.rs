@@ -121,11 +121,12 @@ impl AgentHarness {
         );
         let cancel_token = tokio_util::sync::CancellationToken::new();
         let turn_limit = agent.guardrail_config().decision.turn_limit;
+        let active_run = agent.active_run_handle();
         let adjudicator = crate::decision::adjudication::build_default_adjudicator(
             (*phase_guard).clone(),
             cancel_token,
             turn_limit,
-            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            active_run,
         );
         agent.set_adjudicator(adjudicator);
         agent.load_custom_policies();
