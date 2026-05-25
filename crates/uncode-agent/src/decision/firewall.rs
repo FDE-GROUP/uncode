@@ -184,7 +184,8 @@ impl DeclarativeNormalizer {
     /// Build from an ontology TypeRegistry — uses Domain category only.
     pub fn from_registry(registry: &uncode_ontology::TypeRegistry) -> Self {
         Self {
-            field_mapping: registry.field_aliases_by_category(uncode_ontology::EntityCategory::Domain),
+            field_mapping: registry
+                .field_aliases_by_category(uncode_ontology::EntityCategory::Domain),
             defaults: registry.defaults_by_category(uncode_ontology::EntityCategory::Domain),
         }
     }
@@ -538,21 +539,43 @@ impl ValidationRule for OntologyConstraintRule {
 
 // ── Composite builder ───────────────────────────────────
 
+pub struct FirewallModelInfo {
+    pub current_model: Arc<uncode_ai::model::Model>,
+    pub all_models: Arc<Vec<uncode_ai::model::Model>>,
+}
+
 /// 使用默认配置构建完整的 SemanticFirewall
 pub fn build_default_firewall(
     policy: Arc<crate::tool_permission::PermissionPolicy>,
     registry: Arc<ToolRegistry>,
     cwd: std::path::PathBuf,
 ) -> SemanticFirewall {
-    let ontology = uncode_ontology::builtin::coding_agent_ontology();
+    build_default_firewall_with_model(policy, registry, cwd, None)
+}
+
+pub fn build_default_firewall_with_model(
+    policy: Arc<crate::tool_permission::PermissionPolicy>,
+    registry: Arc<ToolRegistry>,
+    cwd: std::path::PathBuf,
+    model_info: Option<FirewallModelInfo>,
+) -> SemanticFirewall {
+    let ontology = uncode_ontology::builtin::full_ontology();
+    let mut validators: Vec<Box<dyn ValidationRule>> = vec![
+        Box::new(OntologyConstraintRule::new(ontology.clone())),
+        Box::new(SchemaCoercionRule::new(Arc::clone(&registry))),
+        Box::new(PathSafetyRule::new(cwd)),
+        Box::new(PermissionPolicyRule::new(policy)),
+    ];
+    if let Some(info) = model_info {
+        validators.push(Box::new(crate::decision::bridge::ModelCapabilityRule::new(
+            ontology.clone(),
+            info.all_models,
+            info.current_model,
+        )));
+    }
     SemanticFirewall {
         parser: Box::new(DefaultParser),
-        validators: vec![
-            Box::new(OntologyConstraintRule::new(ontology.clone())),
-            Box::new(SchemaCoercionRule::new(Arc::clone(&registry))),
-            Box::new(PathSafetyRule::new(cwd)),
-            Box::new(PermissionPolicyRule::new(policy)),
-        ],
+        validators,
         normalizer: Box::new(DeclarativeNormalizer::from_registry(&ontology)),
     }
 }
@@ -563,12 +586,21 @@ pub fn build_firewall_from_config(
     registry: Arc<ToolRegistry>,
     cwd: std::path::PathBuf,
 ) -> SemanticFirewall {
+    build_firewall_from_config_with_model(config, registry, cwd, None)
+}
+
+pub fn build_firewall_from_config_with_model(
+    config: &uncode_shared::guardrails::GuardrailConfig,
+    registry: Arc<ToolRegistry>,
+    cwd: std::path::PathBuf,
+    model_info: Option<FirewallModelInfo>,
+) -> SemanticFirewall {
     let policy = Arc::new(crate::tool_permission::PermissionPolicy::default_policy());
     let auto_allow = matches!(
         config.firewall.tool_whitelist.mode,
         uncode_shared::guardrails::ToolWhitelistMode::All
     );
-    let ontology = uncode_ontology::builtin::coding_agent_ontology();
+    let ontology = uncode_ontology::builtin::full_ontology();
 
     let path_rule = match &config.firewall.path_safety.mode {
         uncode_shared::guardrails::PathSafetyMode::CwdOnly => PathSafetyRule::new(cwd),
@@ -578,14 +610,22 @@ pub fn build_firewall_from_config(
         uncode_shared::guardrails::PathSafetyMode::Unrestricted => PathSafetyRule::unrestricted(),
     };
 
+    let mut validators: Vec<Box<dyn ValidationRule>> = vec![
+        Box::new(OntologyConstraintRule::new(ontology.clone())),
+        Box::new(SchemaCoercionRule::new(Arc::clone(&registry))),
+        Box::new(path_rule),
+        Box::new(PermissionPolicyRule::new(policy).with_auto_allow(auto_allow, auto_allow)),
+    ];
+    if let Some(info) = model_info {
+        validators.push(Box::new(crate::decision::bridge::ModelCapabilityRule::new(
+            ontology.clone(),
+            info.all_models,
+            info.current_model,
+        )));
+    }
     SemanticFirewall {
         parser: Box::new(DefaultParser),
-        validators: vec![
-            Box::new(OntologyConstraintRule::new(ontology.clone())),
-            Box::new(SchemaCoercionRule::new(Arc::clone(&registry))),
-            Box::new(path_rule),
-            Box::new(PermissionPolicyRule::new(policy).with_auto_allow(auto_allow, auto_allow)),
-        ],
+        validators,
         normalizer: Box::new(DeclarativeNormalizer::from_registry(&ontology)),
     }
 }

@@ -209,7 +209,10 @@ mod tests {
             description: None,
         };
         let mut fields = test_fields();
-        fields.insert("api_protocol".into(), serde_json::json!("openai-completions"));
+        fields.insert(
+            "api_protocol".into(),
+            serde_json::json!("openai-completions"),
+        );
         let result = evaluate_derivation(&rule, &fields).unwrap();
         assert_eq!(result.value, serde_json::json!(true));
     }
@@ -341,9 +344,7 @@ mod tests {
             entity_type: TypeId("LLM".into()),
             source_fields: vec![],
             derived_field: "y".into(),
-            expression: DerivationExpr::Alias {
-                source: "z".into(),
-            },
+            expression: DerivationExpr::Alias { source: "z".into() },
             description: None,
         };
         assert!(evaluate_traversal(&ontology, &derivation).is_none());

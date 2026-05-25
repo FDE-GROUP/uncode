@@ -187,9 +187,7 @@ impl LLMQueryTool {
     }
 
     fn query_recommend(&self, arguments: &serde_json::Value) -> Result<String, String> {
-        let context_tokens = arguments["context_tokens"]
-            .as_u64()
-            .unwrap_or(0) as u32;
+        let context_tokens = arguments["context_tokens"].as_u64().unwrap_or(0) as u32;
 
         let mut candidates: Vec<&Model> = self.models.iter().collect();
 
@@ -215,9 +213,7 @@ impl LLMQueryTool {
         });
 
         if candidates.is_empty() {
-            return Ok(format!(
-                "no models with context_window >= {context_tokens}"
-            ));
+            return Ok(format!("no models with context_window >= {context_tokens}"));
         }
 
         let max_results = arguments["max_results"].as_u64().unwrap_or(3) as usize;
@@ -226,8 +222,7 @@ impl LLMQueryTool {
             .take(max_results)
             .map(|m| {
                 let mut suffix = String::new();
-                if m
-                    .input_modalities
+                if m.input_modalities
                     .contains(&uncode_ai::api_types::InputModality::Image)
                 {
                     suffix.push_str(" +vision");
@@ -237,20 +232,12 @@ impl LLMQueryTool {
                 }
                 format!(
                     "{} ({}): ctx={}{}, in=${:.2}/M, out=${:.2}/M",
-                    m.id,
-                    m.provider,
-                    m.context_window,
-                    suffix,
-                    m.pricing.input,
-                    m.pricing.output,
+                    m.id, m.provider, m.context_window, suffix, m.pricing.input, m.pricing.output,
                 )
             })
             .collect();
 
-        Ok(format!(
-            "Recommended models:\n{}",
-            results.join("\n")
-        ))
+        Ok(format!("Recommended models:\n{}", results.join("\n")))
     }
 }
 
@@ -515,9 +502,7 @@ mod tests {
     #[tokio::test]
     async fn test_unknown_query_type() {
         let tool = make_tool();
-        let result = tool
-            .execute(serde_json::json!({"query": "invalid"}))
-            .await;
+        let result = tool.execute(serde_json::json!({"query": "invalid"})).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("unknown query"));
     }

@@ -600,7 +600,9 @@ fn entity_capability() -> EntityDef {
                 required: true,
                 default: None,
                 aliases: vec!["capability".into()],
-                description: Some("Capability name (e.g. \"vision\", \"reasoning\", \"tool_use\")".into()),
+                description: Some(
+                    "Capability name (e.g. \"vision\", \"reasoning\", \"tool_use\")".into(),
+                ),
             },
             FieldDef {
                 name: "capability_type".into(),
@@ -608,7 +610,9 @@ fn entity_capability() -> EntityDef {
                 required: true,
                 default: None,
                 aliases: vec!["type".into(), "category".into()],
-                description: Some("Capability category: input_modality, reasoning, interaction".into()),
+                description: Some(
+                    "Capability category: input_modality, reasoning, interaction".into(),
+                ),
             },
         ],
         description: Some("Model capability declaration".into()),
@@ -802,7 +806,10 @@ fn rule_total_cost_derivation() -> ReasoningRule {
     ReasoningRule::Derivation {
         id: TypeId("total_cost_per_million".into()),
         entity_type: TypeId("LLM".into()),
-        source_fields: vec!["pricing_input_per_million".into(), "pricing_output_per_million".into()],
+        source_fields: vec![
+            "pricing_input_per_million".into(),
+            "pricing_output_per_million".into(),
+        ],
         derived_field: "total_cost_per_million".into(),
         expression: DerivationExpr::Arithmetic {
             left_field: "pricing_input_per_million".into(),
@@ -960,7 +967,10 @@ mod tests {
         assert_eq!(aliases.get("model").unwrap(), "model_id");
         assert_eq!(aliases.get("max_context").unwrap(), "context_window");
         assert_eq!(aliases.get("vision").unwrap(), "supports_vision");
-        assert_eq!(aliases.get("input_cost").unwrap(), "pricing_input_per_million");
+        assert_eq!(
+            aliases.get("input_cost").unwrap(),
+            "pricing_input_per_million"
+        );
     }
 
     #[test]
@@ -1010,7 +1020,9 @@ mod tests {
     #[test]
     fn test_link_workspace_contains_file() {
         let reg = coding_agent_ontology();
-        let link = reg.get_link(&TypeId("Workspace_contains_File".into())).unwrap();
+        let link = reg
+            .get_link(&TypeId("Workspace_contains_File".into()))
+            .unwrap();
         assert_eq!(link.source_type, TypeId("Workspace".into()));
         assert_eq!(link.target_type, TypeId("File".into()));
         assert_eq!(link.cardinality, Cardinality::OneToMany);
@@ -1053,7 +1065,9 @@ mod tests {
         let inv = reg.inverse_link(&TypeId("Workspace_contains_File".into()));
         assert!(inv.is_none()); // inverse ID exists but link not registered
 
-        let link = reg.get_link(&TypeId("Workspace_contains_File".into())).unwrap();
+        let link = reg
+            .get_link(&TypeId("Workspace_contains_File".into()))
+            .unwrap();
         assert_eq!(
             link.inverse,
             Some(TypeId("File_belongs_to_Workspace".into()))
@@ -1063,9 +1077,7 @@ mod tests {
     #[test]
     fn test_llm_capability_link() {
         let reg = system_resource_ontology();
-        let link = reg
-            .get_link(&TypeId("LLM_has_Capability".into()))
-            .unwrap();
+        let link = reg.get_link(&TypeId("LLM_has_Capability".into())).unwrap();
         assert_eq!(link.source_type, TypeId("LLM".into()));
         assert_eq!(link.target_type, TypeId("Capability".into()));
         assert_eq!(link.cardinality, Cardinality::OneToMany);
@@ -1141,6 +1153,9 @@ mod tests {
     fn test_reasoning_rules_for_llm() {
         let reg = full_ontology();
         let rules = reg.reasoning_rules_for_entity(&TypeId("LLM".into()));
-        assert!(rules.len() >= 3, "LLM should have traversal + derivation rules");
+        assert!(
+            rules.len() >= 3,
+            "LLM should have traversal + derivation rules"
+        );
     }
 }

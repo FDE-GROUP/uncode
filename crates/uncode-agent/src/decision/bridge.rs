@@ -19,7 +19,8 @@ use std::sync::Arc;
 use uncode_ai::api_types::InputModality;
 use uncode_ai::model::Model;
 
-use super::types::DecisionVerdict;
+use super::firewall::{ValidationError, ValidationRule, ValidationVerdict};
+use super::types::{DecisionVerdict, ParsedAction};
 
 /// 模型桥接 — Model ↔ 本体字段的映射工具
 pub struct ModelBridge;
@@ -45,9 +46,7 @@ impl ModelBridge {
         );
         fields.insert(
             "supports_vision".into(),
-            serde_json::json!(model
-                .input_modalities
-                .contains(&InputModality::Image)),
+            serde_json::json!(model.input_modalities.contains(&InputModality::Image)),
         );
         fields.insert(
             "supports_reasoning".into(),
@@ -123,8 +122,7 @@ impl ModelBridge {
     /// 输入端用 `context_tokens`，输出端用 `max_output_tokens` 作为上界。
     pub fn estimate_turn_cost(model: &Model, context_tokens: u32) -> f64 {
         let input_cost = (context_tokens as f64 / 1_000_000.0) * model.pricing.input;
-        let output_cost =
-            (model.max_output_tokens as f64 / 1_000_000.0) * model.pricing.output;
+        let output_cost = (model.max_output_tokens as f64 / 1_000_000.0) * model.pricing.output;
         input_cost + output_cost
     }
 }
@@ -156,11 +154,7 @@ impl CostBudgetPolicy {
     }
 
     /// 检查模型在给定 context tokens 下的预估成本
-    pub fn check(
-        &self,
-        model: &Model,
-        context_tokens: u32,
-    ) -> DecisionVerdict {
+    pub fn check(&self, model: &Model, context_tokens: u32) -> DecisionVerdict {
         let cost = ModelBridge::estimate_turn_cost(model, context_tokens);
         if cost <= self.budget_per_turn_usd {
             return DecisionVerdict::approved();
@@ -184,6 +178,47 @@ impl CostBudgetPolicy {
 }
 
 // ═══════════════════════════════════════════════════════════
+// CostBudgetPolicyAdapter — DecisionPolicy trait adapter
+// ═══════════════════════════════════════════════════════════
+
+pub struct CostBudgetPolicyAdapter {
+    inner: CostBudgetPolicy,
+    model: Arc<Model>,
+    context_tokens: u32,
+}
+
+impl CostBudgetPolicyAdapter {
+    pub fn new(budget_per_turn_usd: f64, model: Arc<Model>, context_tokens: u32) -> Self {
+        Self {
+            inner: CostBudgetPolicy::new(budget_per_turn_usd),
+            model,
+            context_tokens,
+        }
+    }
+}
+
+impl super::adjudication::DecisionPolicy for CostBudgetPolicyAdapter {
+    fn evaluate(
+        &self,
+        _context: &super::types::DecisionContext,
+        _action: &super::types::NormalizedAction,
+    ) -> Result<DecisionVerdict, super::adjudication::AdjudicationError> {
+        let verdict = self.inner.check(&self.model, self.context_tokens);
+        if !verdict.allowed {
+            return Err(super::adjudication::AdjudicationError::Denied {
+                policy: self.name().to_string(),
+                reason: verdict.reason.unwrap_or_default(),
+            });
+        }
+        Ok(verdict)
+    }
+
+    fn name(&self) -> &'static str {
+        "cost_budget"
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
 // ModelCapabilityRule — 防火墙中的模型能力校验
 // ═══════════════════════════════════════════════════════════
 
@@ -194,14 +229,20 @@ impl CostBudgetPolicy {
 pub struct ModelCapabilityRule {
     pub ontology: uncode_ontology::TypeRegistry,
     pub models: Arc<Vec<Model>>,
+    pub current_model: Arc<Model>,
 }
 
 impl ModelCapabilityRule {
     pub fn new(
         ontology: uncode_ontology::TypeRegistry,
         models: Arc<Vec<Model>>,
+        current_model: Arc<Model>,
     ) -> Self {
-        Self { ontology, models }
+        Self {
+            ontology,
+            models,
+            current_model,
+        }
     }
 
     /// 检查模型是否支持指定能力
@@ -243,6 +284,44 @@ impl ModelCapabilityRule {
 pub enum CapabilityCheckResult {
     Supported,
     Unsupported { alternatives: Vec<String> },
+}
+
+impl ValidationRule for ModelCapabilityRule {
+    fn validate(&self, action: &ParsedAction) -> Result<ValidationVerdict, ValidationError> {
+        let needs_check = action.tool_name == "read"
+            && action
+                .arguments
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(Self::needs_vision)
+                .unwrap_or(false);
+
+        if !needs_check {
+            return Ok(ValidationVerdict::approved());
+        }
+
+        let result = self.check_capability(&self.current_model, "supports_vision");
+        match result {
+            CapabilityCheckResult::Supported => Ok(ValidationVerdict::approved()),
+            CapabilityCheckResult::Unsupported { alternatives } => {
+                let msg = format!(
+                    "model '{}' does not support vision but read targets an image file. \
+                     Consider switching to: {}",
+                    self.current_model.id,
+                    alternatives.join(", ")
+                );
+                Ok(ValidationVerdict {
+                    approved: true,
+                    reason: Some(msg.clone()),
+                    violations: vec![msg],
+                })
+            }
+        }
+    }
+
+    fn name(&self) -> &'static str {
+        "model_capability"
+    }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -308,7 +387,9 @@ mod tests {
         let model = test_model("valid-model", false, false);
         let results = ModelBridge::validate_model(&ontology, &model);
         assert!(
-            results.iter().all(|r| matches!(r, uncode_ontology::ConstraintResult::Pass)),
+            results
+                .iter()
+                .all(|r| matches!(r, uncode_ontology::ConstraintResult::Pass)),
             "valid model should pass all required field checks"
         );
     }
@@ -319,7 +400,9 @@ mod tests {
         let model = test_model("any", false, false);
         let results = ModelBridge::validate_model(&ontology, &model);
         assert!(
-            results.iter().any(|r| matches!(r, uncode_ontology::ConstraintResult::Fail { .. })),
+            results
+                .iter()
+                .any(|r| matches!(r, uncode_ontology::ConstraintResult::Fail { .. })),
             "should fail when LLM entity not in domain-only ontology"
         );
     }
@@ -415,23 +498,20 @@ mod tests {
     #[test]
     fn test_capability_check_supported() {
         let ontology = uncode_ontology::builtin::full_ontology();
-        let models = Arc::new(vec![test_model("v", false, true)]);
-        let rule = ModelCapabilityRule::new(ontology, models);
-        let model = test_model("v", false, true);
-        let result = rule.check_capability(&model, "supports_vision");
+        let current = test_model("v", false, true);
+        let models = Arc::new(vec![current.clone()]);
+        let rule = ModelCapabilityRule::new(ontology, models, Arc::new(current));
+        let result = rule.check_capability(&rule.current_model, "supports_vision");
         assert!(matches!(result, CapabilityCheckResult::Supported));
     }
 
     #[test]
     fn test_capability_check_unsupported_with_alternatives() {
         let ontology = uncode_ontology::builtin::full_ontology();
-        let models = Arc::new(vec![
-            test_model("text", false, false),
-            test_model("vision", false, true),
-        ]);
-        let rule = ModelCapabilityRule::new(ontology, models);
-        let model = test_model("text", false, false);
-        let result = rule.check_capability(&model, "supports_vision");
+        let current = test_model("text", false, false);
+        let models = Arc::new(vec![current.clone(), test_model("vision", false, true)]);
+        let rule = ModelCapabilityRule::new(ontology, models, Arc::new(current));
+        let result = rule.check_capability(&rule.current_model, "supports_vision");
         match result {
             CapabilityCheckResult::Unsupported { alternatives } => {
                 assert_eq!(alternatives, vec!["vision"]);
@@ -450,5 +530,38 @@ mod tests {
         assert!(!ModelCapabilityRule::needs_vision("main.rs"));
         assert!(!ModelCapabilityRule::needs_vision("data.json"));
         assert!(!ModelCapabilityRule::needs_vision("readme.md"));
+    }
+
+    #[test]
+    fn test_validation_rule_blocks_image_read_for_non_vision_model() {
+        let ontology = uncode_ontology::builtin::full_ontology();
+        let current = test_model("text-only", false, false);
+        let models = Arc::new(vec![
+            current.clone(),
+            test_model("vision-model", false, true),
+        ]);
+        let rule = ModelCapabilityRule::new(ontology, models, Arc::new(current));
+        let action = ParsedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"path": "/tmp/image.png"}),
+        };
+        let verdict = rule.validate(&action).unwrap();
+        assert!(verdict.approved, "Phase 1 warn mode should still allow");
+        assert!(!verdict.violations.is_empty());
+    }
+
+    #[test]
+    fn test_validation_rule_allows_text_read() {
+        let ontology = uncode_ontology::builtin::full_ontology();
+        let current = test_model("text-only", false, false);
+        let models = Arc::new(vec![current.clone()]);
+        let rule = ModelCapabilityRule::new(ontology, models, Arc::new(current));
+        let action = ParsedAction {
+            tool_name: "read".into(),
+            arguments: serde_json::json!({"path": "/tmp/main.rs"}),
+        };
+        let verdict = rule.validate(&action).unwrap();
+        assert!(verdict.approved);
+        assert!(verdict.violations.is_empty());
     }
 }

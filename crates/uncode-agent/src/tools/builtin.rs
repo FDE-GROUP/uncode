@@ -14,7 +14,16 @@ use super::{
 };
 
 /// Pi `coding-agent` built-in tool names (no web tools).
-pub const PI_BUILTIN_TOOL_NAMES: &[&str] = &["read", "write", "edit", "bash", "grep", "find", "ls"];
+pub const PI_BUILTIN_TOOL_NAMES: &[&str] = &[
+    "read",
+    "write",
+    "edit",
+    "bash",
+    "grep",
+    "find",
+    "ls",
+    "llm_query",
+];
 
 /// CLI / harness options for which tools are exposed to the LLM.
 #[derive(Debug, Clone, Default)]
@@ -184,8 +193,8 @@ mod tests {
         )
         .unwrap();
         assert!(reg.is_active("web_fetch"));
-        assert!(reg.is_active("llm_query"));
+        assert!(!reg.is_active("llm_query"));
         assert!(!reg.is_active("read"));
-        assert_eq!(reg.definitions().len(), 2);
+        assert_eq!(reg.definitions().len(), 1);
     }
 }

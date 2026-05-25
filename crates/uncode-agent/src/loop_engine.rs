@@ -1858,13 +1858,41 @@ impl AgentLoop {
                                     let mut fw = self.firewall.lock().unwrap();
                                     if fw.is_none() {
                                         let gc = self.guardrail_config.lock().unwrap();
+                                        let current_model = self.model_registry.get(&self.model_id);
+                                        let model_info = current_model.as_ref().map(|m| {
+                                            crate::decision::firewall::FirewallModelInfo {
+                                                current_model: std::sync::Arc::new(m.clone()),
+                                                all_models: std::sync::Arc::new(
+                                                    self.model_registry.all_models(),
+                                                ),
+                                            }
+                                        });
                                         *fw = Some(
-                                            crate::decision::firewall::build_firewall_from_config(
+                                            crate::decision::firewall::build_firewall_from_config_with_model(
                                                 &gc,
                                                 Arc::clone(&self.tool_registry),
                                                 std::env::current_dir().unwrap_or_default(),
+                                                model_info,
                                             ),
                                         );
+                                        drop(gc);
+
+                                        // Wire CostBudgetPolicy into adjudicator (warn mode)
+                                        let mut adj = self.adjudicator.lock().unwrap();
+                                        if let (Some(adjudicator), Some(model)) =
+                                            (&mut *adj, &current_model)
+                                        {
+                                            let budget_per_turn_usd = 1.0;
+                                            let estimated_tokens =
+                                                (model.context_window as f64 * 0.8) as u32;
+                                            adjudicator.add_policy(Box::new(
+                                                crate::decision::bridge::CostBudgetPolicyAdapter::new(
+                                                    budget_per_turn_usd,
+                                                    std::sync::Arc::new(model.clone()),
+                                                    estimated_tokens,
+                                                ),
+                                            ));
+                                        }
                                     }
                                     let mut denied = HashSet::new();
                                     if let Some(ref firewall) = *fw {

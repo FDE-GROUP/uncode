@@ -78,7 +78,7 @@ Implements the paradigm defined in [`docs/agent-archi/`](docs/agent-archi/README
 | **决策层** | `uncode-agent/src/decision/` (proposal → adjudication → execution → audit) | ⚠️ 管线已是前门控模式，但 ActionProposal 缺少上下文字段，需补全并发射细粒度事件 |
 | **治理层** | `uncode-shared/src/guardrails.rs` + `uncode-core/src/event.rs` + `AgentHarness` | ⚠️ GuardrailConfig 已定义但未运行时加载；EventRouter 未接入主循环 |
 
-**核心缺口**：`uncode-ontology` 已实现领域语义本体（9 工具 + 3 实体）+ 系统资源语义本体（LLM/Provider/Capability + 2 Action）+ 关系类型（LinkDef，5 条内置）。工具权限已通过 `ExecutionCategory` 和 `OntologyConstraintRule` 对接本体，但 `GuardrailConfig` 尚未在运行时加载。剩余缺口：ReasoningRule（约束链 + 关系遍历）、本体版本管理。详见重构计划和技术方案。
+**核心缺口**：`uncode-ontology` 已实现完整六大要素（EntityDef / ActionDef / FieldDef / Constraint / Effect / LinkDef）+ ReasoningRule（5 条内置）。工具权限已通过 `ExecutionCategory` 和 `OntologyConstraintRule` 对接本体，但 `GuardrailConfig` 尚未在运行时加载。剩余缺口：本体版本管理。详见重构计划和技术方案。
 
 ### Compaction
 

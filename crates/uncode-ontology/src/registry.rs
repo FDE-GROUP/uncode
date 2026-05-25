@@ -102,7 +102,9 @@ impl TypeRegistry {
             .values()
             .filter(|rule| match rule {
                 ReasoningRule::Traversal { source_type, .. } => source_type == entity_type,
-                ReasoningRule::Derivation { entity_type: et, .. } => et == entity_type,
+                ReasoningRule::Derivation {
+                    entity_type: et, ..
+                } => et == entity_type,
             })
             .collect()
     }
@@ -138,10 +140,7 @@ impl TypeRegistry {
     }
 
     /// Collect field aliases for actions matching the given category: alias → canonical name.
-    pub fn field_aliases_by_category(
-        &self,
-        category: EntityCategory,
-    ) -> HashMap<String, String> {
+    pub fn field_aliases_by_category(&self, category: EntityCategory) -> HashMap<String, String> {
         let mut map = HashMap::new();
         for action in self.actions.values().filter(|a| a.category == category) {
             for field in &action.fields {
