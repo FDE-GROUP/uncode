@@ -312,6 +312,8 @@ pub struct TuiEngine {
     custom_indicator: Option<crate::custom_layout::CustomIndicator>,
     /// Pending question from agent (Question tool).
     pending_question: Option<Box<uncode_core::event::QuestionRequestData>>,
+    /// Shortcut help overlay visible state.
+    show_shortcut_help: bool,
 }
 
 impl TuiEngine {
@@ -375,6 +377,7 @@ impl TuiEngine {
             custom_footer: None,
             custom_indicator: None,
             pending_question: None,
+            show_shortcut_help: false,
         }
     }
 
@@ -602,6 +605,10 @@ impl TuiEngine {
 
     /// ESC 键处理：按优先级 — 拒绝权限 → 中断 Agent → 清除焦点 → 关闭覆盖层 → 关闭 Overlay
     pub fn handle_esc(&mut self) {
+        if self.show_shortcut_help {
+            self.show_shortcut_help = false;
+            return;
+        }
         if self.permission.has_pending() {
             if let Some(p) = self.permission.deny() {
                 self.resolve_permission(&p.tool_id, Approval::Deny);
@@ -718,6 +725,9 @@ impl TuiEngine {
         self.dialog.render(f, f.area());
         self.overlay_manager.render(f, f.area());
         self.welcome.render(f, f.area());
+        if self.show_shortcut_help {
+            self.render_shortcut_help(f, f.area());
+        }
     }
 
     fn render_chat(&mut self, f: &mut Frame, area: ratatui::layout::Rect) {
@@ -1020,6 +1030,92 @@ impl TuiEngine {
         f.render_widget(Paragraph::new(Text::from(visible)), inner_area);
     }
 
+    /// Render keyboard shortcuts help panel overlay.
+    fn render_shortcut_help(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        let help_width = 60u16;
+        let help_height = 22u16;
+        let dx = (area.width.saturating_sub(help_width)) / 2;
+        let dy = (area.height.saturating_sub(help_height)) / 2;
+        let help_rect =
+            ratatui::layout::Rect::new(area.x + dx, area.y + dy, help_width, help_height);
+
+        let block = ratatui::widgets::Block::bordered()
+            .border_style(Style::default().fg(self.theme.tool_status.running))
+            .title(" Keyboard Shortcuts (Ctrl+H / F1 to toggle) ")
+            .title_alignment(ratatui::layout::Alignment::Center)
+            .style(Style::default().bg(self.theme.ui.footer_bg));
+        let inner = block.inner(help_rect);
+        f.render_widget(block, help_rect);
+
+        let key_style = Style::default().fg(self.theme.tool_status.running).bold();
+        let desc_style = Style::default().fg(self.theme.ui.footer_text);
+
+        let sections: &[(&str, &[(&str, &str)])] = &[
+            (
+                "Navigation",
+                &[
+                    ("Ctrl+J / ↓", "Focus next card"),
+                    ("Ctrl+K / ↑", "Focus previous card"),
+                    ("Space", "Toggle expand/collapse"),
+                    ("Esc", "Dismiss / cancel / interrupt"),
+                    ("PgUp / PgDn", "Scroll up / down"),
+                ],
+            ),
+            (
+                "Tools",
+                &[
+                    ("Ctrl+O", "Toggle tool output visibility"),
+                    ("Ctrl+N", "New session"),
+                ],
+            ),
+            ("Thinking", &[("Ctrl+T", "Toggle thinking visibility")]),
+            (
+                "Model",
+                &[
+                    ("Ctrl+L", "Open model selector"),
+                    ("Ctrl+P", "Cycle next model"),
+                ],
+            ),
+            (
+                "Session",
+                &[
+                    ("Ctrl+R", "Retry last prompt"),
+                    ("Ctrl+/", "Undo last edit"),
+                    ("Ctrl+G", "Open editor at change site"),
+                ],
+            ),
+            (
+                "Editing",
+                &[
+                    ("Ctrl+C", "Copy last assistant message"),
+                    ("Ctrl+H / F1", "Toggle this help panel"),
+                ],
+            ),
+        ];
+
+        let mut lines: Vec<Line<'_>> = Vec::new();
+        for (section_title, keys) in sections {
+            if !lines.is_empty() {
+                lines.push(Line::raw(""));
+            }
+            lines.push(Line::from(Span::styled(
+                format!("  {section_title}"),
+                key_style,
+            )));
+            for (key, desc) in *keys {
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(format!("{key:<18}"), key_style),
+                    Span::styled(*desc, desc_style),
+                ]));
+            }
+        }
+
+        let max_visible = inner.height as usize;
+        let visible: Vec<Line<'_>> = lines.into_iter().take(max_visible).collect();
+        f.render_widget(Paragraph::new(Text::from(visible)), inner);
+    }
+
     fn render_header(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         if let Some(ref header) = self.custom_header {
             let height = header.line_count() as u16;
@@ -1191,6 +1287,14 @@ impl TuiEngine {
                                 continue;
                             }
 
+                            // Shortcut help: consume all keys except toggle/ESC
+                            if self.show_shortcut_help
+                                && !matches!(key_event.code, KeyCode::F(1))
+                                && !(ctrl && key_event.code == KeyCode::Char('h'))
+                            {
+                                continue;
+                            }
+
                             // Dialog overlay takes priority when visible
                             if self.dialog.is_visible() {
                                 if let Some(response) = self.dialog.handle_key(key_event) {
@@ -1246,6 +1350,13 @@ impl TuiEngine {
                                 // Leader key prefix
                                 KeyCode::Char('x') if ctrl => {
                                     self.leader_pending = true;
+                                }
+                                // Shortcut help overlay
+                                KeyCode::Char('h') if ctrl => {
+                                    self.show_shortcut_help = !self.show_shortcut_help;
+                                }
+                                KeyCode::F(1) => {
+                                    self.show_shortcut_help = !self.show_shortcut_help;
                                 }
                                 // Direct shortcuts
                                 KeyCode::Char('o') if ctrl => {
