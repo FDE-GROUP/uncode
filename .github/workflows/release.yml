@@ -1,0 +1,77 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: uncode
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-release-
+
+      - name: Build release
+        run: cargo build --release -p uncode-cli
+
+      - name: Strip binary
+        run: strip target/release/${{ env.BIN_NAME }}
+
+      - name: Package artifact
+        run: |
+          cd target/release
+          tar czf uncode-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz ${{ env.BIN_NAME }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uncode-${{ github.ref_name }}-x86_64-unknown-linux-gnu
+          path: target/release/uncode-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: uncode-${{ github.ref_name }}-x86_64-unknown-linux-gnu
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body: |
+            ## uncode ${{ github.ref_name }}
+
+            Alpha internal test release.
+
+            ### Install
+
+            ```bash
+            tar xzf uncode-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+            ./uncode --help
+            ```
+
+            ### Prerequisites
+            - Linux x86_64
+            - Rust 1.91+ for building from source
+          files: uncode-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+          prerelease: true

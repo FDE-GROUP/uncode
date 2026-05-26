@@ -24,11 +24,11 @@ enum_variant_names = "allow"
 new_without_default = "warn"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 edition = "2024"
 rust-version = "1.91"
 license = "MIT"
-repository = "https://github.com/FDE-GROUP/uncode"
+repository = "https://github.com/FDE-GROUP/uncodenow"
 authors = ["EA Team"]
 
 [workspace.dependencies]

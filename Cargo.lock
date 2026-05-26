@@ -6378,7 +6378,7 @@ dependencies = [
 
 [[package]]
 name = "uncode-agent"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6412,7 +6412,7 @@ dependencies = [
 
 [[package]]
 name = "uncode-ai"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6433,7 +6433,7 @@ dependencies = [
 
 [[package]]
 name = "uncode-cli"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6461,7 +6461,7 @@ dependencies = [
 
 [[package]]
 name = "uncode-core"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -6483,7 +6483,7 @@ dependencies = [
 
 [[package]]
 name = "uncode-extensions"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6499,7 +6499,7 @@ dependencies = [
 
 [[package]]
 name = "uncode-macros"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6508,7 +6508,7 @@ dependencies = [
 
 [[package]]
 name = "uncode-ontology"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "regex",
  "serde",
@@ -6517,7 +6517,7 @@ dependencies = [
 
 [[package]]
 name = "uncode-platform"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -6536,7 +6536,7 @@ dependencies = [
 
 [[package]]
 name = "uncode-rpc"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6552,7 +6552,7 @@ dependencies = [
 
 [[package]]
 name = "uncode-shared"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "chrono",
  "serde",
@@ -6562,7 +6562,7 @@ dependencies = [
 
 [[package]]
 name = "uncode-tui"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "anyhow",
  "crossterm 0.28.1",
