@@ -27,6 +27,12 @@ pub struct ToolCallEndEventData {
     pub output_size: Option<usize>,
     pub result_summary: Option<String>,
     pub is_error: bool,
+    /// Human-readable tool description (e.g. "Installing dependencies", "Reading config file")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Structured metadata from tool execution (e.g. bytes_written, lines_modified)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +116,9 @@ pub enum AgentEvent {
         /// Built-in tool description from registry (shown in TUI confirm UI).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool_description: Option<String>,
+        /// Raw parsed tool arguments for permission dialog preview (diff, code, command)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_args: Option<serde_json::Value>,
     },
     ToolCallEnd {
         #[serde(flatten)]
@@ -877,6 +886,8 @@ mod pi_event_fixture {
                     output_size: None,
                     result_summary: None,
                     is_error: false,
+                    title: None,
+                    metadata: None,
                 }),
             },
             AgentEvent::MessageEnd {
@@ -922,6 +933,8 @@ mod pi_event_fixture {
                     output_size: None,
                     result_summary: None,
                     is_error: false,
+                    title: None,
+                    metadata: None,
                 }),
             },
             AgentEvent::ContentDelta {
@@ -1009,6 +1022,8 @@ mod event_serde_tests {
                     output_size: Some(100),
                     result_summary: Some("ok".into()),
                     is_error: false,
+                    title: None,
+                    metadata: None,
                 }),
             },
             "tool_call_end",
@@ -1132,6 +1147,7 @@ mod event_serde_tests {
                 tool_name: "bash".into(),
                 arguments_summary: "rm -rf /".into(),
                 tool_description: Some("Execute shell command".into()),
+                tool_args: None,
             },
             "tool_call_awaiting_approval",
         );
@@ -1430,6 +1446,7 @@ mod agent_event_tag_tests {
                 tool_name: "".into(),
                 arguments_summary: "".into(),
                 tool_description: None,
+                tool_args: None,
             },
             "tool_call_awaiting_approval",
         );
@@ -1444,6 +1461,8 @@ mod agent_event_tag_tests {
                     output_size: None,
                     result_summary: None,
                     is_error: false,
+                    title: None,
+                    metadata: None,
                 }),
             },
             "tool_call_end",
@@ -1751,7 +1770,8 @@ mod detail_level_tests {
                 tool_id: "".into(),
                 tool_name: "".into(),
                 arguments_summary: "".into(),
-                tool_description: None
+                tool_description: None,
+                tool_args: None,
             }
             .detail_level(),
             EventDetailLevel::Verbose

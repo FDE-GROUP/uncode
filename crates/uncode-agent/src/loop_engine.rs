@@ -202,6 +202,13 @@ async fn execute_prepared_tool_shared(
                 output_size: None,
                 result_summary: None,
                 is_error: tool_result.is_error,
+                title: tool_result
+                    .details
+                    .as_ref()
+                    .and_then(|d| d.get("title"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                metadata: tool_result.details.clone(),
             }),
         };
         let router = safe_lock(&*event_router, "event_router");
@@ -504,9 +511,9 @@ impl AgentLoop {
         *safe_lock(&self.firewall, "firewall") = None;
     }
 
-        fn model_id(&self) -> String {
-            safe_lock(&self.model_id, "model_id").clone()
-        }
+    fn model_id(&self) -> String {
+        safe_lock(&self.model_id, "model_id").clone()
+    }
 
     pub fn set_cancel_token(&mut self, token: CancellationToken) {
         self.cancel_token = token;
@@ -694,7 +701,10 @@ impl AgentLoop {
         let mut sm = safe_lock(&self.phase_sm, "phase_sm");
         match sm.transition(to, trigger) {
             Ok(()) => {
-                let last = sm.history().last().expect("phase history must be non-empty after transition");
+                let last = sm
+                    .history()
+                    .last()
+                    .expect("phase history must be non-empty after transition");
                 let from_str = last.from.to_string();
                 let to_str = last.to.to_string();
                 drop(sm);
@@ -2145,6 +2155,13 @@ impl AgentLoop {
                                     }
                                     let content_text = tool_result.text_content();
                                     let is_error = tool_result.is_error;
+                                    let title = tool_result
+                                        .details
+                                        .as_ref()
+                                        .and_then(|d| d.get("title"))
+                                        .and_then(|v| v.as_str())
+                                        .map(String::from);
+                                    let metadata = tool_result.details.clone();
                                     let duration_ms = tool_start_times
                                         .remove(id)
                                         .map(|t| t.elapsed().as_millis() as u64)
@@ -2164,6 +2181,8 @@ impl AgentLoop {
                                             output_size: Some(content_text.len()),
                                             result_summary: Some(content_text.clone()),
                                             is_error,
+                                            title,
+                                            metadata,
                                         }),
                                     });
 

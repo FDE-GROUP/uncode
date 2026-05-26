@@ -2215,6 +2215,7 @@ impl TuiEngine {
                 tool_name,
                 arguments_summary,
                 tool_description,
+                tool_args,
             } => {
                 let allow_edit = matches!(tool_name.as_str(), "edit" | "write");
                 self.permission.request_confirmation(
@@ -2223,6 +2224,7 @@ impl TuiEngine {
                     arguments_summary.clone(),
                     tool_description.clone(),
                     allow_edit,
+                    tool_args.clone(),
                 );
             }
             _ => {}
@@ -3194,6 +3196,7 @@ mod tests {
             "test.rs".into(),
             None,
             false,
+            None,
         );
         assert!(engine.permission.has_pending());
 
@@ -3243,6 +3246,7 @@ mod tests {
             duration_ms: None,
             result: None,
             expanded: false,
+            title: None,
         });
         engine.chat.focused_card = Some(0);
 
@@ -3284,6 +3288,7 @@ mod tests {
             "test.rs".into(),
             None,
             false,
+            None,
         );
 
         engine.handle_esc();

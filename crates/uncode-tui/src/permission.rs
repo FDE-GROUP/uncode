@@ -19,6 +19,8 @@ pub struct PendingConfirmation {
     /// Approval hint: bash uses model `description` when set, else registry tool description.
     pub tool_description: Option<String>,
     pub options: Vec<ConfirmOption>,
+    /// Raw parsed tool arguments for rendering preview in permission dialog
+    pub tool_args: Option<serde_json::Value>,
 }
 
 /// 工具执行前的人工确认（TUI 专有能力）。
@@ -79,6 +81,7 @@ impl PermissionManager {
         arguments_summary: String,
         tool_description: Option<String>,
         allow_edit: bool,
+        tool_args: Option<serde_json::Value>,
     ) {
         let mut options = vec![ConfirmOption::Allow, ConfirmOption::Deny];
         if allow_edit {
@@ -90,6 +93,7 @@ impl PermissionManager {
             arguments_summary,
             tool_description,
             options,
+            tool_args,
         });
     }
 
@@ -165,7 +169,14 @@ mod tests {
     #[test]
     fn test_request_and_confirm() {
         let mut pm = PermissionManager::new();
-        pm.request_confirmation("t1".into(), "edit".into(), "src/main.rs".into(), None, true);
+        pm.request_confirmation(
+            "t1".into(),
+            "edit".into(),
+            "src/main.rs".into(),
+            None,
+            true,
+            None,
+        );
         assert!(pm.has_pending());
 
         let p = pm.confirm(ConfirmOption::Allow);
@@ -182,6 +193,7 @@ mod tests {
             "src/main.rs".into(),
             None,
             false,
+            None,
         );
         let p = pm.deny();
         assert!(p.is_some());

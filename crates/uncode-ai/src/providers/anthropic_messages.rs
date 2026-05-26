@@ -80,7 +80,10 @@ fn build_anthropic_body(model: &Model, context: &Context, options: &StreamOption
                 })
             }
             _ => {
-                let has_image = msg.content.iter().any(|b| matches!(b, ContentBlock::Image { .. }));
+                let has_image = msg
+                    .content
+                    .iter()
+                    .any(|b| matches!(b, ContentBlock::Image { .. }));
                 if has_image {
                     let blocks: Vec<Value> = msg
                         .content
@@ -89,16 +92,14 @@ fn build_anthropic_body(model: &Model, context: &Context, options: &StreamOption
                             ContentBlock::Text { text } => {
                                 Some(serde_json::json!({"type": "text", "text": text}))
                             }
-                            ContentBlock::Image { mime_type, data } => {
-                                Some(serde_json::json!({
-                                    "type": "image",
-                                    "source": {
-                                        "type": "base64",
-                                        "media_type": mime_type,
-                                        "data": data
-                                    }
-                                }))
-                            }
+                            ContentBlock::Image { mime_type, data } => Some(serde_json::json!({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": mime_type,
+                                    "data": data
+                                }
+                            })),
                             _ => None,
                         })
                         .collect();
