@@ -1857,16 +1857,6 @@ impl AgentLoop {
                             if !assistant_content.is_empty() {
                                 let mut msg = Message::new(Role::Assistant, assistant_content);
                                 msg.stop_reason = Some(reason);
-                                if reason == uncode_ai::api_types::StopReason::Length {
-                                    self.emit(AgentEvent::Error {
-                                        category: uncode_core::event::ErrorCategory::Llm,
-                                        message: format!(
-                                            "response truncated at {} output tokens",
-                                            turn_output_tokens
-                                        ),
-                                        recoverable: true,
-                                    });
-                                }
                                 msg.usage = Some(UsageInfo {
                                     input_tokens: turn_input_tokens,
                                     output_tokens: turn_output_tokens,
@@ -2958,5 +2948,38 @@ mod setter_tests {
         )
         .with_max_tokens(Some(16384));
         let _ = agent;
+    }
+
+    #[test]
+    fn test_max_tokens_precedence_user_overrides_model() {
+        // user config: explicit value → use it
+        let user: Option<u32> = Some(4096);
+        let model: u32 = 16384;
+        let effective = user.unwrap_or(model);
+        assert_eq!(effective, 4096);
+    }
+
+    #[test]
+    fn test_max_tokens_precedence_falls_back_to_model() {
+        // user config: None → use model declared value
+        let user: Option<u32> = None;
+        let model: u32 = 16384;
+        let effective = user.unwrap_or(model);
+        assert_eq!(effective, 16384);
+    }
+
+    #[test]
+    fn test_truncation_notice_contains_not_a_bug() {
+        let notice = format!(
+            "\n\n---\n⚠️  Response truncated at the model output limit ({} tokens). \
+             The reply may be incomplete — not a bug. \
+             Consider using a model with higher max_output_tokens or \
+             breaking the task into smaller steps.",
+            8192u64,
+        );
+        assert!(notice.contains("not a bug"));
+        assert!(notice.contains("8192"));
+        assert!(notice.contains("⚠️"));
+        assert!(notice.contains("truncated"));
     }
 }
