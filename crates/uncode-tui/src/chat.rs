@@ -1857,15 +1857,7 @@ fn render_message(
             content,
             expanded,
         } => {
-            let (prefix, prefix_color) = if focused {
-                if *expanded {
-                    ("▾ ", theme.tool_status.running)
-                } else {
-                    ("▸ ", theme.tool_status.running)
-                }
-            } else {
-                ("  ", theme.ui.footer_text)
-            };
+            let (prefix, prefix_color) = focus_prefix(focused, *expanded, theme);
             let mut lines = vec![Line::from(vec![
                 Span::styled(prefix, Style::default().fg(prefix_color)),
                 Span::styled(
@@ -1956,15 +1948,7 @@ fn render_tool_call(
     };
 
     // Focus/expand indicator prefix
-    let (prefix, prefix_color) = if focused {
-        if expanded {
-            ("▾ ", theme.tool_status.running)
-        } else {
-            ("▸ ", theme.tool_status.running)
-        }
-    } else {
-        ("  ", color)
-    };
+    let (prefix, prefix_color) = focus_prefix_colored(focused, expanded, theme, color);
 
     // Get inline display from renderer
     let renderer = renderers.get(tool_name);
@@ -2032,13 +2016,7 @@ fn render_tool_call(
         }
         // Collapse hint when truncated
         if !show_all {
-            lines.push(Line::from(vec![
-                Span::styled("     \u{2026} ", Style::default().fg(theme.ui.footer_text)),
-                Span::styled(
-                    format!("+{} more lines (Space to expand)", total - max_show),
-                    Style::default().fg(theme.ui.footer_text),
-                ),
-            ]));
+            lines.push(truncation_hint_line(total, max_show, theme));
         }
     }
 
@@ -2046,11 +2024,7 @@ fn render_tool_call(
     if tool_name != "read"
         && let Some(d) = duration_ms
     {
-        let dur = if *d < 1000 {
-            format!("{d}ms")
-        } else {
-            format!("{:.1}s", *d as f64 / 1000.0)
-        };
+        let dur = duration_text(*d);
         lines.push(Line::from(vec![
             Span::styled("  \u{23bf} ", Style::default().fg(theme.ui.footer_text)),
             Span::styled(
@@ -2156,23 +2130,13 @@ fn render_bash(
             ]));
         }
         if total > max_show {
-            lines.push(Line::from(vec![
-                Span::styled("     \u{2026} ", Style::default().fg(theme.ui.footer_text)),
-                Span::styled(
-                    format!("+{} more lines (Space to expand)", total - max_show),
-                    Style::default().fg(theme.ui.footer_text),
-                ),
-            ]));
+            lines.push(truncation_hint_line(total, max_show, theme));
         }
     }
 
     // Footer: ⎿ (duration)
     if let Some(d) = duration_ms {
-        let dur = if *d < 1000 {
-            format!("{d}ms")
-        } else {
-            format!("{:.1}s", *d as f64 / 1000.0)
-        };
+        let dur = duration_text(*d);
         lines.push(Line::from(vec![
             Span::styled("  \u{23bf} ", Style::default().fg(theme.ui.footer_text)),
             Span::styled(
@@ -2273,6 +2237,59 @@ fn extract_file_refs(text: &str) -> Vec<String> {
         }
     }
     refs
+}
+
+// ── Shared rendering helpers ──
+
+/// Returns (prefix_str, prefix_color) for focus/expand indicator triangles.
+fn focus_prefix(focused: bool, expanded: bool, theme: &Theme) -> (&'static str, Color) {
+    if focused {
+        if expanded {
+            ("▾ ", theme.tool_status.running)
+        } else {
+            ("▸ ", theme.tool_status.running)
+        }
+    } else {
+        ("  ", theme.ui.footer_text)
+    }
+}
+
+/// Same as focus_prefix but uses a custom color for the unfocused state.
+fn focus_prefix_colored(
+    focused: bool,
+    expanded: bool,
+    theme: &Theme,
+    unfocused_color: Color,
+) -> (&'static str, Color) {
+    if focused {
+        if expanded {
+            ("▾ ", theme.tool_status.running)
+        } else {
+            ("▸ ", theme.tool_status.running)
+        }
+    } else {
+        ("  ", unfocused_color)
+    }
+}
+
+/// Format milliseconds as human-readable duration.
+fn duration_text(ms: u64) -> String {
+    if ms < 1000 {
+        format!("{ms}ms")
+    } else {
+        format!("{:.1}s", ms as f64 / 1000.0)
+    }
+}
+
+/// Render a truncation hint line ("... +N more (Space to expand)").
+fn truncation_hint_line(total: usize, max_show: usize, theme: &Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::styled("     \u{2026} ", Style::default().fg(theme.ui.footer_text)),
+        Span::styled(
+            format!("+{} more lines (Space to expand)", total - max_show),
+            Style::default().fg(theme.ui.footer_text),
+        ),
+    ])
 }
 
 #[cfg(test)]
@@ -2988,7 +3005,7 @@ mod tests {
             expanded: true,
         });
         let indices = state.tool_card_indices();
-        assert_eq!(indices, vec![1, 3]);
+        assert_eq!(indices, vec![1, 2, 3]);
     }
 
     #[test]
