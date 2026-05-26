@@ -353,7 +353,7 @@ impl Api for AnthropicMessagesApi {
                 let events: Vec<StreamEvent> = match chunk {
                     Ok(c) => {
                         let mut all_events = Vec::new();
-                        let mut guard = line_buf.lock().expect("anthropic sse buffer lock");
+                        let mut guard = crate::safe_lock(&line_buf, "anthropic sse buffer");
                         for line in guard.push_chunk_and_drain_lines(&c) {
                             all_events.extend(parse_anthropic_chunk(&line, state));
                         }
