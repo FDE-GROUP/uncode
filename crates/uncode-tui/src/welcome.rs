@@ -76,6 +76,38 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn test_render_visible_shows_title() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let screen = WelcomeScreen::new();
+        terminal
+            .draw(|f| {
+                screen.render(f, f.area());
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect::<String>();
+        assert!(text.contains("Wellcome to UnCodeNow"));
+    }
+
+    #[test]
+    fn test_render_hidden_is_empty() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let screen = WelcomeScreen { visible: false };
+        terminal
+            .draw(|f| {
+                screen.render(f, f.area());
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect::<String>();
+        assert!(text.chars().all(|c| c == ' '));
+    }
 
     #[test]
     fn test_new_is_visible_by_default() {

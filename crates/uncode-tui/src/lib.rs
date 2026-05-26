@@ -7,6 +7,7 @@
 //! **OpenCode:** scrollback / 工具卡片信息密度作 UX benchmark（见 `UNCODE_TUI_ARCHITECTURE`）。
 
 pub mod chat;
+pub mod code_detail;
 pub mod complete;
 pub mod custom_layout;
 pub mod dialog;

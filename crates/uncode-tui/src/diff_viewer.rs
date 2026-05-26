@@ -117,6 +117,57 @@ impl Default for DiffViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use uncode_core::diff::Hunk;
+
+    #[test]
+    fn test_render_shows_diff() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let patch = Patch {
+            path: "test.rs".into(),
+            hunks: vec![Hunk {
+                old_start: 1,
+                old_count: 1,
+                new_start: 1,
+                new_count: 1,
+                lines: vec![DiffLine::Context {
+                    text: "hello".into(),
+                    old_line: 1,
+                    new_line: 1,
+                }],
+            }],
+            old_bytes: 6,
+            new_bytes: 6,
+        };
+        let mut viewer = DiffViewer::new();
+        viewer.show(patch);
+        terminal
+            .draw(|f| {
+                viewer.render(f, f.area());
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect::<String>();
+        assert!(text.contains("hello"));
+    }
+
+    #[test]
+    fn test_render_hidden_is_empty() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut viewer = DiffViewer::new();
+        viewer.hide();
+        terminal
+            .draw(|f| {
+                viewer.render(f, f.area());
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect::<String>();
+        assert!(text.chars().all(|c| c == ' '));
+    }
 
     fn make_patch(old: &str, new: &str, path: &str) -> Patch {
         Patch::compute(old, new, path)

@@ -19,7 +19,7 @@ struct CodeLine {
     kind: LineKind,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LineKind {
     Normal,
     Added,
@@ -120,10 +120,8 @@ impl CodeDetailView {
             .iter()
             .take(max_lines)
             .map(|cl| {
-                let line_no = Span::styled(
-                    format!("{:>4} ", cl.line_no),
-                    Style::default().dark_gray(),
-                );
+                let line_no =
+                    Span::styled(format!("{:>4} ", cl.line_no), Style::default().dark_gray());
 
                 let (fg, bg) = match cl.kind {
                     LineKind::Added => (Color::Green, Color::Rgb(0, 40, 0)),
@@ -159,6 +157,39 @@ impl Default for CodeDetailView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn test_render_shows_file_content() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut view = CodeDetailView::new();
+        view.show_file("test.rs", "fn main() {}");
+        terminal
+            .draw(|f| {
+                view.render(f, f.area());
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect::<String>();
+        assert!(text.contains("test.rs"));
+    }
+
+    #[test]
+    fn test_render_hidden_is_empty() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let view = CodeDetailView::new();
+        terminal
+            .draw(|f| {
+                view.render(f, f.area());
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect::<String>();
+        assert!(text.chars().all(|c| c == ' '));
+    }
 
     #[test]
     fn test_new_not_visible() {

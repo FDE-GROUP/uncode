@@ -101,6 +101,40 @@ impl Default for OverlaySelector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    #[test]
+    fn test_render_visible_shows_items() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut selector = OverlaySelector::new();
+        selector.show("title", vec!["item1".into(), "item2".into()]);
+        terminal
+            .draw(|f| {
+                selector.render(f, f.area());
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect::<String>();
+        assert!(text.contains("title"));
+        assert!(text.contains("item1"));
+    }
+
+    #[test]
+    fn test_render_hidden_is_empty() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut selector = OverlaySelector::new();
+        terminal
+            .draw(|f| {
+                selector.render(f, f.area());
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect::<String>();
+        assert!(text.chars().all(|c| c == ' '));
+    }
 
     #[test]
     fn test_new_not_visible() {

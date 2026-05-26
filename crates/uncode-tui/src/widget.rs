@@ -104,7 +104,31 @@ impl Default for WidgetManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::layout::Rect;
     use uncode_core::ui_action::{WidgetConfig, WidgetPlacement};
+
+    #[test]
+    fn test_render_widget_content() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut manager = WidgetManager::new();
+        manager.set_widget(WidgetConfig {
+            key: "w1".into(),
+            placement: WidgetPlacement::AboveEditor,
+            content: vec!["line1".into(), "line2".into()],
+        });
+        terminal
+            .draw(|f| {
+                manager.render(f, Rect::new(0, 0, 80, 4), WidgetPlacement::AboveEditor);
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let text: String = buf.content().iter().map(|c| c.symbol()).collect::<String>();
+        assert!(text.contains("line1"));
+        assert!(text.contains("line2"));
+    }
 
     fn placement_above() -> WidgetPlacement {
         WidgetPlacement::AboveEditor
