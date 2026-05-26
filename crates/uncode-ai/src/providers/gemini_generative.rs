@@ -193,7 +193,7 @@ impl Api for GeminiGenerativeAiApi {
                 let events: Vec<StreamEvent> = match chunk {
                     Ok(c) => {
                         let mut all_events = Vec::new();
-                        let mut guard = line_buf.lock().expect("gemini sse buffer lock");
+                        let mut guard = crate::safe_lock(&line_buf, "gemini sse buffer");
                         for line in guard.push_chunk_and_drain_lines(&c) {
                             all_events.extend(parse_gemini_chunk(&line));
                         }
