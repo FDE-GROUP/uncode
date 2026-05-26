@@ -19,6 +19,15 @@ pub fn render_markdown_with_theme(
     theme: &Theme,
     max_width: Option<usize>,
 ) -> Vec<Line<'static>> {
+    render_markdown_with_theme_and_truncation(text, theme, max_width, true)
+}
+
+pub fn render_markdown_with_theme_and_truncation(
+    text: &str,
+    theme: &Theme,
+    max_width: Option<usize>,
+    truncate: bool,
+) -> Vec<Line<'static>> {
     if text.is_empty() {
         return vec![Line::from("")];
     }
@@ -31,7 +40,11 @@ pub fn render_markdown_with_theme(
     let mut ctx = RenderContext::new(theme, max_width);
     ctx.render_node(&ast);
     let lines = ctx.finish();
-    truncate_lines(lines, TRUNCATE_HEAD, TRUNCATE_TAIL, theme)
+    if truncate {
+        truncate_lines(lines, TRUNCATE_HEAD, TRUNCATE_TAIL, theme)
+    } else {
+        lines
+    }
 }
 
 fn truncate_lines(

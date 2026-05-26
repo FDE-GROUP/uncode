@@ -19,6 +19,7 @@ pub enum ChatMessage {
     },
     Assistant {
         text: String,
+        expanded: bool,
     },
     Thinking {
         text: String,
@@ -356,6 +357,7 @@ impl ChatState {
                         | ChatMessage::Thinking { .. }
                         | ChatMessage::TodoList { .. }
                         | ChatMessage::Custom { .. }
+                        | ChatMessage::Assistant { .. }
                 )
             })
             .map(|(i, _)| i)
@@ -405,7 +407,8 @@ impl ChatState {
             | ChatMessage::ToolTurnGroup { expanded, .. }
             | ChatMessage::Thinking { expanded, .. }
             | ChatMessage::TodoList { expanded, .. }
-            | ChatMessage::Custom { expanded, .. } => {
+            | ChatMessage::Custom { expanded, .. }
+            | ChatMessage::Assistant { expanded, .. } => {
                 *expanded = !*expanded;
             }
             _ => return false,
@@ -430,6 +433,7 @@ impl ChatState {
                 | ChatMessage::Thinking { expanded: e, .. }
                 | ChatMessage::TodoList { expanded: e, .. }
                 | ChatMessage::Custom { expanded: e, .. }
+                | ChatMessage::Assistant { expanded: e, .. }
                     if *e != expanded =>
                 {
                     *e = expanded;
@@ -567,7 +571,7 @@ impl ChatState {
             // Streaming cursor for active assistant
             if is_last
                 && agent_busy
-                && let ChatMessage::Assistant { text } = &self.messages[idx]
+                && let ChatMessage::Assistant { text, .. } = &self.messages[idx]
                 && !text.is_empty()
                 && !msg_lines.is_empty()
             {
@@ -1036,7 +1040,7 @@ impl ChatState {
 
     fn sync_todos_from_last_assistant(&mut self) {
         let text = self.messages.iter().rev().find_map(|m| match m {
-            ChatMessage::Assistant { text } => Some(text.as_str()),
+            ChatMessage::Assistant { text, .. } => Some(text.as_str()),
             _ => None,
         });
         let Some(text) = text else {
@@ -1130,12 +1134,13 @@ impl ChatState {
         } else {
             self.push_message(ChatMessage::Assistant {
                 text: content.to_string(),
+                expanded: true,
             });
         }
         // Extract todos from streamed text in real-time so the plan
         // appears before tool results rather than only at turn end.
         let text = match self.messages.last() {
-            Some(ChatMessage::Assistant { text }) => text.as_str(),
+            Some(ChatMessage::Assistant { text, .. }) => text.as_str(),
             _ => return,
         };
         let items = parse_markdown_todos(text);
@@ -1217,7 +1222,7 @@ impl ChatState {
             // Streaming cursor: if last message is an active Assistant text, blink cursor
             if is_last
                 && agent_busy
-                && let ChatMessage::Assistant { text } = msg
+                && let ChatMessage::Assistant { text, .. } = msg
                 && !text.is_empty()
                 && !msg_lines.is_empty()
             {
@@ -1252,7 +1257,7 @@ impl Default for ChatState {
 fn message_text_len(msg: &ChatMessage) -> usize {
     match msg {
         ChatMessage::User { text, .. } => text.len(),
-        ChatMessage::Assistant { text } => text.len(),
+        ChatMessage::Assistant { text, .. } => text.len(),
         ChatMessage::Thinking { text, .. } => text.len(),
         ChatMessage::ToolCall {
             result,
@@ -1372,7 +1377,7 @@ fn render_todo_list(
 fn message_type_and_content(msg: &ChatMessage) -> Option<(&str, &str)> {
     match msg {
         ChatMessage::User { text, .. } => Some(("user", text.as_str())),
-        ChatMessage::Assistant { text } => Some(("assistant", text.as_str())),
+        ChatMessage::Assistant { text, .. } => Some(("assistant", text.as_str())),
         ChatMessage::Thinking { text, .. } => Some(("thinking", text.as_str())),
         ChatMessage::Error { message, .. } => Some(("error", message.as_str())),
         ChatMessage::Custom {
@@ -1600,9 +1605,16 @@ fn render_message(
     let w = width.saturating_sub(2) as usize; // account for padding
     match msg {
         ChatMessage::User { text, file_refs } => render_user_message(text, file_refs, w, theme),
-        ChatMessage::Assistant { text, .. } => {
+        ChatMessage::Assistant { text, expanded, .. } => {
             let mut lines = if text.is_empty() {
                 vec![]
+            } else if *expanded {
+                crate::markdown::render_markdown_with_theme_and_truncation(
+                    text,
+                    theme,
+                    Some(w),
+                    false,
+                )
             } else {
                 crate::markdown::render_markdown_with_theme(text, theme, Some(w))
             };
@@ -1616,6 +1628,20 @@ fn render_message(
                 )];
                 new_spans.extend(first.spans);
                 lines.insert(0, Line::from(new_spans));
+            }
+
+            // When collapsed and content is long, show expand hint
+            if !*expanded {
+                let total = text.lines().count();
+                let head = 200usize;
+                let tail = 100usize;
+                if total > head + tail + 5 {
+                    let prefix = if focused { "▸ " } else { "  " };
+                    lines.push(Line::from(Span::styled(
+                        format!("{prefix}... ({total} lines total, Space to expand)",),
+                        Style::default().fg(theme.tool_status.await_confirm),
+                    )));
+                }
             }
 
             lines
@@ -2947,6 +2973,7 @@ mod tests {
         });
         state.messages.push(ChatMessage::Assistant {
             text: "done".into(),
+            expanded: true,
         });
         state.messages.push(ChatMessage::BashExecution {
             tool_id: "b1".into(),
