@@ -77,3 +77,94 @@ impl ToolHooks for ExtensionToolHooks {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use uncode_core::tool::{AfterToolCallContext, ToolResult};
+    use uncode_extensions::hooks::{
+        Extension, HookContext, HookRegistry, HookResult, LifecycleHook,
+    };
+
+    struct MockExtension {
+        name: String,
+        result: HookResult,
+    }
+
+    #[async_trait::async_trait]
+    impl Extension for MockExtension {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        async fn on_hook(&self, _ctx: &HookContext) -> anyhow::Result<HookResult> {
+            Ok(self.result.clone())
+        }
+    }
+
+    fn make_ctx() -> BeforeToolCallContext {
+        BeforeToolCallContext {
+            tool_call_id: "t1".into(),
+            tool_name: "read".into(),
+            args: serde_json::json!({"path": "/tmp/test"}),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_new_constructs() {
+        let registry = HookRegistry::new();
+        let _hooks = ExtensionToolHooks::new(Arc::new(registry));
+    }
+
+    #[tokio::test]
+    async fn test_before_tool_call_continue() {
+        let registry = Arc::new(HookRegistry::new());
+        let ext = MockExtension {
+            name: "test-ext".into(),
+            result: HookResult::Continue,
+        };
+        registry.register(Arc::new(ext), vec![LifecycleHook::ToolCallBefore]);
+        let hooks = ExtensionToolHooks::new(registry);
+        let ctx = make_ctx();
+        let result = hooks.before_tool_call(&ctx).await;
+        assert_eq!(result, None);
+    }
+
+    #[tokio::test]
+    async fn test_before_tool_call_block() {
+        let registry = Arc::new(HookRegistry::new());
+        let ext = MockExtension {
+            name: "block-ext".into(),
+            result: HookResult::Block {
+                reason: "denied".into(),
+            },
+        };
+        registry.register(Arc::new(ext), vec![LifecycleHook::ToolCallBefore]);
+        let hooks = ExtensionToolHooks::new(registry);
+        let ctx = make_ctx();
+        let result = hooks.before_tool_call(&ctx).await;
+        assert_eq!(result, Some("denied".into()));
+    }
+
+    #[tokio::test]
+    async fn test_after_tool_call_default() {
+        let registry = Arc::new(HookRegistry::new());
+        let ext = MockExtension {
+            name: "after-ext".into(),
+            result: HookResult::Continue,
+        };
+        registry.register(Arc::new(ext), vec![LifecycleHook::ToolCallAfter]);
+        let hooks = ExtensionToolHooks::new(registry);
+        let ctx = AfterToolCallContext {
+            tool_call_id: "t1".into(),
+            tool_name: "read".into(),
+            args: serde_json::json!({}),
+        };
+        let mut result = ToolResult::ok("output");
+        let patch = hooks.after_tool_call(&ctx, &mut result).await;
+        assert!(patch.content.is_none());
+        assert!(patch.details.is_none());
+        assert!(patch.is_error.is_none());
+        assert!(patch.terminate.is_none());
+    }
+}
