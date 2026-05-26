@@ -997,12 +997,14 @@ async fn run_rpc_mode(
     // Forward agent events as JSON-RPC notifications
     let event_rx = agent.subscribe();
     let server_clone = server.clone();
-    tokio::spawn(async move {
+    let forward_handle = tokio::spawn(async move {
         server_clone.forward_events(event_rx).await;
     });
 
     // Serve stdio
-    server.serve().await
+    let result = server.serve().await;
+    forward_handle.abort();
+    result
 }
 
 fn run_templates() -> anyhow::Result<()> {
