@@ -138,8 +138,22 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
     };
 
     let pgid = child.id().unwrap_or(0);
-    let stdout = child.stdout.take().expect("stdout piped");
-    let stderr = child.stderr.take().expect("stderr piped");
+    let stdout = match child.stdout.take() {
+        Some(s) => s,
+        None => {
+            kill_process_group(pgid);
+            let _ = child.wait().await;
+            return ToolResult::err("failed to capture stdout");
+        }
+    };
+    let stderr = match child.stderr.take() {
+        Some(s) => s,
+        None => {
+            kill_process_group(pgid);
+            let _ = child.wait().await;
+            return ToolResult::err("failed to capture stderr");
+        }
+    };
 
     let mut output = String::with_capacity(4096);
     let mut errors = String::new();
@@ -195,8 +209,14 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
         }
     }
 
-    let mut stderr_lines =
-        BufReader::new(stderr_buf.take().expect("stderr already consumed")).lines();
+    let mut stderr_lines = match stderr_buf.take() {
+        Some(buf) => BufReader::new(buf).lines(),
+        None => {
+            kill_process_group(pgid);
+            let _ = child.wait().await;
+            return ToolResult::err("stderr buffer already consumed");
+        }
+    };
     loop {
         if ctx.cancel_token.is_cancelled() {
             kill_process_group(pgid);
