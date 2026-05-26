@@ -1021,8 +1021,8 @@ impl TuiEngine {
         lines.push(Line::raw(""));
 
         // Button bar
-        let normal_btn = Style::default().fg(Color::Black).bg(confirm_bg);
-        let selected_btn = Style::default().fg(confirm_bg).bg(Color::Black).bold();
+        let normal_btn = Style::default().fg(confirm_bg).bg(dialog_bg);
+        let selected_btn = Style::default().fg(Color::Black).bg(confirm_bg).bold();
         let sel = self.permission_selected;
         let has_edit = p
             .options
