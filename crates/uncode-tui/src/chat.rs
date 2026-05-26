@@ -3414,4 +3414,127 @@ mod tests {
         let viewport = chat.render_viewport(0, 0, 0, 24);
         assert!(viewport.is_empty());
     }
+
+    #[test]
+    fn test_bash_progress_auto_expands() {
+        let mut state = ChatState::new();
+        // Start a bash tool
+        state.handle_event(AgentEvent::ToolCallStart {
+            tool_id: "b1".into(),
+            tool_name: "bash".into(),
+            arguments_summary: r#"{"command":"cargo build","description":"build"}"#.into(),
+        });
+        // ToolTurnGroup with BashExecution created, initially collapsed
+        let entry = first_tool_entry(&state.messages, 0);
+        assert!(matches!(entry, ToolGroupEntry::BashExecution { expanded, .. } if !expanded));
+
+        // Send progress → should auto-expand bash
+        state.handle_event(AgentEvent::ToolCallProgress {
+            tool_id: "b1".into(),
+            progress_type: uncode_core::event::ProgressType::Spinner,
+            detail: "Compiling...".into(),
+        });
+        let entry = first_tool_entry(&state.messages, 0);
+        assert!(
+            matches!(entry, ToolGroupEntry::BashExecution { expanded, stdout, .. } if *expanded && stdout.contains("Compiling"))
+        );
+    }
+
+    #[test]
+    fn test_bash_progress_streams_stdout_line_by_line() {
+        let mut state = ChatState::new();
+        state.handle_event(AgentEvent::ToolCallStart {
+            tool_id: "b1".into(),
+            tool_name: "bash".into(),
+            arguments_summary: r#"{"command":"ls"}"#.into(),
+        });
+
+        // Send multiple progress lines
+        state.handle_event(AgentEvent::ToolCallProgress {
+            tool_id: "b1".into(),
+            progress_type: uncode_core::event::ProgressType::Spinner,
+            detail: "src/".into(),
+        });
+        state.handle_event(AgentEvent::ToolCallProgress {
+            tool_id: "b1".into(),
+            progress_type: uncode_core::event::ProgressType::Spinner,
+            detail: "Cargo.toml".into(),
+        });
+
+        let entry = first_tool_entry(&state.messages, 0);
+        if let ToolGroupEntry::BashExecution { stdout, .. } = entry {
+            assert!(stdout.contains("src/"));
+            assert!(stdout.contains("Cargo.toml"));
+        } else {
+            panic!("expected BashExecution");
+        }
+    }
+
+    #[test]
+    fn test_tool_icons_per_tool_type() {
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        // Verify each tool renders with the correct icon in output
+        let tools = vec![
+            ("read", "→"),
+            ("write", "←"),
+            ("edit", "←"),
+            ("bash", "$"),
+            ("grep", "✱"),
+            ("find", "✱"),
+            ("ls", "→"),
+            ("web_fetch", "%"),
+            ("web_search", "◈"),
+        ];
+        for (tool_name, expected_icon) in &tools {
+            let lines = render_tool_call(
+                tool_name,
+                "{}",
+                &ToolCallRenderStatus::Success,
+                &None,
+                &None,
+                false,
+                &renderers,
+                &theme,
+                80,
+                0,
+                false,
+                ".",
+            );
+            let combined: String = lines.iter().map(|l| l.to_string()).collect();
+            assert!(
+                combined.contains(expected_icon),
+                "tool '{tool_name}' should show icon '{expected_icon}', got: {combined}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_unknown_tool_fallback_icon() {
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let lines = render_tool_call(
+            "unknown_tool",
+            r#"{"arg":"val"}"#,
+            &ToolCallRenderStatus::Running,
+            &None,
+            &None,
+            false,
+            &renderers,
+            &theme,
+            80,
+            0,
+            false,
+            ".",
+        );
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(
+            combined.contains("⚙"),
+            "unknown tool should show fallback icon ⚙"
+        );
+        assert!(
+            combined.contains("Unknown"),
+            "unknown tool should show 'Unknown' label"
+        );
+    }
 }
