@@ -567,7 +567,7 @@ mod tests {
 
     #[test]
     fn test_effect_based_approves_readonly_when_enabled() {
-        let ontology = uncode_ontology::builtin::coding_agent_ontology();
+        let ontology = uncode_ontology::builtin::coding_agent_ontology().clone();
         let policy = EffectBasedPolicy::new(ontology, true);
         let action = NormalizedAction {
             tool_name: "read".into(),
@@ -580,7 +580,7 @@ mod tests {
 
     #[test]
     fn test_effect_based_approves_non_readonly() {
-        let ontology = uncode_ontology::builtin::coding_agent_ontology();
+        let ontology = uncode_ontology::builtin::coding_agent_ontology().clone();
         let policy = EffectBasedPolicy::new(ontology, true);
         let action = NormalizedAction {
             tool_name: "write".into(),
@@ -594,7 +594,7 @@ mod tests {
 
     #[test]
     fn test_effect_based_disabled_passes_through() {
-        let ontology = uncode_ontology::builtin::coding_agent_ontology();
+        let ontology = uncode_ontology::builtin::coding_agent_ontology().clone();
         let policy = EffectBasedPolicy::new(ontology, false);
         let action = NormalizedAction {
             tool_name: "read".into(),
@@ -607,7 +607,7 @@ mod tests {
 
     #[test]
     fn test_effect_based_unknown_tool_passes() {
-        let ontology = uncode_ontology::builtin::coding_agent_ontology();
+        let ontology = uncode_ontology::builtin::coding_agent_ontology().clone();
         let policy = EffectBasedPolicy::new(ontology, true);
         let action = NormalizedAction {
             tool_name: "custom_tool".into(),

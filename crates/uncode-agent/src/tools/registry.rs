@@ -59,7 +59,7 @@ impl ToolRegistry {
 
     /// Convenience: use the built-in full ontology (domain + system).
     pub fn set_builtin_ontology(&self) {
-        self.set_ontology(Arc::new(full_ontology()));
+        self.set_ontology(Arc::new(full_ontology().clone()));
     }
 
     /// Restrict which tools are sent to the LLM and allowed to execute.
