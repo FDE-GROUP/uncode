@@ -316,6 +316,8 @@ pub struct TuiEngine {
     show_shortcut_help: bool,
     /// Selected button index in permission dialog (0=Allow, 1=Reject, 2=Always, 3=Edit).
     permission_selected: usize,
+    /// When the permission dialog appeared (for 20s auto-approve countdown).
+    permission_started_at: Option<std::time::Instant>,
 }
 
 impl TuiEngine {
@@ -381,6 +383,7 @@ impl TuiEngine {
             pending_question: None,
             show_shortcut_help: false,
             permission_selected: 0,
+            permission_started_at: None,
         }
     }
 
@@ -587,7 +590,8 @@ impl TuiEngine {
         false
     }
 
-    fn resolve_permission(&self, tool_id: &str, approval: Approval) {
+    fn resolve_permission(&mut self, tool_id: &str, approval: Approval) {
+        self.permission_started_at = None;
         if let Some(ref gate) = self.permission_gate {
             let gate = gate.clone();
             let id = tool_id.to_string();
@@ -648,6 +652,17 @@ impl TuiEngine {
     pub fn render(&mut self, f: &mut Frame) {
         if f.area().width == 0 || f.area().height == 0 {
             return;
+        }
+        // Auto-approve pending permission after 20s timeout
+        if let Some(started) = self.permission_started_at {
+            if started.elapsed().as_secs() >= 20 {
+                if let Some(p) = self
+                    .permission
+                    .confirm(crate::permission::ConfirmOption::Allow)
+                {
+                    self.resolve_permission(&p.tool_id, Approval::Allow);
+                }
+            }
         }
         self.tick = self.tick.wrapping_add(1);
         use uncode_core::ui_action::WidgetPlacement;
@@ -1069,6 +1084,18 @@ impl TuiEngine {
                 Span::raw("")
             },
         ]));
+
+        // Countdown timer
+        if let Some(started) = self.permission_started_at {
+            let elapsed = started.elapsed().as_secs();
+            let remaining = 20u64.saturating_sub(elapsed);
+            if remaining > 0 {
+                lines.push(Line::from(Span::styled(
+                    format!("  Auto-approve in {remaining}s..."),
+                    Style::default().fg(self.theme.ui.footer_text),
+                )));
+            }
+        }
 
         // Render content
         let max_visible = inner_area.height as usize;
@@ -2680,6 +2707,7 @@ impl TuiEngine {
                     allow_edit,
                     tool_args.clone(),
                 );
+                self.permission_started_at = Some(std::time::Instant::now());
             }
             AgentEvent::QuestionRequest { data } => {
                 self.pending_question = Some(data.clone());
