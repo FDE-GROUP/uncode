@@ -200,13 +200,16 @@ pub async fn compact_session(
     };
 
     // Detect split turn and collect prefix messages
-    let cut_idx = entries
-        .iter()
-        .position(|e| match e {
-            SessionEntry::Message(me) => me.id == cut_id,
-            _ => false,
-        })
-        .unwrap_or(0);
+    let cut_idx = match entries.iter().position(|e| match e {
+        SessionEntry::Message(me) => me.id == cut_id,
+        _ => false,
+    }) {
+        Some(idx) => idx,
+        None => {
+            tracing::warn!("compaction cut_id {cut_id} not found in entries, skipping");
+            return Ok(None);
+        }
+    };
     let split_prefix = find_split_turn_prefix(&entries, cut_idx);
 
     // Collect message entries before cut point for summarization
