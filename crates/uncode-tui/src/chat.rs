@@ -794,7 +794,10 @@ impl ChatState {
                             }
                         }
                         ChatMessage::BashExecution {
-                            command, stdout, ..
+                            command,
+                            stdout,
+                            expanded,
+                            ..
                         } => {
                             if command.is_empty() {
                                 let cmd = extract_bash_command(&detail);
@@ -804,6 +807,7 @@ impl ChatState {
                             }
                             stdout.push_str(&detail);
                             stdout.push('\n');
+                            *expanded = true;
                         }
                         _ => {}
                     },
@@ -1395,7 +1399,10 @@ fn apply_tool_progress(entry: &mut ToolGroupEntry, detail: &str) {
             }
         }
         ToolGroupEntry::BashExecution {
-            command, stdout, ..
+            command,
+            stdout,
+            expanded,
+            ..
         } => {
             if command.is_empty() {
                 let cmd = extract_bash_command(detail);
@@ -1405,6 +1412,7 @@ fn apply_tool_progress(entry: &mut ToolGroupEntry, detail: &str) {
             }
             stdout.push_str(detail);
             stdout.push('\n');
+            *expanded = true;
         }
     }
 }
