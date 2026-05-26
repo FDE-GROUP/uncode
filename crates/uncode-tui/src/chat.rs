@@ -35,6 +35,8 @@ pub enum ChatMessage {
         duration_ms: Option<u64>,
         result: Option<String>,
         expanded: bool,
+        /// Human-readable tool description (from ToolCallEndEventData.title)
+        title: Option<String>,
     },
     BashExecution {
         tool_id: String,
@@ -108,6 +110,8 @@ pub enum ToolGroupEntry {
         duration_ms: Option<u64>,
         result: Option<String>,
         expanded: bool,
+        /// Human-readable tool description (from ToolCallEndEventData.title)
+        title: Option<String>,
     },
     BashExecution {
         tool_id: String,
@@ -756,6 +760,7 @@ impl ChatState {
                         duration_ms: None,
                         result: None,
                         expanded: false,
+                        title: None,
                     }
                 };
                 self.push_tool_group_entry(entry);
@@ -832,6 +837,7 @@ impl ChatState {
                             result,
                             expanded,
                             tool_name,
+                            title,
                             ..
                         } => {
                             *s = render_status;
@@ -844,6 +850,9 @@ impl ChatState {
                                 if tool_name != "read" {
                                     *expanded = true;
                                 }
+                            }
+                            if data.title.is_some() {
+                                *title = data.title.clone();
                             }
                         }
                         ChatMessage::BashExecution {
@@ -1415,6 +1424,7 @@ fn apply_tool_end(
             result,
             expanded,
             tool_name,
+            title,
             ..
         } => {
             *status = render_status;
@@ -1427,6 +1437,9 @@ fn apply_tool_end(
                 if tool_name != "read" {
                     *expanded = true;
                 }
+            }
+            if data.title.is_some() {
+                *title = data.title.clone();
             }
         }
         ToolGroupEntry::BashExecution {
@@ -2282,6 +2295,8 @@ mod tests {
                 output_size: Some(1024),
                 result_summary: Some("file contents...".into()),
                 is_error: false,
+                title: None,
+                metadata: None,
             }),
         });
 
@@ -2322,6 +2337,8 @@ mod tests {
                 output_size: Some(512),
                 result_summary: Some("diff...".into()),
                 is_error: false,
+                title: None,
+                metadata: None,
             }),
         });
         if let ToolGroupEntry::ToolCall { expanded, .. } = first_tool_entry(&state.messages, 1) {
@@ -2394,6 +2411,8 @@ mod tests {
                 output_size: Some(2048),
                 result_summary: Some("file contents...".into()),
                 is_error: false,
+                title: None,
+                metadata: None,
             }),
         });
 
@@ -2653,6 +2672,7 @@ mod tests {
             duration_ms: Some(150),
             result: Some("line1\nline2".into()),
             expanded: true,
+            title: None,
         });
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
@@ -2876,6 +2896,7 @@ mod tests {
             duration_ms: Some(100),
             result: None,
             expanded: false,
+            title: None,
         });
         state.messages.push(ChatMessage::Assistant {
             text: "done".into(),
@@ -2907,6 +2928,7 @@ mod tests {
             duration_ms: None,
             result: None,
             expanded: false,
+            title: None,
         });
         state.messages.push(ChatMessage::ToolCall {
             tool_id: "t2".into(),
@@ -2916,6 +2938,7 @@ mod tests {
             duration_ms: None,
             result: None,
             expanded: false,
+            title: None,
         });
 
         assert!(state.focus_next_card());
@@ -2944,6 +2967,7 @@ mod tests {
             duration_ms: None,
             result: Some("file content".into()),
             expanded: false,
+            title: None,
         });
         state.focused_card = Some(0);
 
@@ -2971,6 +2995,7 @@ mod tests {
             duration_ms: None,
             result: None,
             expanded: false,
+            title: None,
         });
         state.messages.push(ChatMessage::BashExecution {
             tool_id: "b1".into(),
@@ -3013,6 +3038,7 @@ mod tests {
             duration_ms: Some(100),
             result: Some("fn main() {}".into()),
             expanded: false,
+            title: None,
         });
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
@@ -3049,6 +3075,7 @@ mod tests {
             duration_ms: Some(100),
             result: Some("fn main() {}".into()),
             expanded: true,
+            title: None,
         });
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();
@@ -3080,6 +3107,7 @@ mod tests {
             duration_ms: Some(100),
             result: None,
             expanded: false,
+            title: None,
         });
         state.focused_card = Some(0);
         let renderers = ToolRendererRegistry::new();
@@ -3144,6 +3172,7 @@ mod tests {
             duration_ms: Some(100),
             result: Some("secret content".into()),
             expanded: true,
+            title: None,
         });
         let renderers = ToolRendererRegistry::new();
         let theme = Theme::default_dark();

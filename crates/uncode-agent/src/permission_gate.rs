@@ -154,6 +154,7 @@ impl PermissionGate {
                 tool_name: ctx.tool_name.clone(),
                 arguments_summary: args_str,
                 tool_description,
+                tool_args: Some(ctx.args.clone()),
             });
         }
 

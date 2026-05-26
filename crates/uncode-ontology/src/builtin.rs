@@ -585,7 +585,9 @@ pub fn system_resource_ontology() -> &'static TypeRegistry {
 }
 
 static FULL_ONTOLOGY: std::sync::LazyLock<TypeRegistry> = std::sync::LazyLock::new(|| {
-    (*CODING_AGENT_ONTOLOGY).clone().merge(&SYSTEM_RESOURCE_ONTOLOGY)
+    (*CODING_AGENT_ONTOLOGY)
+        .clone()
+        .merge(&SYSTEM_RESOURCE_ONTOLOGY)
 });
 
 /// Build the full ontology — domain + system resource (cached).

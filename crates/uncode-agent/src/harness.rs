@@ -117,7 +117,9 @@ impl AgentHarness {
             || !guardrail_config.audit.event_levels.standard.is_empty()
             || !guardrail_config.audit.event_levels.verbose.is_empty()
         {
-            tracing::warn!("guardrail audit config has event level filters set, but audit event filtering is not yet implemented");
+            tracing::warn!(
+                "guardrail audit config has event level filters set, but audit event filtering is not yet implemented"
+            );
         }
         agent.set_guardrail_config(guardrail_config);
 

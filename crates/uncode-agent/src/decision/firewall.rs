@@ -576,7 +576,9 @@ pub struct OntologyConstraintRule {
 
 impl OntologyConstraintRule {
     pub fn new(registry: &uncode_ontology::TypeRegistry) -> Self {
-        Self { registry: registry.clone() }
+        Self {
+            registry: registry.clone(),
+        }
     }
 }
 

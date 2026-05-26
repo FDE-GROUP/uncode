@@ -333,7 +333,10 @@ fn default_standard_events() -> Vec<String> {
 }
 
 fn default_verbose_events() -> Vec<String> {
-    vec!["tool_call_progress".into(), "tool_call_awaiting_approval".into()]
+    vec![
+        "tool_call_progress".into(),
+        "tool_call_awaiting_approval".into(),
+    ]
 }
 
 impl Default for EventLevelConfig {

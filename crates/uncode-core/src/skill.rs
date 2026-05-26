@@ -170,7 +170,10 @@ fn load_skills_recursive_with_source(
             let path = entry.path();
             let file_name = path.file_name().unwrap_or_default().to_string_lossy();
 
-            if ignore_patterns.iter().any(|p| matches_gitignore(p, &file_name)) {
+            if ignore_patterns
+                .iter()
+                .any(|p| matches_gitignore(p, &file_name))
+            {
                 continue;
             }
 
