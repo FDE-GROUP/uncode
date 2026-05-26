@@ -1941,6 +1941,23 @@ fn render_tool_call(
     let inline = renderer.render_call(args, workdir);
 
     let label = capitalize_tool(tool_name);
+    // Tool-specific icon (aligns with opencode)
+    let tool_icon = match tool_name {
+        "read" => "→",
+        "write" => "←",
+        "edit" => "←",
+        "bash" => "$",
+        "grep" => "✱",
+        "find" => "✱",
+        "ls" => "→",
+        "web_fetch" => "%",
+        "web_search" => "◈",
+        "task" => "⚙",
+        "todowrite" => "#",
+        "question" => "?",
+        "skill" => "→",
+        _ => "⚙",
+    };
     let mut lines = Vec::new();
 
     // Header line: ▸ ● ToolName first_line
@@ -1949,6 +1966,7 @@ fn render_tool_call(
     let header = Line::from(vec![
         Span::styled(prefix, Style::default().fg(prefix_color)),
         Span::styled(format!("{icon} "), Style::default().fg(color)),
+        Span::styled(format!("{tool_icon} "), Style::default().fg(color)),
         Span::styled(format!("{label} "), Style::default().fg(color).bold()),
         Span::styled(first_inline, Style::default().fg(theme.tool_status.running)),
     ]);
