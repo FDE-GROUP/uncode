@@ -2073,8 +2073,8 @@ impl TuiEngine {
                 return;
             }
             self.last_user_input = Some(text.clone());
-            self.chat.push_user_message(text.clone());
             let file_expanded = uncode_core::context::expand_file_refs(&text, &self.cwd);
+            self.chat.push_user_message(text);
             let token = self.current_or_new_cancel_token();
             on_submit(
                 file_expanded,
@@ -2087,8 +2087,8 @@ impl TuiEngine {
             self.last_user_input = Some(text.clone());
             self.agent_busy = true;
             self.footer.start_turn();
-            self.chat.push_user_message(text.clone());
             let file_expanded = uncode_core::context::expand_file_refs(&text, &self.cwd);
+            self.chat.push_user_message(text);
             let token = self.new_cancel_token();
             on_submit(
                 file_expanded,
