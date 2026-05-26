@@ -7,8 +7,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
-const TRUNCATE_HEAD: usize = 50;
-const TRUNCATE_TAIL: usize = 50;
+const TRUNCATE_HEAD: usize = 200;
+const TRUNCATE_TAIL: usize = 100;
 
 pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     render_markdown_with_theme(text, &Theme::default(), None)
@@ -755,7 +755,7 @@ mod tests {
         let md: String = (0..200).map(|i| format!("line {i}\n\n")).collect();
         let lines = render_markdown_with_theme(&md, &test_theme(), None);
         assert!(
-            lines.len() < 250,
+            lines.len() < 320,
             "should truncate long output, got {} lines",
             lines.len()
         );
