@@ -397,14 +397,18 @@ impl DecisionPolicy for CustomPolicy {
 
 /// 使用默认参数构建完整的 Adjudicator
 ///
-/// 策略顺序：Phase → TurnLimit → Cancellation → Concurrency
+/// 策略顺序：EffectBased → Phase → TurnLimit → Cancellation → Concurrency
+///
+/// EffectBasedPolicy 置于首位——只读工具优先自动放行，避免走完整裁定链。
 pub fn build_default_adjudicator(
     phase_policy: PhaseGuardPolicy,
     token: CancellationToken,
     max_turns: u32,
     active: Arc<AtomicBool>,
+    ontology: uncode_ontology::TypeRegistry,
 ) -> Adjudicator {
     Adjudicator::new(vec![
+        Box::new(EffectBasedPolicy::new(ontology, true)),
         Box::new(phase_policy),
         Box::new(TurnLimitPolicy::new(max_turns)),
         Box::new(CancellationPolicy::new(token)),
@@ -535,6 +539,7 @@ mod tests {
             token,
             50,
             Arc::new(AtomicBool::new(true)),
+            uncode_ontology::TypeRegistry::new(),
         );
         let result = adj.adjudicate(&make_action(), &make_context(1));
         assert!(result.is_err());
@@ -552,6 +557,7 @@ mod tests {
             CancellationToken::new(),
             50,
             Arc::new(AtomicBool::new(true)),
+            uncode_ontology::TypeRegistry::new(),
         );
         let result = adj.adjudicate(&make_action(), &make_context(1));
         assert!(result.is_ok());

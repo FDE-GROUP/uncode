@@ -127,6 +127,7 @@ impl AgentHarness {
             cancel_token,
             turn_limit,
             active_run,
+            uncode_ontology::builtin::full_ontology(),
         );
         agent.set_adjudicator(adjudicator);
         agent.load_custom_policies();
