@@ -107,6 +107,7 @@ impl PermissionGate {
                 arguments,
                 self.auto_allow_readonly,
                 self.auto_allow_bash_safe,
+                None, // no ontology → falls back to hardcoded matching
             )
         }
     }
