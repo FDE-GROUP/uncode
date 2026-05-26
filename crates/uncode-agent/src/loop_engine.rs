@@ -1833,6 +1833,27 @@ impl AgentLoop {
                                 )));
                             }
 
+                            // Append user-visible truncation notice before message is created
+                            if reason == uncode_ai::api_types::StopReason::Length {
+                                assistant_content.push(ContentBlock::Text {
+                                    text: format!(
+                                        "\n\n---\n⚠️  Response truncated at the model output limit ({} tokens). \
+                                         The reply may be incomplete — not a bug. \
+                                         Consider using a model with higher max_output_tokens or \
+                                         breaking the task into smaller steps.",
+                                        turn_output_tokens,
+                                    ),
+                                });
+                                self.emit(AgentEvent::Error {
+                                    category: uncode_core::event::ErrorCategory::Llm,
+                                    message: format!(
+                                        "response truncated at {} output tokens",
+                                        turn_output_tokens
+                                    ),
+                                    recoverable: true,
+                                });
+                            }
+
                             if !assistant_content.is_empty() {
                                 let mut msg = Message::new(Role::Assistant, assistant_content);
                                 msg.stop_reason = Some(reason);
