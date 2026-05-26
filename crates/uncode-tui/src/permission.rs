@@ -66,6 +66,7 @@ impl PermissionManager {
                 arguments,
                 self.auto_allow_readonly,
                 self.auto_allow_bash_safe,
+                None,
             )
         }
     }

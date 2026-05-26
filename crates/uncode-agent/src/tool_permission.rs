@@ -39,7 +39,47 @@ const SAFE_COMMANDS: &[&str] = &[
 ];
 
 /// 判断工具调用是否需要用户确认。
+///
+/// When `category` is Some, uses ontology ExecutionCategory for classification
+/// (automatically correct for any tool registered with the right category).
+/// Falls back to hardcoded tool-name matching when `category` is None.
 pub fn needs_confirmation(
+    tool_name: &str,
+    arguments: &str,
+    auto_allow_readonly: bool,
+    auto_allow_bash_safe: bool,
+    category: Option<uncode_ontology::ExecutionCategory>,
+) -> bool {
+    if let Some(cat) = category {
+        return match cat {
+            uncode_ontology::ExecutionCategory::ReadOnly => !auto_allow_readonly,
+            uncode_ontology::ExecutionCategory::Shell => {
+                let command = extract_command(arguments);
+                !auto_allow_bash_safe || !is_safe_command(&command)
+            }
+            uncode_ontology::ExecutionCategory::Destructive => true,
+            uncode_ontology::ExecutionCategory::Network => true,
+            uncode_ontology::ExecutionCategory::Unknown | _ => {
+                // Fall back to legacy hardcoded matching for unknown categories
+                hardcoded_needs_confirmation(
+                    tool_name,
+                    arguments,
+                    auto_allow_readonly,
+                    auto_allow_bash_safe,
+                )
+            }
+        };
+    }
+    hardcoded_needs_confirmation(
+        tool_name,
+        arguments,
+        auto_allow_readonly,
+        auto_allow_bash_safe,
+    )
+}
+
+/// Legacy: hardcoded tool-name matching (used when ontology category is unavailable).
+fn hardcoded_needs_confirmation(
     tool_name: &str,
     arguments: &str,
     auto_allow_readonly: bool,
@@ -256,8 +296,8 @@ mod tests {
 
     #[test]
     fn test_readonly_auto_allowed() {
-        assert!(!needs_confirmation("read", "file.rs", true, true));
-        assert!(needs_confirmation("read", "file.rs", false, true));
+        assert!(!needs_confirmation("read", "file.rs", true, true, None));
+        assert!(needs_confirmation("read", "file.rs", false, true, None));
     }
 
     #[test]
@@ -266,7 +306,8 @@ mod tests {
             "bash",
             r#"{"command":"rm -rf /"}"#,
             true,
-            true
+            true,
+            None,
         ));
     }
 
