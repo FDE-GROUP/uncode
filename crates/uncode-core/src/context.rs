@@ -45,10 +45,14 @@ fn is_url(s: &str) -> bool {
 /// - 不存在的路径：替换为错误提示
 /// - 路径限制在 working_dir 内
 pub fn expand_file_refs(text: &str, working_dir: &Path) -> String {
-    let refs = extract_file_refs(text);
+    let mut refs = extract_file_refs(text);
     if refs.is_empty() {
         return text.to_string();
     }
+    // Sort descending by path length so that longer refs (e.g. @a/b) are
+    // replaced before shorter prefix refs (e.g. @a), preventing
+    // substring corruption during sequential replacement.
+    refs.sort_by(|a, b| b.len().cmp(&a.len()));
 
     let mut result = text.to_string();
     for path_str in refs {

@@ -632,6 +632,9 @@ impl TuiEngine {
     }
 
     pub fn render(&mut self, f: &mut Frame) {
+        if f.area().width == 0 || f.area().height == 0 {
+            return;
+        }
         self.tick = self.tick.wrapping_add(1);
         use uncode_core::ui_action::WidgetPlacement;
         let above_lines = self.widget_manager.lines_for(WidgetPlacement::AboveEditor);

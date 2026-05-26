@@ -80,30 +80,47 @@ fn build_anthropic_body(model: &Model, context: &Context, options: &StreamOption
                 })
             }
             _ => {
-                let text = msg
-                    .content
-                    .iter()
-                    .filter_map(|block| match block {
-                        ContentBlock::Text { text } => Some(text.clone()),
-                        ContentBlock::Image { mime_type, data } => Some(
-                            serde_json::json!({
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": mime_type,
-                                    "data": data
-                                }
-                            })
-                            .to_string(),
-                        ),
-                        _ => None,
+                let has_image = msg.content.iter().any(|b| matches!(b, ContentBlock::Image { .. }));
+                if has_image {
+                    let blocks: Vec<Value> = msg
+                        .content
+                        .iter()
+                        .filter_map(|block| match block {
+                            ContentBlock::Text { text } => {
+                                Some(serde_json::json!({"type": "text", "text": text}))
+                            }
+                            ContentBlock::Image { mime_type, data } => {
+                                Some(serde_json::json!({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mime_type,
+                                        "data": data
+                                    }
+                                }))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    serde_json::json!({
+                        "role": msg.role.to_string(),
+                        "content": blocks
                     })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                serde_json::json!({
-                    "role": msg.role.to_string(),
-                    "content": text
-                })
+                } else {
+                    let text = msg
+                        .content
+                        .iter()
+                        .filter_map(|block| match block {
+                            ContentBlock::Text { text } => Some(text.clone()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    serde_json::json!({
+                        "role": msg.role.to_string(),
+                        "content": text
+                    })
+                }
             }
         })
         .collect();
@@ -353,7 +370,7 @@ impl Api for AnthropicMessagesApi {
                 let events: Vec<StreamEvent> = match chunk {
                     Ok(c) => {
                         let mut all_events = Vec::new();
-                        let mut guard = line_buf.lock().expect("anthropic sse buffer lock");
+                        let mut guard = crate::safe_lock(&line_buf, "anthropic sse buffer");
                         for line in guard.push_chunk_and_drain_lines(&c) {
                             all_events.extend(parse_anthropic_chunk(&line, state));
                         }
@@ -541,11 +558,12 @@ data: {"type":"content_block_stop","index":0}
         };
         let options = StreamOptions::default();
         let body = build_anthropic_body(&model, &context, &options);
-        let content = body["messages"][0]["content"].as_str().unwrap();
-        assert!(content.contains("image"));
-        assert!(content.contains("base64"));
-        assert!(content.contains("image/png"));
-        assert!(content.contains("base64data"));
+        let content = body["messages"][0]["content"].as_array().unwrap();
+        let block = &content[0];
+        assert_eq!(block["type"], "image");
+        assert_eq!(block["source"]["media_type"], "image/png");
+        assert_eq!(block["source"]["data"], "base64data");
+        assert_eq!(block["source"]["type"], "base64");
     }
 
     #[test]

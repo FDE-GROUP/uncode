@@ -170,10 +170,7 @@ fn load_skills_recursive_with_source(
             let path = entry.path();
             let file_name = path.file_name().unwrap_or_default().to_string_lossy();
 
-            if ignore_patterns
-                .iter()
-                .any(|p| file_name.starts_with(p.trim_start_matches('*')))
-            {
+            if ignore_patterns.iter().any(|p| matches_gitignore(p, &file_name)) {
                 continue;
             }
 
@@ -188,6 +185,26 @@ fn load_skills_recursive_with_source(
             }
         }
     }
+}
+
+/// Minimal gitignore-style pattern matching for skill directory filtering.
+///
+/// Supports:
+/// - `*.ext` → mathes file names ending with `.ext`  
+/// - `dir/` → matches directory named `dir`
+/// - `name` → matches exact file/directory name
+/// - `!...` → negation (always returns false — we don't negate inclusions)
+fn matches_gitignore(pattern: &str, name: &str) -> bool {
+    if pattern.starts_with('!') {
+        return false; // unsupported: negation
+    }
+    if let Some(suffix) = pattern.strip_prefix('*') {
+        return name.ends_with(suffix);
+    }
+    if let Some(dir_name) = pattern.strip_suffix('/') {
+        return name == dir_name;
+    }
+    name == pattern
 }
 
 /// 解析 Markdown 格式的 Skill 定义

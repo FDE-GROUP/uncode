@@ -575,8 +575,8 @@ pub struct OntologyConstraintRule {
 }
 
 impl OntologyConstraintRule {
-    pub fn new(registry: uncode_ontology::TypeRegistry) -> Self {
-        Self { registry }
+    pub fn new(registry: &uncode_ontology::TypeRegistry) -> Self {
+        Self { registry: registry.clone() }
     }
 }
 
@@ -673,14 +673,14 @@ pub fn build_default_firewall_with_model(
 ) -> SemanticFirewall {
     let ontology = uncode_ontology::builtin::full_ontology();
     let mut validators: Vec<Box<dyn ValidationRule>> = vec![
-        Box::new(OntologyConstraintRule::new(ontology.clone())),
+        Box::new(OntologyConstraintRule::new(&ontology)),
         Box::new(SchemaCoercionRule::new(Arc::clone(&registry))),
         Box::new(PathSafetyRule::new(cwd)),
         Box::new(PermissionPolicyRule::new(policy)),
     ];
     if let Some(info) = model_info {
         validators.push(Box::new(crate::decision::bridge::ModelCapabilityRule::new(
-            ontology.clone(),
+            ontology,
             info.all_models,
             info.current_model,
         )));
@@ -723,14 +723,14 @@ pub fn build_firewall_from_config_with_model(
     };
 
     let mut validators: Vec<Box<dyn ValidationRule>> = vec![
-        Box::new(OntologyConstraintRule::new(ontology.clone())),
+        Box::new(OntologyConstraintRule::new(&ontology)),
         Box::new(SchemaCoercionRule::new(Arc::clone(&registry))),
         Box::new(path_rule),
         Box::new(PermissionPolicyRule::new(policy).with_auto_allow(auto_allow, auto_allow)),
     ];
     if let Some(info) = model_info {
         validators.push(Box::new(crate::decision::bridge::ModelCapabilityRule::new(
-            ontology.clone(),
+            ontology,
             info.all_models,
             info.current_model,
         )));
@@ -1101,7 +1101,7 @@ mod tests {
             description: None,
         });
 
-        let rule = OntologyConstraintRule::new(reg);
+        let rule = OntologyConstraintRule::new(&reg);
         // Without path — should be blocked by entity invariant
         let action = ParsedAction {
             tool_name: "touch".into(),
@@ -1174,7 +1174,7 @@ mod tests {
             description: None,
         });
 
-        let rule = OntologyConstraintRule::new(reg);
+        let rule = OntologyConstraintRule::new(&reg);
         // Without "id" — entity invariant from Base should be enforced through extends chain
         let action = ParsedAction {
             tool_name: "op".into(),

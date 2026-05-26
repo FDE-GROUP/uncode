@@ -113,6 +113,12 @@ impl AgentHarness {
 
         // Load guardrail config from .uncode/guardrails.json
         let guardrail_config = uncode_shared::guardrails::GuardrailConfig::load_from_dir(&cwd);
+        if !guardrail_config.audit.event_levels.critical.is_empty()
+            || !guardrail_config.audit.event_levels.standard.is_empty()
+            || !guardrail_config.audit.event_levels.verbose.is_empty()
+        {
+            tracing::warn!("guardrail audit config has event level filters set, but audit event filtering is not yet implemented");
+        }
         agent.set_guardrail_config(guardrail_config);
 
         // 构建 PhaseGuardPolicy 并注入 Adjudicator (#385)
@@ -127,7 +133,7 @@ impl AgentHarness {
             cancel_token,
             turn_limit,
             active_run,
-            uncode_ontology::builtin::full_ontology(),
+            uncode_ontology::builtin::full_ontology().clone(),
         );
         agent.set_adjudicator(adjudicator);
         agent.load_custom_policies();

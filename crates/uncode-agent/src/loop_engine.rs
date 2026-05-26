@@ -289,7 +289,7 @@ pub struct AgentLoop {
     tool_registry: Arc<ToolRegistry>,
     session_store: Arc<SessionStore>,
     system_prompt: String,
-    model_id: String,
+    model_id: std::sync::Mutex<String>,
     session_id: std::sync::Mutex<Option<String>>,
     event_tx: broadcast::Sender<AgentEvent>,
     cancel_token: CancellationToken,
@@ -428,7 +428,7 @@ impl AgentLoop {
             tool_registry,
             session_store,
             system_prompt,
-            model_id,
+            model_id: std::sync::Mutex::new(model_id),
             session_id: std::sync::Mutex::new(None),
             event_tx,
             cancel_token: CancellationToken::new(),
@@ -500,9 +500,13 @@ impl AgentLoop {
     }
 
     pub fn set_model_id(&mut self, model_id: String) {
-        self.model_id = model_id;
+        *safe_lock(&self.model_id, "model_id") = model_id;
         *safe_lock(&self.firewall, "firewall") = None;
     }
+
+        fn model_id(&self) -> String {
+            safe_lock(&self.model_id, "model_id").clone()
+        }
 
     pub fn set_cancel_token(&mut self, token: CancellationToken) {
         self.cancel_token = token;
@@ -1100,7 +1104,7 @@ impl AgentLoop {
                 let cwd_str = cwd.to_string_lossy().to_string();
                 if let Err(e) = self
                     .session_store
-                    .init_session_with_title(&id, &self.model_id, &cwd_str, None)
+                    .init_session_with_title(&id, &self.model_id(), &cwd_str, None)
                     .await
                 {
                     debug!("session init skipped: {e}");
@@ -1262,8 +1266,8 @@ impl AgentLoop {
                 turn += 1;
                 debug!("turn {turn}/{}", self.effective_max_turns());
 
-                let model = self.model_registry.get(&self.model_id).ok_or_else(|| {
-                    UncodeError::Config(format!("model not found: {}", self.model_id))
+                let model = self.model_registry.get(&*self.model_id()).ok_or_else(|| {
+                    UncodeError::Config(format!("model not found: {}", self.model_id()))
                 })?;
 
                 // E8: Context usage warning
@@ -1503,7 +1507,7 @@ impl AgentLoop {
 
                 self.emit(AgentEvent::LlmRequestStart {
                     data: Box::new(LlmRequestStartData {
-                        model_id: self.model_id.clone(),
+                        model_id: self.model_id(),
                         message_count: messages.len(),
                     }),
                 });
@@ -1605,7 +1609,7 @@ impl AgentLoop {
                 {
                     let mut acc = safe_lock(&self.proposal_acc, "proposal_acc");
                     acc.reset();
-                    acc.set_context(turn as u32, &self.model_id);
+                    acc.set_context(turn as u32, &self.model_id());
                 }
 
                 // ── 认知层连线 (#385): 初始化 turn 反馈累积器 ──
@@ -2324,7 +2328,7 @@ impl AgentLoop {
                 // E4: LLM request end
                 self.emit(AgentEvent::LlmRequestEnd {
                     data: Box::new(LlmRequestEndData {
-                        model_id: self.model_id.clone(),
+                        model_id: self.model_id(),
                         duration_ms: llm_start.elapsed().as_millis() as u64,
                         input_tokens: turn_input_tokens,
                         output_tokens: turn_output_tokens,
@@ -2418,24 +2422,25 @@ impl AgentLoop {
                 if let Some(ref cb) = self.prepare_next_turn {
                     if let Some(decision) = cb() {
                         if let Some(new_model) = &decision.model_id {
-                            if *new_model != self.model_id {
+                            if *new_model != *self.model_id() {
                                 self.emit(AgentEvent::ModelChanged {
                                     data: Box::new(ModelChangedData {
-                                        from: Some(self.model_id.clone()),
+                                        from: Some(self.model_id()),
                                         to: new_model.clone(),
                                         source: ModelChangeSource::Auto,
                                     }),
                                 });
                                 if let Some(ref bridge) = self.extension_bridge {
-                                    let previous_model = self.model_id.as_str();
+                                    let previous_model = self.model_id();
                                     bridge
                                         .fire_model_select(
                                             &session_id,
                                             new_model,
-                                            Some(previous_model),
+                                            Some(&previous_model),
                                         )
                                         .await;
                                 }
+                                *safe_lock(&self.model_id, "model_id") = new_model.clone();
                             }
                         }
                         if let Some(new_tl) = &decision.thinking_level {
@@ -2458,6 +2463,7 @@ impl AgentLoop {
                                         )
                                         .await;
                                 }
+                                effective_thinking_level = Some(*new_tl);
                             }
                         }
                     }
@@ -2602,7 +2608,7 @@ impl AgentLoop {
         {
             let mut fw = safe_lock(&self.firewall, "firewall");
             if fw.is_none() {
-                let current_model = self.model_registry.get(&self.model_id);
+                let current_model = self.model_registry.get(&self.model_id());
                 let model_info =
                     current_model
                         .as_ref()
