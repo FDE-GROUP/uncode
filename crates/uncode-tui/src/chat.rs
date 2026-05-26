@@ -1609,45 +1609,7 @@ fn render_message(
     match msg {
         ChatMessage::User { text, file_refs } => render_user_message(text, file_refs, w, theme),
         ChatMessage::Assistant { text, expanded, .. } => {
-            let mut lines = if text.is_empty() {
-                vec![]
-            } else if *expanded {
-                crate::markdown::render_markdown_with_theme_and_truncation(
-                    text,
-                    theme,
-                    Some(w),
-                    false,
-                )
-            } else {
-                crate::markdown::render_markdown_with_theme(text, theme, Some(w))
-            };
-
-            // Add "uncode" name prefix to first line
-            if !lines.is_empty() {
-                let first = lines.remove(0);
-                let mut new_spans = vec![Span::styled(
-                    "UnCode ",
-                    Style::default().fg(theme.tool_status.success).bold(),
-                )];
-                new_spans.extend(first.spans);
-                lines.insert(0, Line::from(new_spans));
-            }
-
-            // When collapsed and content is long, show expand hint
-            if !*expanded {
-                let total = text.lines().count();
-                let head = 200usize;
-                let tail = 100usize;
-                if total > head + tail + 5 {
-                    let prefix = if focused { "▸ " } else { "  " };
-                    lines.push(Line::from(Span::styled(
-                        format!("{prefix}... ({total} lines total, Space to expand)",),
-                        Style::default().fg(theme.tool_status.await_confirm),
-                    )));
-                }
-            }
-
-            lines
+            render_assistant_msg(text, *expanded, focused, w, theme)
         }
         ChatMessage::Thinking {
             text,
@@ -2243,6 +2205,43 @@ fn extract_file_refs(text: &str) -> Vec<String> {
 }
 
 // ── Shared rendering helpers ──
+
+/// Render assistant message text with truncation support.
+fn render_assistant_msg(
+    text: &str,
+    expanded: bool,
+    focused: bool,
+    w: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut lines = if text.is_empty() {
+        vec![]
+    } else if expanded {
+        crate::markdown::render_markdown_with_theme_and_truncation(text, theme, Some(w), false)
+    } else {
+        crate::markdown::render_markdown_with_theme(text, theme, Some(w))
+    };
+    if !lines.is_empty() {
+        let first = lines.remove(0);
+        let mut new_spans = vec![Span::styled(
+            "UnCode ",
+            Style::default().fg(theme.tool_status.success).bold(),
+        )];
+        new_spans.extend(first.spans);
+        lines.insert(0, Line::from(new_spans));
+    }
+    if !expanded {
+        let total = text.lines().count();
+        if total > 305 {
+            let prefix = if focused { "▸ " } else { "  " };
+            lines.push(Line::from(Span::styled(
+                format!("{prefix}... ({total} lines total, Space to expand)"),
+                Style::default().fg(theme.tool_status.await_confirm),
+            )));
+        }
+    }
+    lines
+}
 
 /// Returns (prefix_str, prefix_color) for focus/expand indicator triangles.
 fn focus_prefix(focused: bool, expanded: bool, theme: &Theme) -> (&'static str, Color) {
