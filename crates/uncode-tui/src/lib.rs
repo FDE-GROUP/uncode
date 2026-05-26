@@ -3532,4 +3532,136 @@ mod tests {
         assert!(!engine.agent_busy);
         assert!(engine.chat.focused_card.is_none());
     }
+
+    #[test]
+    fn test_question_request_sets_pending_question() {
+        let mut engine = TuiEngine::new();
+        let data = Box::new(uncode_core::event::QuestionRequestData {
+            tool_call_id: "q1".into(),
+            title: "test".into(),
+            questions: vec![uncode_core::event::QuestionItem {
+                question: "Continue?".into(),
+                header: "Continue".into(),
+                options: vec![
+                    uncode_core::event::QuestionOption {
+                        label: "Yes".into(),
+                        description: "Proceed".into(),
+                    },
+                    uncode_core::event::QuestionOption {
+                        label: "No".into(),
+                        description: "Stop".into(),
+                    },
+                ],
+                multiple: false,
+            }],
+        });
+        engine.handle_event(AgentEvent::QuestionRequest { data: data.clone() });
+        assert!(engine.pending_question.is_some());
+        let pending = engine.pending_question.as_ref().unwrap();
+        assert_eq!(pending.tool_call_id, "q1");
+        assert_eq!(pending.questions.len(), 1);
+        assert_eq!(pending.questions[0].header, "Continue");
+        assert_eq!(pending.questions[0].options[0].label, "Yes");
+    }
+
+    #[test]
+    fn test_permission_dialog_renders_for_bash() {
+        let mut engine = TuiEngine::new();
+        let tool_args = serde_json::json!({
+            "command": "cargo build",
+            "description": "Build project",
+            "workdir": "/tmp"
+        });
+        engine.permission.request_confirmation(
+            "t1".into(),
+            "bash".into(),
+            "bash cargo build".into(),
+            Some("Execute shell command".into()),
+            false,
+            Some(tool_args),
+        );
+        assert!(engine.permission.has_pending());
+
+        // Verify pending state contains tool_args
+        let pending = engine.permission.pending().unwrap();
+        assert_eq!(pending.tool_name, "bash");
+        let args = pending.tool_args.as_ref().unwrap();
+        assert_eq!(args["command"], "cargo build");
+        assert_eq!(args["description"], "Build project");
+    }
+
+    #[test]
+    fn test_permission_dialog_renders_for_write_with_preview() {
+        let mut engine = TuiEngine::new();
+        let tool_args = serde_json::json!({
+            "filePath": "src/main.rs",
+            "content": "fn main() {\n    println!(\"hello\");\n}\n"
+        });
+        engine.permission.request_confirmation(
+            "t2".into(),
+            "write".into(),
+            "write src/main.rs".into(),
+            Some("Write file".into()),
+            true,
+            Some(tool_args),
+        );
+        assert!(engine.permission.has_pending());
+
+        let pending = engine.permission.pending().unwrap();
+        assert_eq!(pending.tool_name, "write");
+        // Edit option available for write tools
+        assert!(
+            pending
+                .options
+                .contains(&crate::permission::ConfirmOption::Edit)
+        );
+        let args = pending.tool_args.as_ref().unwrap();
+        assert_eq!(args["filePath"], "src/main.rs");
+        assert!(args["content"].as_str().unwrap().contains("println"));
+    }
+
+    #[test]
+    fn test_permission_dialog_renders_for_generic_tool() {
+        let mut engine = TuiEngine::new();
+        engine.permission.request_confirmation(
+            "t3".into(),
+            "web_fetch".into(),
+            "GET https://example.com".into(),
+            Some("Fetch URL".into()),
+            false,
+            None,
+        );
+        assert!(engine.permission.has_pending());
+
+        let pending = engine.permission.pending().unwrap();
+        assert_eq!(pending.tool_name, "web_fetch");
+        assert!(pending.tool_args.is_none());
+        // Generic tools don't have edit option
+        assert!(
+            !pending
+                .options
+                .contains(&crate::permission::ConfirmOption::Edit)
+        );
+    }
+
+    #[test]
+    fn test_permission_always_allow_key() {
+        let mut engine = TuiEngine::new();
+        engine.permission.request_confirmation(
+            "t4".into(),
+            "write".into(),
+            "write test.rs".into(),
+            None,
+            false,
+            None,
+        );
+        assert!(engine.permission.has_pending());
+
+        // 'a' = always allow → behaves like Allow for now
+        let resolved = engine
+            .permission
+            .confirm(crate::permission::ConfirmOption::Allow);
+        assert!(resolved.is_some());
+        assert!(!engine.permission.has_pending());
+    }
 }
