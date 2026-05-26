@@ -310,30 +310,30 @@ pub struct EventLevelConfig {
 
 fn default_critical_events() -> Vec<String> {
     vec![
-        "TurnStart".into(),
-        "TurnEnd".into(),
-        "ToolCallEnd".into(),
-        "DecisionMade".into(),
-        "Error".into(),
-        "SessionStart".into(),
-        "SessionEnd".into(),
-        "CompactionComplete".into(),
+        "turn_start".into(),
+        "turn_end".into(),
+        "tool_call_end".into(),
+        "decision_made".into(),
+        "error".into(),
+        "session_start".into(),
+        "session_end".into(),
+        "compaction_complete".into(),
     ]
 }
 
 fn default_standard_events() -> Vec<String> {
     vec![
-        "ContentDelta".into(),
-        "ToolCallStart".into(),
-        "CompactionStart".into(),
-        "ModelChanged".into(),
-        "MessageQueued".into(),
-        "MessageDelivered".into(),
+        "content_delta".into(),
+        "tool_call_start".into(),
+        "compaction_start".into(),
+        "model_changed".into(),
+        "message_queued".into(),
+        "message_delivered".into(),
     ]
 }
 
 fn default_verbose_events() -> Vec<String> {
-    vec!["ToolCallProgress".into(), "ToolCallAwaitingApproval".into()]
+    vec!["tool_call_progress".into(), "tool_call_awaiting_approval".into()]
 }
 
 impl Default for EventLevelConfig {
@@ -583,19 +583,19 @@ mod tests {
             config
                 .event_levels
                 .critical
-                .contains(&"SessionStart".into())
+                .contains(&"session_start".into())
         );
         assert!(
             config
                 .event_levels
                 .standard
-                .contains(&"ContentDelta".into())
+                .contains(&"content_delta".into())
         );
         assert!(
             config
                 .event_levels
                 .verbose
-                .contains(&"ToolCallProgress".into())
+                .contains(&"tool_call_progress".into())
         );
         assert_eq!(config.retention.critical_events, "permanent");
         assert_eq!(config.retention.standard_events, "90_days");
