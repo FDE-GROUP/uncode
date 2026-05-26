@@ -825,7 +825,9 @@ impl TuiEngine {
     fn render_status(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         if self.permission.has_pending() {
             // Simplified: permission modal handles the detailed UI
-            let p = self.permission.pending().unwrap();
+            let Some(p) = self.permission.pending() else {
+                return;
+            };
             let line = Line::from(vec![Span::styled(
                 format!("⏳ Awaiting approval for {}…", p.tool_name),
                 Style::default()

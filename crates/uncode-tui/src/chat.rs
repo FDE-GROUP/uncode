@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::message_renderer::MessageRendererRegistry;
 use crate::theme::Theme;
 use crate::tool_renderer::ToolRendererRegistry;
+#[cfg(test)]
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
@@ -1186,7 +1187,8 @@ impl ChatState {
         // No-op: render on demand with current width for responsive resizing
     }
 
-    /// 渲染对话区可见行
+    /// 渲染对话区可见行 (test-only; production uses render_viewport)
+    #[cfg(test)]
     pub fn render_lines(
         &self,
         area: Rect,
