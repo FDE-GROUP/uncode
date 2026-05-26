@@ -690,7 +690,7 @@ impl AgentLoop {
         let mut sm = safe_lock(&self.phase_sm, "phase_sm");
         match sm.transition(to, trigger) {
             Ok(()) => {
-                let last = sm.history().last().unwrap();
+                let last = sm.history().last().expect("phase history must be non-empty after transition");
                 let from_str = last.from.to_string();
                 let to_str = last.to.to_string();
                 drop(sm);
@@ -1440,7 +1440,7 @@ impl AgentLoop {
                         );
                         new_msgs
                     } else {
-                        messages.clone()
+                        messages.clone() // required: messages reused in subsequent loop iterations
                     }
                 };
 
