@@ -483,6 +483,62 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[tokio::test]
+    async fn test_undo_turn_single_entry() {
+        let store = new_store().await;
+        store.init_session("s1", "model", "/test").await.unwrap();
+
+        let u1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("hi"))));
+        store.append_entry("s1", &u1).await.unwrap();
+        let a1 = SessionEntry::Message(Box::new(MessageEntry::from(Message::assistant("ok"))));
+        store.append_entry("s1", &a1).await.unwrap();
+        let u2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("again"))));
+        store.append_entry("s1", &u2).await.unwrap();
+        let a2 = SessionEntry::Message(Box::new(MessageEntry::from(Message::assistant("done"))));
+        store.append_entry("s1", &a2).await.unwrap();
+
+        let before = Utc::now();
+        let result = store.undo_turn("s1", 1).await;
+        let elapsed = Utc::now() - before;
+
+        assert!(result.is_ok());
+        assert!(
+            elapsed < TimeDelta::seconds(5),
+            "undo should complete quickly"
+        );
+
+        let entries = store.load_entries("s1").await.unwrap();
+        assert!(entries.len() >= 4, "entries should not decrease after undo");
+    }
+
+    #[tokio::test]
+    async fn test_undo_turn_zero_does_nothing() {
+        let store = new_store().await;
+        store.init_session("s1", "model", "/test").await.unwrap();
+
+        let entry = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("hello"))));
+        store.append_entry("s1", &entry).await.unwrap();
+
+        let before_entries = store.load_entries("s1").await.unwrap();
+        let result = store.undo_turn("s1", 0).await;
+        let after_entries = store.load_entries("s1").await.unwrap();
+
+        assert!(result.is_err());
+        assert_eq!(before_entries.len(), after_entries.len());
+    }
+
+    #[tokio::test]
+    async fn test_undo_turn_more_than_entries() {
+        let store = new_store().await;
+        store.init_session("s1", "model", "/test").await.unwrap();
+
+        let entry = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("hello"))));
+        store.append_entry("s1", &entry).await.unwrap();
+
+        let result = store.undo_turn("s1", 5).await;
+        assert!(result.is_err());
+    }
+
     // ── Search / Filter tests ──────────────────────────────────────────
 
     #[tokio::test]
@@ -654,6 +710,48 @@ mod tests {
             .list_sessions_by_date(&yesterday, &tomorrow)
             .await
             .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "s1");
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_by_date_far_future() {
+        let store = new_store().await;
+        store.init_session("s1", "m1", "/test").await.unwrap();
+        let entry = SessionEntry::Message(Box::new(MessageEntry::from(Message::user("hi"))));
+        store.append_entry("s1", &entry).await.unwrap();
+
+        let now = Utc::now();
+        let seconds_ago = now - TimeDelta::seconds(5);
+        let tomorrow = now + TimeDelta::hours(24);
+        let results = store
+            .list_sessions_by_date(&seconds_ago, &tomorrow)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "s1");
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_by_date_edge_equals() {
+        let store = new_store().await;
+        store.init_session("s1", "m1", "/test").await.unwrap();
+
+        let now = Utc::now();
+        let before = now - TimeDelta::seconds(1);
+        let after = now + TimeDelta::seconds(1);
+        let results = store.list_sessions_by_date(&before, &after).await.unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "s1");
+    }
+
+    #[tokio::test]
+    async fn test_list_sessions_by_date_multiple_models() {
+        let store = new_store().await;
+        store.init_session("s1", "m1", "/test").await.unwrap();
+        store.init_session("s2", "m2", "/test").await.unwrap();
+
+        let results = store.list_sessions_by_model("m1").await.unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "s1");
     }

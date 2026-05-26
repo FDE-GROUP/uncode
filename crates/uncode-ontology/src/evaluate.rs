@@ -262,8 +262,25 @@ pub fn evaluate_constraint_with_rules<F: FieldLookup>(
                 return ConstraintResult::Pass;
             };
             let value_str = value.as_str().unwrap_or_default();
-            let matched = Regex::new(pattern).map_or(false, |re| re.is_match(value_str));
-            if matched {
+            let re = match Regex::new(pattern) {
+                Ok(r) => r,
+                Err(e) => {
+                    let detail = format!("invalid regex '{pattern}': {e}");
+                    return match level {
+                        ConstraintLevel::Soft => ConstraintResult::Warn {
+                            constraint: "regex_match".into(),
+                            field: field.clone(),
+                            detail,
+                        },
+                        ConstraintLevel::Hard => ConstraintResult::Fail {
+                            constraint: "regex_match".into(),
+                            field: field.clone(),
+                            detail,
+                        },
+                    };
+                }
+            };
+            if re.is_match(value_str) {
                 ConstraintResult::Pass
             } else {
                 let detail =

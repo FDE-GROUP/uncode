@@ -3314,4 +3314,32 @@ mod tests {
             panic!("Expected Thinking");
         }
     }
+
+    #[test]
+    fn test_render_viewport_shows_messages() {
+        let mut chat = ChatState::new();
+        chat.push_user_message("hello world".into());
+
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let msg_renderers = MessageRendererRegistry::new();
+        chat.ensure_line_counts(80, &renderers, &theme, 0, false, true, "", &msg_renderers);
+
+        let viewport = chat.render_viewport(0, 0, 0, 24);
+        let text: String = viewport.iter().map(|l| l.to_string()).collect();
+        assert!(text.contains("hello") || text.contains("world"));
+    }
+
+    #[test]
+    fn test_render_viewport_empty() {
+        let mut chat = ChatState::new();
+
+        let renderers = ToolRendererRegistry::new();
+        let theme = Theme::default_dark();
+        let msg_renderers = MessageRendererRegistry::new();
+        chat.ensure_line_counts(80, &renderers, &theme, 0, false, true, "", &msg_renderers);
+
+        let viewport = chat.render_viewport(0, 0, 0, 24);
+        assert!(viewport.is_empty());
+    }
 }
