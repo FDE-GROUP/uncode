@@ -601,6 +601,25 @@ impl TuiEngine {
         }
     }
 
+    /// Auto-approve pending permission after 20s timeout (called from idle tick).
+    fn check_auto_approve(&mut self) {
+        if let Some(started) = self.permission_started_at {
+            if started.elapsed().as_secs() >= 20 {
+                if let Some(p) = self
+                    .permission
+                    .confirm(crate::permission::ConfirmOption::Allow)
+                {
+                    self.resolve_permission(&p.tool_id, Approval::Allow);
+                } else {
+                    self.permission_started_at = None;
+                }
+            }
+            if !self.permission.has_pending() {
+                self.permission_started_at = None;
+            }
+        }
+    }
+
     /// End of a full agent `run` (not a single inner Turn).
     fn finish_agent_run(&mut self) {
         self.agent_busy = false;
@@ -653,23 +672,6 @@ impl TuiEngine {
     pub fn render(&mut self, f: &mut Frame) {
         if f.area().width == 0 || f.area().height == 0 {
             return;
-        }
-        // Auto-approve pending permission after 20s timeout
-        if let Some(started) = self.permission_started_at {
-            if started.elapsed().as_secs() >= 20 {
-                if let Some(p) = self
-                    .permission
-                    .confirm(crate::permission::ConfirmOption::Allow)
-                {
-                    self.resolve_permission(&p.tool_id, Approval::Allow);
-                } else {
-                    self.permission_started_at = None;
-                }
-            }
-            // Defensive: clear timer if permission was externally resolved
-            if !self.permission.has_pending() {
-                self.permission_started_at = None;
-            }
         }
         self.tick = self.tick.wrapping_add(1);
         use uncode_core::ui_action::WidgetPlacement;
@@ -1910,7 +1912,8 @@ impl TuiEngine {
                     let _ = pending.response_tx.send(result);
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_millis(200)) => {
-                    // Idle tick: re-render for status animation
+                    // Idle tick: check auto-approve + re-render for status animation
+                    self.check_auto_approve();
                 }
             }
             if self.quit_requested {
