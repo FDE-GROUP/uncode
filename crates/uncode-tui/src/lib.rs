@@ -861,11 +861,15 @@ impl TuiEngine {
             ratatui::layout::Rect::new(area.x + dx, area.y + dy, dialog_width, dialog_height);
 
         let confirm_bg = self.theme.tool_status.await_confirm;
+        // Solid dark background to block underlying content
+        let dialog_bg = Color::Rgb(24, 24, 27); // near-black, opaque
+        // Fill the entire dialog area
+        f.render_widget(ratatui::widgets::Clear, dialog_rect);
         let block = ratatui::widgets::Block::bordered()
             .border_style(Style::default().fg(confirm_bg))
             .title(" Permission Required ")
             .title_alignment(ratatui::layout::Alignment::Center)
-            .style(Style::default().bg(self.theme.ui.footer_bg));
+            .style(Style::default().bg(dialog_bg));
         let inner_area = block.inner(dialog_rect);
         f.render_widget(block, dialog_rect);
 
@@ -1069,7 +1073,10 @@ impl TuiEngine {
         // Render content
         let max_visible = inner_area.height as usize;
         let visible: Vec<Line<'_>> = lines.into_iter().take(max_visible).collect();
-        f.render_widget(Paragraph::new(Text::from(visible)), inner_area);
+        f.render_widget(
+            Paragraph::new(Text::from(visible)).style(Style::default().bg(dialog_bg)),
+            inner_area,
+        );
     }
 
     /// Render keyboard shortcuts help panel overlay.
@@ -1085,11 +1092,13 @@ impl TuiEngine {
         let help_rect =
             ratatui::layout::Rect::new(area.x + dx, area.y + dy, help_width, help_height);
 
+        let dialog_bg = Color::Rgb(24, 24, 27);
+        f.render_widget(ratatui::widgets::Clear, help_rect);
         let block = ratatui::widgets::Block::bordered()
             .border_style(Style::default().fg(self.theme.tool_status.running))
             .title(" Keyboard Shortcuts (Ctrl+H / F1 to toggle) ")
             .title_alignment(ratatui::layout::Alignment::Center)
-            .style(Style::default().bg(self.theme.ui.footer_bg));
+            .style(Style::default().bg(dialog_bg));
         let inner = block.inner(help_rect);
         f.render_widget(block, help_rect);
 
@@ -1159,7 +1168,10 @@ impl TuiEngine {
 
         let max_visible = inner.height as usize;
         let visible: Vec<Line<'_>> = lines.into_iter().take(max_visible).collect();
-        f.render_widget(Paragraph::new(Text::from(visible)), inner);
+        f.render_widget(
+            Paragraph::new(Text::from(visible)).style(Style::default().bg(dialog_bg)),
+            inner,
+        );
     }
 
     fn render_header(&self, f: &mut Frame, area: ratatui::layout::Rect) {
