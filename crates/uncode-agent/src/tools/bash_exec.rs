@@ -140,11 +140,19 @@ pub async fn exec_bash_streaming(args: BashExecArgs, ctx: BashStreamContext) -> 
     let pgid = child.id().unwrap_or(0);
     let stdout = match child.stdout.take() {
         Some(s) => s,
-        None => return ToolResult::err("failed to capture stdout"),
+        None => {
+            kill_process_group(pgid);
+            let _ = child.wait().await;
+            return ToolResult::err("failed to capture stdout");
+        }
     };
     let stderr = match child.stderr.take() {
         Some(s) => s,
-        None => return ToolResult::err("failed to capture stderr"),
+        None => {
+            kill_process_group(pgid);
+            let _ = child.wait().await;
+            return ToolResult::err("failed to capture stderr");
+        }
     };
 
     let mut output = String::with_capacity(4096);
