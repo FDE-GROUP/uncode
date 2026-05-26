@@ -594,6 +594,41 @@ Be concise. Focus on what's needed to understand the kept suffix.
 对话内容：
 ";
 
+/// Shared LLM summarization helper — reused by generate_summary and generate_turn_prefix_summary.
+const SUMMARY_TEMPERATURE: f32 = 0.3;
+
+async fn summarize_via_llm(
+    prompt: String,
+    system_prompt: &str,
+    max_tokens: u32,
+    model: &Model,
+    api_keys: &HashMap<String, String>,
+    api_registry: &ApiRegistry,
+) -> anyhow::Result<String> {
+    let api_key = api_keys.get(&model.provider).cloned();
+    let context = Context {
+        system_prompt: Some(system_prompt.into()),
+        messages: vec![Message::user(prompt)],
+        tools: vec![],
+    };
+    let options = StreamOptions {
+        api_key,
+        temperature: Some(SUMMARY_TEMPERATURE),
+        max_tokens: Some(max_tokens),
+        ..StreamOptions::default()
+    };
+
+    let mut stream = uncode_ai::stream_simple(model, &context, &options, api_registry).await?;
+    let mut result = String::with_capacity(max_tokens as usize / 2);
+    while let Some(event) = stream.next().await {
+        if let StreamEvent::TextDelta(text) = event {
+            result.push_str(&text);
+        }
+    }
+
+    Ok(result)
+}
+
 async fn generate_summary(
     conversation: &str,
     prev_summary: Option<&str>,
@@ -607,29 +642,15 @@ async fn generate_summary(
         }
         None => format!("{SUMMARIZATION_PROMPT}\n{conversation}"),
     };
-
-    let api_key = api_keys.get(&model.provider).cloned();
-    let context = Context {
-        system_prompt: Some("你是一个会话摘要助手。用简洁的中文生成摘要。".into()),
-        messages: vec![Message::user(prompt)],
-        tools: vec![],
-    };
-    let options = StreamOptions {
-        api_key,
-        temperature: Some(0.3),
-        max_tokens: Some(1024),
-        ..StreamOptions::default()
-    };
-
-    let mut stream = uncode_ai::stream_simple(model, &context, &options, api_registry).await?;
-    let mut summary = String::with_capacity(512);
-    while let Some(event) = stream.next().await {
-        if let StreamEvent::TextDelta(text) = event {
-            summary.push_str(&text);
-        }
-    }
-
-    Ok(summary)
+    summarize_via_llm(
+        prompt,
+        "你是一个会话摘要助手。用简洁的中文生成摘要。",
+        1024,
+        model,
+        api_keys,
+        api_registry,
+    )
+    .await
 }
 
 /// Generate a turn prefix summary when compaction splits a turn mid-stream.
@@ -652,31 +673,15 @@ async fn generate_turn_prefix_summary(
         .join("\n");
 
     let prompt = format!("{TURN_PREFIX_SUMMARIZATION_PROMPT}\n{conversation}");
-
-    let api_key = api_keys.get(&model.provider).cloned();
-    let context = Context {
-        system_prompt: Some(
-            "你是一个会话摘要助手。用简洁的中英混合生成摘要，保留技术术语。".into(),
-        ),
-        messages: vec![Message::user(prompt)],
-        tools: vec![],
-    };
-    let options = StreamOptions {
-        api_key,
-        temperature: Some(0.3),
-        max_tokens: Some(512),
-        ..StreamOptions::default()
-    };
-
-    let mut stream = uncode_ai::stream_simple(model, &context, &options, api_registry).await?;
-    let mut summary = String::with_capacity(256);
-    while let Some(event) = stream.next().await {
-        if let StreamEvent::TextDelta(text) = event {
-            summary.push_str(&text);
-        }
-    }
-
-    Ok(summary)
+    summarize_via_llm(
+        prompt,
+        "你是一个会话摘要助手。用简洁的中英混合生成摘要，保留技术术语。",
+        512,
+        model,
+        api_keys,
+        api_registry,
+    )
+    .await
 }
 
 #[cfg(test)]
