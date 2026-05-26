@@ -56,6 +56,7 @@ use crossterm::event::{
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::style::{Color, Style};
+use ratatui::text::Text;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use std::sync::Arc;
@@ -673,24 +674,42 @@ impl TuiEngine {
         }
         self.render_chat(f, chunks[idx]);
         idx += 1;
-        self.render_status(f, chunks[idx]);
-        idx += 1;
-        if above_lines > 0 {
-            self.widget_manager
-                .render(f, chunks[idx], WidgetPlacement::AboveEditor);
+        // Permission modal: overlay chat area when pending
+        if self.permission.has_pending() {
+            self.render_permission_dialog(f, f.area());
+            // Render simplified status and footer
+            self.render_status(f, chunks[idx]);
             idx += 1;
-        }
-        self.editor
-            .render(f, chunks[idx], self.theme.ui.footer_text);
-        idx += 1;
-        if below_lines > 0 {
-            self.widget_manager
-                .render(f, chunks[idx], WidgetPlacement::BelowEditor);
+            if above_lines > 0 {
+                idx += 1;
+            }
+            self.editor
+                .render(f, chunks[idx], self.theme.ui.footer_text);
             idx += 1;
+            if below_lines > 0 {
+                idx += 1;
+            }
+            self.render_footer(f, chunks[idx], chunks[idx + 1]);
+        } else {
+            self.render_status(f, chunks[idx]);
+            idx += 1;
+            if above_lines > 0 {
+                self.widget_manager
+                    .render(f, chunks[idx], WidgetPlacement::AboveEditor);
+                idx += 1;
+            }
+            self.editor
+                .render(f, chunks[idx], self.theme.ui.footer_text);
+            idx += 1;
+            if below_lines > 0 {
+                self.widget_manager
+                    .render(f, chunks[idx], WidgetPlacement::BelowEditor);
+                idx += 1;
+            }
+            let footer1 = chunks[idx];
+            let footer2 = chunks[idx + 1];
+            self.render_footer(f, footer1, footer2);
         }
-        let footer1 = chunks[idx];
-        let footer2 = chunks[idx + 1];
-        self.render_footer(f, footer1, footer2);
 
         self.selector.render(f, f.area());
         self.dialog.render(f, f.area());
@@ -738,37 +757,16 @@ impl TuiEngine {
     }
 
     fn render_status(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        if let Some(p) = self.permission.pending() {
-            let hint = p
-                .tool_description
-                .as_deref()
-                .filter(|d| !d.is_empty())
-                .map(|d| format!(" — {d}"))
-                .unwrap_or_default();
-            let keys = if p
-                .options
-                .iter()
-                .any(|o| *o == crate::permission::ConfirmOption::Edit)
-            {
-                "y=允许 n=拒绝 e=编辑"
-            } else {
-                "y=允许 n=拒绝"
-            };
-            let line = Line::from(vec![
-                Span::styled(
-                    format!("确认 {}?{hint} ", p.tool_name),
-                    Style::default()
-                        .black()
-                        .bg(self.theme.tool_status.await_confirm)
-                        .bold(),
-                ),
-                Span::styled(
-                    keys,
-                    Style::default()
-                        .fg(self.theme.ui.footer_text)
-                        .bg(self.theme.tool_status.await_confirm),
-                ),
-            ]);
+        if self.permission.has_pending() {
+            // Simplified: permission modal handles the detailed UI
+            let p = self.permission.pending().unwrap();
+            let line = Line::from(vec![Span::styled(
+                format!("⏳ Awaiting approval for {}…", p.tool_name),
+                Style::default()
+                    .black()
+                    .bg(self.theme.tool_status.await_confirm)
+                    .bold(),
+            )]);
             f.render_widget(Paragraph::new(line), area);
             return;
         }
@@ -825,6 +823,198 @@ impl TuiEngine {
         ]);
 
         f.render_widget(Paragraph::new(line), area);
+    }
+
+    /// Render permission confirmation modal dialog over the full terminal area.
+    ///
+    /// Shows tool details + preview (code, command, args) depending on tool type.
+    fn render_permission_dialog(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        let Some(p) = self.permission.pending() else {
+            return;
+        };
+
+        let dialog_width = area.width.min(80).max(40);
+        let dialog_height = area.height.min(20).max(10);
+        let dx = (area.width.saturating_sub(dialog_width)) / 2;
+        let dy = (area.height.saturating_sub(dialog_height)) / 2;
+        let dialog_rect =
+            ratatui::layout::Rect::new(area.x + dx, area.y + dy, dialog_width, dialog_height);
+
+        let confirm_bg = self.theme.tool_status.await_confirm;
+        let block = ratatui::widgets::Block::bordered()
+            .border_style(Style::default().fg(confirm_bg))
+            .title(" Permission Required ")
+            .title_alignment(ratatui::layout::Alignment::Center)
+            .style(Style::default().bg(self.theme.ui.footer_bg));
+        let inner_area = block.inner(dialog_rect);
+        f.render_widget(block, dialog_rect);
+
+        let mut lines: Vec<Line<'_>> = Vec::new();
+
+        // Tool header
+        let (icon, label): (&str, String) = match p.tool_name.as_str() {
+            "write" => ("←", "Write".into()),
+            "edit" => ("←", "Edit".into()),
+            "bash" => ("$", "Bash".into()),
+            "read" => ("→", "Read".into()),
+            "grep" => ("✱", "Grep".into()),
+            "find" => ("✱", "Find".into()),
+            "web_fetch" => ("%", "WebFetch".into()),
+            "web_search" => ("◈", "WebSearch".into()),
+            _ => ("⚙", p.tool_name.clone()),
+        };
+        lines.push(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(
+                format!("{icon} {label}"),
+                Style::default().fg(confirm_bg).bold(),
+            ),
+        ]));
+
+        // Description
+        if let Some(ref desc) = p.tool_description {
+            if !desc.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(
+                        desc.as_str(),
+                        Style::default().fg(self.theme.ui.footer_text),
+                    ),
+                ]));
+            }
+        }
+
+        lines.push(Line::raw(""));
+
+        // Tool-specific preview
+        match p.tool_name.as_str() {
+            "write" | "edit" => {
+                // File content preview
+                let file_path = p
+                    .tool_args
+                    .as_ref()
+                    .and_then(|a| a.get("filePath").and_then(|v| v.as_str()))
+                    .unwrap_or("");
+                let content = p
+                    .tool_args
+                    .as_ref()
+                    .and_then(|a| a.get("content").and_then(|v| v.as_str()))
+                    .unwrap_or("");
+
+                if !file_path.is_empty() {
+                    lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(
+                            format!("File: {file_path}"),
+                            Style::default().fg(self.theme.ui.footer_text),
+                        ),
+                    ]));
+                }
+                if !content.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "  ┌─ Preview ─────────────────────────────",
+                        Style::default().fg(self.theme.ui.footer_text),
+                    )));
+                    let preview_lines = content.lines().take(10);
+                    for (i, line) in preview_lines.enumerate() {
+                        let display = if line.len() > dialog_width as usize - 10 {
+                            format!("{}…", &line[..dialog_width as usize - 12])
+                        } else {
+                            line.to_string()
+                        };
+                        lines.push(Line::from(vec![
+                            Span::styled(
+                                format!("  │{i:>3} "),
+                                Style::default().fg(self.theme.ui.footer_text),
+                            ),
+                            Span::styled(
+                                format!("+ {display}"),
+                                Style::default().fg(self.theme.diff.added_text),
+                            ),
+                        ]));
+                    }
+                    if content.lines().count() > 10 {
+                        lines.push(Line::from(Span::styled(
+                            format!("  │  ... {} more lines", content.lines().count() - 10),
+                            Style::default().fg(self.theme.ui.footer_text),
+                        )));
+                    }
+                    lines.push(Line::from(Span::styled(
+                        "  └──────────────────────────────────────────",
+                        Style::default().fg(self.theme.ui.footer_text),
+                    )));
+                }
+            }
+            "bash" => {
+                let command = p
+                    .tool_args
+                    .as_ref()
+                    .and_then(|a| a.get("command").and_then(|v| v.as_str()))
+                    .unwrap_or("");
+                let workdir = p
+                    .tool_args
+                    .as_ref()
+                    .and_then(|a| a.get("workdir").and_then(|v| v.as_str()))
+                    .unwrap_or(".");
+
+                if workdir != "." && !workdir.is_empty() {
+                    lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(
+                            format!("Working directory: {workdir}"),
+                            Style::default().fg(self.theme.ui.footer_text),
+                        ),
+                    ]));
+                    lines.push(Line::raw(""));
+                }
+                if !command.is_empty() {
+                    lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(
+                            format!("$ {command}"),
+                            Style::default().fg(self.theme.bash.command).bold(),
+                        ),
+                    ]));
+                }
+            }
+            _ => {
+                // Generic: show arguments_summary
+                if !p.arguments_summary.is_empty() && p.arguments_summary != "{}" {
+                    lines.push(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(
+                            &p.arguments_summary,
+                            Style::default().fg(self.theme.markdown.code_text),
+                        ),
+                    ]));
+                }
+            }
+        }
+
+        lines.push(Line::raw(""));
+
+        // Button bar
+        let button_style = Style::default().fg(Color::Black).bg(confirm_bg);
+        lines.push(Line::from(vec![
+            Span::styled(" [y] Allow ", button_style.bold()),
+            Span::raw(" "),
+            Span::styled(" [n] Reject ", button_style.bold()),
+            Span::raw(" "),
+            Span::styled(" [a] Always ", button_style.bold()),
+            if p.options
+                .iter()
+                .any(|o| *o == crate::permission::ConfirmOption::Edit)
+            {
+                Span::styled("  [e] Edit ", button_style.bold())
+            } else {
+                Span::raw("")
+            },
+        ]));
+
+        // Render content
+        let max_visible = inner_area.height as usize;
+        let visible: Vec<Line<'_>> = lines.into_iter().take(max_visible).collect();
+        f.render_widget(Paragraph::new(Text::from(visible)), inner_area);
     }
 
     fn render_header(&self, f: &mut Frame, area: ratatui::layout::Rect) {
@@ -1020,6 +1210,15 @@ impl TuiEngine {
                                         if let Some(p) = self.permission.confirm(
                                             crate::permission::ConfirmOption::Allow,
                                         ) {
+                                            self.resolve_permission(&p.tool_id, Approval::Allow);
+                                        }
+                                    }
+                                    KeyCode::Char('a') => {
+                                        if let Some(p) = self.permission.confirm(
+                                            crate::permission::ConfirmOption::Allow,
+                                        ) {
+                                            // TODO: persist always-allow rule to policy
+                                            // Currently behaves same as Allow for this turn
                                             self.resolve_permission(&p.tool_id, Approval::Allow);
                                         }
                                     }
