@@ -324,6 +324,8 @@ pub struct AgentLoop {
     guardrail_config: std::sync::Mutex<uncode_shared::guardrails::GuardrailConfig>,
     /// 用户配置的 max_tokens 覆盖值（None = 使用模型声明值）
     max_tokens: Option<u32>,
+    /// 用户配置的 temperature 覆盖值（None = 使用默认 0.7）
+    temperature: Option<f32>,
     /// 事件路由器 — 治理层 sync dispatch + async hook dispatch
     event_router: Arc<std::sync::Mutex<uncode_core::event::EventRouter>>,
     /// Turn-level phase state machine — governance observability
@@ -370,6 +372,11 @@ impl AgentLoop {
     /// Set max_output_tokens override (mutable variant for post-construction use).
     pub fn set_max_tokens(&mut self, max_tokens: Option<u32>) {
         self.max_tokens = max_tokens;
+    }
+
+    /// Set temperature override (mutable variant for post-construction use).
+    pub fn set_temperature(&mut self, temperature: f32) {
+        self.temperature = Some(temperature);
     }
 
     /// Set skill registry for expanding `/skill-name` commands in steering messages.
@@ -456,6 +463,7 @@ impl AgentLoop {
                 uncode_shared::guardrails::GuardrailConfig::default(),
             ),
             max_tokens: None,
+            temperature: None,
             event_router: Arc::new(std::sync::Mutex::new(uncode_core::event::EventRouter::new())),
             phase_sm: std::sync::Mutex::new(crate::governance::PhaseStateMachine::new()),
         }
@@ -1465,7 +1473,15 @@ impl AgentLoop {
                                     uncode_extensions::hooks::LifecycleHook::BeforeProviderRequest;
                                     // Fire the extension hook asynchronously without blocking the stream.
                                     tokio::spawn(async move {
-                                        let _ = reg.fire(hook, &ctx).await;
+                                        let result = reg.fire(hook, &ctx).await;
+                                        if let uncode_extensions::hooks::HookResult::Block {
+                                            ref reason,
+                                        } = result
+                                        {
+                                            tracing::warn!(
+                                                "extension blocked provider request: {reason}"
+                                            );
+                                        }
                                     });
                                 }
                             }
@@ -1476,7 +1492,7 @@ impl AgentLoop {
 
                 let options = StreamOptions {
                     api_key,
-                    temperature: Some(0.7),
+                    temperature: Some(self.temperature.unwrap_or(0.7)),
                     max_tokens: Some(self.max_tokens.unwrap_or(model.max_output_tokens)),
                     thinking_level,
                     session_id: Some(session_id.clone()),

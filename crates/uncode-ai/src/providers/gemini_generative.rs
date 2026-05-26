@@ -27,7 +27,7 @@ impl Default for GeminiGenerativeAiApi {
     }
 }
 
-fn build_gemini_body(_model: &Model, context: &Context, options: &StreamOptions) -> Value {
+fn build_gemini_body(model: &Model, context: &Context, options: &StreamOptions) -> Value {
     let mut contents = Vec::new();
 
     if let Some(system) = context.system_prompt.as_deref() {
@@ -57,7 +57,7 @@ fn build_gemini_body(_model: &Model, context: &Context, options: &StreamOptions)
     let mut body = serde_json::json!({
         "contents": contents,
         "generationConfig": {
-            "maxOutputTokens": options.max_tokens.unwrap_or(8192),
+            "maxOutputTokens": options.max_tokens.unwrap_or(model.max_output_tokens),
         }
     });
 
