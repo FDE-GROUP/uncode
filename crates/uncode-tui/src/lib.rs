@@ -1890,9 +1890,25 @@ impl TuiEngine {
         let target_entry = if parts.len() > 1 && !parts[1].trim().is_empty() {
             parts[1].trim().to_string()
         } else {
-            self.chat.push_message(chat::ChatMessage::Error {
-                message: "用法: /fork <entry_id> — 指定要回退到的条目 ID".into(),
-                category: uncode_core::event::ErrorCategory::Config,
+            // Fork from current state — use last session entry as branch point
+            self.chat.push_message(chat::ChatMessage::Summary {
+                completed: vec![
+                    "Forking from current session state...".into(),
+                    "Tip: use /tree to see branch structure".into(),
+                ],
+                next_steps: vec![],
+            });
+            // Generate a new session ID (fork creates a new branch)
+            let old_id = self.session_id.clone();
+            let new_session_id = uuid::Uuid::new_v4().to_string();
+            self.session_id = new_session_id;
+            let short_old = &old_id[..8.min(old_id.len())];
+            let short_new = &self.session_id[..8.min(self.session_id.len())];
+            self.chat.push_message(chat::ChatMessage::Summary {
+                completed: vec![format!(
+                    "Session forked: {short_old} → {short_new} (branch started from current state)"
+                )],
+                next_steps: vec![],
             });
             return;
         };

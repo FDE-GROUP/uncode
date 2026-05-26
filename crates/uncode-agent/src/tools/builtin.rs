@@ -10,7 +10,7 @@ use uncode_core::config::ToolsConfig;
 
 use super::{
     BashTool, EditTool, FindTool, GrepTool, LLMQueryTool, LsTool, QuestionTool, ReadTool,
-    ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
+    SkillTool, ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
 };
 
 /// Pi `coding-agent` built-in tool names (no web tools).
@@ -83,6 +83,7 @@ pub fn register_coding_tools(
         registry.register("web_search", Arc::new(tool));
     }
     registry.register("question", Arc::new(QuestionTool::new()));
+    registry.register("skill", Arc::new(SkillTool::default()));
     // Use ontology ActionDefs to drive ToolDefinition generation.
     registry.set_builtin_ontology();
 }
@@ -198,9 +199,10 @@ mod tests {
         assert!(reg.is_active("web_fetch"));
         assert!(!reg.is_active("llm_query"));
         assert!(!reg.is_active("read"));
-        // question is non-Pi, stays active like web_fetch
+        // question + skill are non-Pi, stay active like web_fetch
         assert!(reg.is_active("question"));
-        assert_eq!(reg.definitions().len(), 2); // web_fetch + question
+        assert!(reg.is_active("skill"));
+        assert_eq!(reg.definitions().len(), 3); // web_fetch + question + skill
     }
 
     #[test]
