@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use uncode_core::error::UncodeError;
 
 #[derive(Debug, Deserialize)]
@@ -8,6 +8,7 @@ struct GitHubIssue {
     title: String,
     body: Option<String>,
     state: String,
+    html_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -22,11 +23,12 @@ pub struct GitHubClient {
     client: reqwest::Client,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IssueInfo {
     pub number: u64,
     pub title: String,
     pub body: String,
+    pub url: Option<String>,
 }
 
 impl GitHubClient {
@@ -71,6 +73,7 @@ impl GitHubClient {
             number: issue.number,
             title: issue.title,
             body: issue.body.unwrap_or_default(),
+            url: issue.html_url,
         })
     }
 
@@ -114,5 +117,26 @@ impl GitHubClient {
             .map_err(|e| UncodeError::Other(e.to_string()))?;
 
         Ok(pr.html_url)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_issue_info_serde_roundtrip() {
+        let issue = IssueInfo {
+            number: 42,
+            title: "Fix login bug".into(),
+            body: "The login button does not work on Safari.".into(),
+            url: Some("https://github.com/user/repo/issues/42".into()),
+        };
+        let json = serde_json::to_string(&issue).unwrap();
+        let back: IssueInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(issue.number, back.number);
+        assert_eq!(issue.title, back.title);
+        assert_eq!(issue.body, back.body);
+        assert_eq!(issue.url, back.url);
     }
 }

@@ -370,4 +370,26 @@ mod tests {
         let resp = o.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(resp, Some(DialogResponse::Cancelled));
     }
+
+    #[test]
+    fn test_render_confirm_dialog() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut o = test_overlay();
+        o.show(DialogRequest::Confirm {
+            message: "Are you sure?".into(),
+        });
+        terminal.draw(|f| o.render(f, f.area())).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(text.contains("Are you sure?") || text.contains("Confirm"));
+    }
 }

@@ -341,6 +341,38 @@ mod tests {
         let mgr2 = OverlayManager::default();
         assert_eq!(mgr1.has_visible(), mgr2.has_visible());
     }
+
+    #[test]
+    fn test_render_visible_shows_overlay() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut mgr = OverlayManager::new();
+        mgr.show(
+            OverlayConfig {
+                key: "test".into(),
+                width: Some(SizeValue::Fixed(40)),
+                height: Some(SizeValue::Fixed(10)),
+                anchor: OverlayAnchor::Center,
+                capturing: true,
+            },
+            OverlayContent {
+                lines: vec!["Hello World".into()],
+                styles: Vec::new(),
+            },
+        );
+        terminal.draw(|f| mgr.render(f, f.area())).unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(text.contains("test") || text.contains("Hello World"));
+    }
 }
 
 fn parse_color(name: &str) -> Color {

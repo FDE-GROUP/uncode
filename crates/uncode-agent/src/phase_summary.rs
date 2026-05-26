@@ -299,4 +299,46 @@ mod tests {
             "grep(pattern=foo)"
         );
     }
+
+    #[test]
+    fn test_llm_phase_summary_enabled_returns_bool() {
+        let enabled = llm_phase_summary_enabled();
+        // Must not panic; returns false under cfg!(test).
+        assert!(!enabled);
+    }
+
+    #[test]
+    fn test_phase_summary_llm_input_construction() {
+        use std::collections::HashMap;
+
+        use tokio_util::sync::CancellationToken;
+        use uncode_ai::ApiRegistry;
+        use uncode_core::message::UsageInfo;
+        use uncode_core::model::Model;
+
+        let completed: Vec<String> = vec!["read(main.rs)".into()];
+        let issues: Vec<String> = vec![];
+        let usage = UsageInfo::default();
+        let registry = ApiRegistry::new();
+        let model = Model::default();
+        let api_keys = HashMap::new();
+        let cancel = CancellationToken::new();
+
+        let input = PhaseSummaryLlmInput {
+            turn: 1,
+            completed_labels: &completed,
+            issue_labels: &issues,
+            assistant_snippet: "Let's look at the code.",
+            has_more_tool_calls: false,
+            token_usage: usage,
+            api_registry: &registry,
+            model: &model,
+            api_keys: &api_keys,
+            cancel_token: cancel,
+        };
+
+        assert_eq!(input.turn, 1);
+        assert_eq!(input.completed_labels.len(), 1);
+        assert!(input.issue_labels.is_empty());
+    }
 }
