@@ -95,7 +95,11 @@ impl ToolExecutor for TaskTool {
             .subagent_runner
             .ok_or_else(|| UncodeError::Tool("subagent runner not available".into()))?;
 
-        let model = arguments["model"].as_str().unwrap_or("default").to_string();
+        let model = arguments["model"]
+            .as_str()
+            .or(ctx.current_model.as_deref())
+            .unwrap_or("default")
+            .to_string();
 
         match runner
             .run_blocking(system_prompt.clone(), prompt.clone(), model)

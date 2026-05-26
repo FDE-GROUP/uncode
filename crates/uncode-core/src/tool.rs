@@ -116,6 +116,8 @@ pub struct ToolContext {
     pub allowed_paths: Vec<std::path::PathBuf>,
     /// Inline LLM runner for subagent/task tools. `None` → tool cannot spawn subagents.
     pub subagent_runner: Option<std::sync::Arc<dyn SubagentRunner>>,
+    /// Current model name (for subagent tools that need to call the same model).
+    pub current_model: Option<String>,
 }
 
 /// Inline subagent execution capability injected into ToolContext.

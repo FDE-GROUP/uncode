@@ -112,6 +112,7 @@ fn default_tool_context() -> ToolContext {
         execution_env: None,
         allowed_paths: Vec::new(),
         subagent_runner: None,
+        current_model: None,
     }
 }
 

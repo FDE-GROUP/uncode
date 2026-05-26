@@ -156,6 +156,7 @@ mod tests {
             execution_env: None,
             allowed_paths: vec![],
             subagent_runner: None,
+            current_model: None,
         };
         let result = executor
             .execute_with_context(serde_json::json!({"x": 1}), ctx)
