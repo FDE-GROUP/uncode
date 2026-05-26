@@ -60,7 +60,8 @@ impl InputEditor {
     }
 
     fn word_boundary_forward(&self) -> usize {
-        let chars: Vec<char> = self.buffer[self.cursor..].chars().collect();
+        let cursor = self.buffer.floor_char_boundary(self.cursor);
+        let chars: Vec<char> = self.buffer[cursor..].chars().collect();
         let mut i = 0;
         while i < chars.len() && chars[i] == ' ' {
             i += 1;
@@ -69,11 +70,12 @@ impl InputEditor {
             i += 1;
         }
         let byte_offset: usize = chars[..i].iter().map(|c| c.len_utf8()).sum();
-        self.cursor + byte_offset
+        cursor + byte_offset
     }
 
     fn word_boundary_backward(&self) -> usize {
-        let before = &self.buffer[..self.cursor];
+        let cursor = self.buffer.floor_char_boundary(self.cursor);
+        let before = &self.buffer[..cursor];
         let chars: Vec<char> = before.chars().collect();
         let mut i = chars.len();
         while i > 0 && chars[i - 1] == ' ' {
