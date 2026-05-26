@@ -301,6 +301,9 @@ async fn main() -> anyhow::Result<()> {
         model.clone(),
     );
 
+    // Initialize the global question registry event sender
+    uncode_agent::tools::question_registry::set_event_sender(agent.event_sender());
+
     if let Some(cache) = graph_cache.clone() {
         agent.set_graph_cache(cache);
     }

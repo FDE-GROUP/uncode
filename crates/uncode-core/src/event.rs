@@ -35,6 +35,36 @@ pub struct ToolCallEndEventData {
     pub metadata: Option<serde_json::Value>,
 }
 
+/// Agent asks user one or more questions during tool execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionRequestData {
+    pub tool_call_id: String,
+    pub title: String,
+    pub questions: Vec<QuestionItem>,
+}
+
+/// A single question item.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionItem {
+    pub question: String,
+    pub header: String,
+    pub options: Vec<QuestionOption>,
+    pub multiple: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionOption {
+    pub label: String,
+    pub description: String,
+}
+
+/// User's answer to a question.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuestionResponseData {
+    pub tool_call_id: String,
+    pub answers: Vec<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskUpdateData {
     pub task_id: String,
@@ -123,6 +153,14 @@ pub enum AgentEvent {
     ToolCallEnd {
         #[serde(flatten)]
         data: Box<ToolCallEndEventData>,
+    },
+    /// Agent asks user a question and blocks until answered (Question tool).
+    QuestionRequest {
+        data: Box<QuestionRequestData>,
+    },
+    /// User answers the question (sent from TUI to agent).
+    QuestionResponse {
+        data: Box<QuestionResponseData>,
     },
 
     // ── Task/Phase (reserved) ──
@@ -640,6 +678,8 @@ pub fn agent_event_tag(event: &AgentEvent) -> &'static str {
         AgentEvent::ToolCallProgress { .. } => "tool_call_progress",
         AgentEvent::ToolCallAwaitingApproval { .. } => "tool_call_awaiting_approval",
         AgentEvent::ToolCallEnd { .. } => "tool_call_end",
+        AgentEvent::QuestionRequest { .. } => "question_request",
+        AgentEvent::QuestionResponse { .. } => "question_response",
         AgentEvent::TaskUpdate { .. } => "task_update",
         AgentEvent::PhaseSummary { .. } => "phase_summary",
         AgentEvent::CompactionStart { .. } => "compaction_start",
@@ -789,6 +829,8 @@ impl AgentEvent {
             | Self::TurnStart { .. }
             | Self::TurnEnd { .. }
             | Self::ToolCallEnd { .. }
+            | Self::QuestionRequest { .. }
+            | Self::QuestionResponse { .. }
             | Self::DecisionMade { .. }
             | Self::DecisionAudited { .. }
             | Self::Error { .. }

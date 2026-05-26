@@ -17,6 +17,8 @@ pub mod local_env;
 pub mod ls;
 #[cfg(test)]
 mod mock_env;
+pub mod question;
+pub mod question_registry;
 pub mod read;
 pub mod registry;
 pub mod sandbox;
@@ -42,6 +44,7 @@ pub use local_env::{
     LocalExecutionEnv, LocalFileSystem, LocalShell, clean_binary_output, truncate_output,
 };
 pub use ls::LsTool;
+pub use question::QuestionTool;
 pub use read::ReadTool;
 pub use registry::ToolRegistry;
 pub use web_fetch::WebFetchTool;

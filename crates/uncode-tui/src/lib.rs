@@ -310,6 +310,8 @@ pub struct TuiEngine {
     custom_header: Option<crate::custom_layout::CustomHeader>,
     custom_footer: Option<crate::custom_layout::CustomFooter>,
     custom_indicator: Option<crate::custom_layout::CustomIndicator>,
+    /// Pending question from agent (Question tool).
+    pending_question: Option<Box<uncode_core::event::QuestionRequestData>>,
 }
 
 impl TuiEngine {
@@ -372,6 +374,7 @@ impl TuiEngine {
             custom_header: None,
             custom_footer: None,
             custom_indicator: None,
+            pending_question: None,
         }
     }
 
@@ -1234,7 +1237,7 @@ impl TuiEngine {
                                             self.resolve_permission(&p.tool_id, Approval::Allow);
                                         }
                                     }
-                                    _ => {}
+            _ => {}
                                 }
                                 continue;
                             }
@@ -2425,6 +2428,9 @@ impl TuiEngine {
                     allow_edit,
                     tool_args.clone(),
                 );
+            }
+            AgentEvent::QuestionRequest { data } => {
+                self.pending_question = Some(data.clone());
             }
             _ => {}
         }

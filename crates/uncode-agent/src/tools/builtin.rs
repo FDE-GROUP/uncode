@@ -9,8 +9,8 @@ use std::sync::Arc;
 use uncode_core::config::ToolsConfig;
 
 use super::{
-    BashTool, EditTool, FindTool, GrepTool, LLMQueryTool, LsTool, ReadTool, ToolRegistry,
-    WebFetchTool, WebSearchTool, WriteTool,
+    BashTool, EditTool, FindTool, GrepTool, LLMQueryTool, LsTool, QuestionTool, ReadTool,
+    ToolRegistry, WebFetchTool, WebSearchTool, WriteTool,
 };
 
 /// Pi `coding-agent` built-in tool names (no web tools).
@@ -82,6 +82,7 @@ pub fn register_coding_tools(
     {
         registry.register("web_search", Arc::new(tool));
     }
+    registry.register("question", Arc::new(QuestionTool::new()));
     // Use ontology ActionDefs to drive ToolDefinition generation.
     registry.set_builtin_ontology();
 }
@@ -197,7 +198,9 @@ mod tests {
         assert!(reg.is_active("web_fetch"));
         assert!(!reg.is_active("llm_query"));
         assert!(!reg.is_active("read"));
-        assert_eq!(reg.definitions().len(), 1);
+        // question is non-Pi, stays active like web_fetch
+        assert!(reg.is_active("question"));
+        assert_eq!(reg.definitions().len(), 2); // web_fetch + question
     }
 
     #[test]
