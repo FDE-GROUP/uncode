@@ -318,6 +318,7 @@ pub struct TuiEngine {
     permission_selected: usize,
     /// When the permission dialog appeared (for 20s auto-approve countdown).
     permission_started_at: Option<std::time::Instant>,
+    cwd: std::path::PathBuf,
 }
 
 impl TuiEngine {
@@ -384,6 +385,7 @@ impl TuiEngine {
             show_shortcut_help: false,
             permission_selected: 0,
             permission_started_at: None,
+            cwd: std::env::current_dir().unwrap_or_default(),
         }
     }
 
@@ -1596,7 +1598,7 @@ impl TuiEngine {
                                             self.chat.push_user_message(format!("[Retry] {text}"));
                                             let expanded = uncode_core::context::expand_file_refs(
                                                 &text,
-                                                &std::env::current_dir().unwrap_or_default(),
+                                                &self.cwd,
                                             );
                                             let token = self.new_cancel_token();
                                             on_submit(
@@ -2044,9 +2046,7 @@ impl TuiEngine {
                 let parts: Vec<&str> = t[1..].splitn(2, ' ').collect();
                 let skill_name = parts[0];
                 let args = parts.get(1).copied().unwrap_or("");
-                let registry = uncode_core::skill::SkillRegistry::load_with_project(
-                    &std::env::current_dir().unwrap_or_default(),
-                );
+                let registry = uncode_core::skill::SkillRegistry::load_with_project(&self.cwd);
                 if registry.get(skill_name).is_some() {
                     self.handle_skill_invoke(skill_name, args, on_submit);
                 } else {
@@ -2074,10 +2074,7 @@ impl TuiEngine {
             }
             self.last_user_input = Some(text.clone());
             self.chat.push_user_message(text.clone());
-            let file_expanded = uncode_core::context::expand_file_refs(
-                &text,
-                &std::env::current_dir().unwrap_or_default(),
-            );
+            let file_expanded = uncode_core::context::expand_file_refs(&text, &self.cwd);
             let token = self.current_or_new_cancel_token();
             on_submit(
                 file_expanded,
@@ -2091,10 +2088,7 @@ impl TuiEngine {
             self.agent_busy = true;
             self.footer.start_turn();
             self.chat.push_user_message(text.clone());
-            let file_expanded = uncode_core::context::expand_file_refs(
-                &text,
-                &std::env::current_dir().unwrap_or_default(),
-            );
+            let file_expanded = uncode_core::context::expand_file_refs(&text, &self.cwd);
             let token = self.new_cancel_token();
             on_submit(
                 file_expanded,
@@ -2857,8 +2851,7 @@ impl TuiEngine {
 
     fn handle_skills_command(&mut self) {
         use uncode_core::skill::SkillRegistry;
-        let registry =
-            SkillRegistry::load_with_project(&std::env::current_dir().unwrap_or_default());
+        let registry = SkillRegistry::load_with_project(&self.cwd);
         let list = registry.list();
         if list.is_empty() {
             self.chat.push_message(chat::ChatMessage::Summary {
@@ -2992,8 +2985,7 @@ impl TuiEngine {
         F: Fn(String, CancellationToken, String, String, SubmitIntent),
     {
         use uncode_core::skill::SkillRegistry;
-        let registry =
-            SkillRegistry::load_with_project(&std::env::current_dir().unwrap_or_default());
+        let registry = SkillRegistry::load_with_project(&self.cwd);
         let _skill = match registry.get(skill_name) {
             Some(s) => s,
             None => {
