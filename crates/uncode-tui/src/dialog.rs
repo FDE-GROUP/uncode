@@ -39,7 +39,11 @@ impl DialogOverlay {
         self.request = Some(request);
         self.input_buffer.clear();
         // Initialize list state for Select.
-        if let Some(DialogRequest::Select { .. }) = &self.request {
+        if let Some(DialogRequest::Select { options, .. }) = &self.request {
+            if options.is_empty() {
+                self.visible = false;
+                return;
+            }
             self.list_state.select(Some(0));
         } else {
             self.list_state.select(None);

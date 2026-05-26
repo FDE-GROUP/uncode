@@ -1116,7 +1116,7 @@ impl TuiEngine {
                                         self.chat.auto_scroll = true;
                                         self.footer.context_percent = 0;
                                         self.last_user_input = None;
-                                        let sid = &self.session_id[..8];
+                                        let sid = self.session_id.get(..8).unwrap_or(&self.session_id);
                                         self.chat.push_message(chat::ChatMessage::Summary {
                                             completed: vec![format!("New session created. session:{sid}")],
                                             next_steps: vec![],
@@ -1650,7 +1650,7 @@ impl TuiEngine {
         self.footer.cost = 0.0;
         self.footer.context_percent = 0;
 
-        let new_id = &self.session_id[..8];
+        let new_id = self.session_id.get(..8).unwrap_or(&self.session_id);
         self.chat.push_message(chat::ChatMessage::Summary {
             completed: vec![format!(
                 "New session. session:{} → session:{new_id}",
