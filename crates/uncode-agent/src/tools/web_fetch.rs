@@ -252,6 +252,7 @@ mod tests {
             tool_call_id: "test".into(),
             execution_env: None,
             allowed_paths: Vec::new(),
+            subagent_runner: None,
         }
     }
 

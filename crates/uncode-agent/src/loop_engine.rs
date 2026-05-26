@@ -105,6 +105,8 @@ async fn execute_prepared_tool_shared(
     execution_env: Arc<dyn ExecutionEnv>,
     exec_config: ToolExecutionConfig,
     event_router: Arc<std::sync::Mutex<uncode_core::event::EventRouter>>,
+    api_registry: Arc<ApiRegistry>,
+    model_registry: Arc<ModelRegistry>,
     id: String,
     name: String,
     prepared_args: serde_json::Value,
@@ -134,6 +136,10 @@ async fn execute_prepared_tool_shared(
         })),
         tool_call_id: id.clone(),
         allowed_paths: Vec::new(),
+        subagent_runner: Some(Arc::new(InlineSubagentRunner {
+            api_registry: api_registry.clone(),
+            model_registry: model_registry.clone(),
+        })),
     };
 
     let mut tool_result = if let Some(exec) = executor {
@@ -852,6 +858,8 @@ impl AgentLoop {
             Arc::clone(&self.execution_env),
             exec_config,
             Arc::clone(&self.event_router),
+            Arc::clone(&self.api_registry),
+            Arc::clone(&self.model_registry),
             id.to_string(),
             name.to_string(),
             prepared_args,
@@ -2098,6 +2106,8 @@ impl AgentLoop {
                                         let exec_env = Arc::clone(&self.execution_env);
                                         let exec_cfg = self.build_exec_config();
                                         let ev_router = Arc::clone(&self.event_router);
+                                        let api_reg = Arc::clone(&self.api_registry);
+                                        let model_reg = Arc::clone(&self.model_registry);
 
                                         let executed =
                                             futures::future::join_all(ready.into_iter().map(
@@ -2109,10 +2119,12 @@ impl AgentLoop {
                                                     let env = exec_env.clone();
                                                     let ec = exec_cfg.clone();
                                                     let er = ev_router.clone();
+                                                    let ar = api_reg.clone();
+                                                    let mr = model_reg.clone();
                                                     async move {
                                                         let tr = execute_prepared_tool_shared(
-                                                            reg, ct, etx, hk, env, ec, er, id,
-                                                            name, prepared, raw_args,
+                                                            reg, ct, etx, hk, env, ec, er, ar, mr,
+                                                            id, name, prepared, raw_args,
                                                         )
                                                         .await;
                                                         (i, tr)
@@ -2560,6 +2572,71 @@ fn has_identifiable_field(partial: &str) -> bool {
         }
     }
     false
+}
+
+/// Inline subagent runner — allows tools (Task/Skill) to call the LLM.
+struct InlineSubagentRunner {
+    api_registry: Arc<ApiRegistry>,
+    model_registry: Arc<ModelRegistry>,
+}
+
+impl uncode_core::tool::SubagentRunner for InlineSubagentRunner {
+    fn run_blocking(
+        &self,
+        system_prompt: String,
+        user_prompt: String,
+        model: String,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<String, uncode_core::error::UncodeError>>
+                + Send,
+        >,
+    > {
+        let api = self.api_registry.clone();
+        let model_name = model.clone();
+        let model_info = self.model_registry.get(&model);
+        let system = system_prompt;
+        let user = user_prompt;
+
+        Box::pin(async move {
+            let model = model_info.ok_or_else(|| {
+                uncode_core::error::UncodeError::Tool(format!(
+                    "subagent: model '{model_name}' not found"
+                ))
+            })?;
+            let provider = api.get(&model.api).ok_or_else(|| {
+                uncode_core::error::UncodeError::Tool(format!(
+                    "subagent: API '{}' not found",
+                    model.api
+                ))
+            })?;
+
+            let context = uncode_ai::api_types::Context {
+                system_prompt: Some(system),
+                messages: vec![uncode_ai::message::Message::user(&user)],
+                tools: vec![],
+            };
+            let options = uncode_ai::api_types::StreamOptions::default();
+
+            match provider.complete(&model, &context, &options).await {
+                Ok(msg) => {
+                    let text = msg
+                        .content
+                        .iter()
+                        .filter_map(|b| match b {
+                            uncode_ai::message::ContentBlock::Text { text } => Some(text.as_str()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    Ok(text)
+                }
+                Err(e) => Err(uncode_core::error::UncodeError::Tool(format!(
+                    "subagent: {e}"
+                ))),
+            }
+        })
+    }
 }
 
 #[cfg(test)]
