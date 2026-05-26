@@ -314,6 +314,8 @@ pub struct TuiEngine {
     pending_question: Option<Box<uncode_core::event::QuestionRequestData>>,
     /// Shortcut help overlay visible state.
     show_shortcut_help: bool,
+    /// Selected button index in permission dialog (0=Allow, 1=Reject, 2=Always, 3=Edit).
+    permission_selected: usize,
 }
 
 impl TuiEngine {
@@ -378,6 +380,7 @@ impl TuiEngine {
             custom_indicator: None,
             pending_question: None,
             show_shortcut_help: false,
+            permission_selected: 0,
         }
     }
 
@@ -1014,18 +1017,50 @@ impl TuiEngine {
         lines.push(Line::raw(""));
 
         // Button bar
-        let button_style = Style::default().fg(Color::Black).bg(confirm_bg);
+        let normal_btn = Style::default().fg(Color::Black).bg(confirm_bg);
+        let selected_btn = Style::default().fg(confirm_bg).bg(Color::Black).bold();
+        let sel = self.permission_selected;
+        let has_edit = p
+            .options
+            .iter()
+            .any(|o| *o == crate::permission::ConfirmOption::Edit);
         lines.push(Line::from(vec![
-            Span::styled(" [y] Allow ", button_style.bold()),
+            Span::styled(
+                if sel == 0 {
+                    " ▶[y] Allow "
+                } else {
+                    "  [y] Allow "
+                },
+                if sel == 0 { selected_btn } else { normal_btn },
+            ),
             Span::raw(" "),
-            Span::styled(" [n] Reject ", button_style.bold()),
+            Span::styled(
+                if sel == 1 {
+                    " ▶[n] Reject "
+                } else {
+                    "  [n] Reject "
+                },
+                if sel == 1 { selected_btn } else { normal_btn },
+            ),
             Span::raw(" "),
-            Span::styled(" [a] Always ", button_style.bold()),
-            if p.options
-                .iter()
-                .any(|o| *o == crate::permission::ConfirmOption::Edit)
-            {
-                Span::styled("  [e] Edit ", button_style.bold())
+            Span::styled(
+                if sel == 2 {
+                    " ▶[a] Always "
+                } else {
+                    "  [a] Always "
+                },
+                if sel == 2 { selected_btn } else { normal_btn },
+            ),
+            Span::raw(""),
+            if has_edit {
+                Span::styled(
+                    if sel == 3 {
+                        "  ▶[e] Edit "
+                    } else {
+                        "   [e] Edit "
+                    },
+                    if sel == 3 { selected_btn } else { normal_btn },
+                )
             } else {
                 Span::raw("")
             },
@@ -1323,8 +1358,77 @@ impl TuiEngine {
 
                             // Permission confirmation keys take priority
                             if self.permission.has_pending() {
+                                let has_edit = self
+                                    .permission
+                                    .pending()
+                                    .map(|p| p.options.contains(&crate::permission::ConfirmOption::Edit))
+                                    .unwrap_or(false);
+                                let max_sel = if has_edit { 3usize } else { 2usize };
+
                                 match key_event.code {
-                                    KeyCode::Char('y') | KeyCode::Enter => {
+                                    // Arrow navigation
+                                    KeyCode::Right | KeyCode::Tab => {
+                                        self.permission_selected =
+                                            if self.permission_selected < max_sel {
+                                                self.permission_selected + 1
+                                            } else {
+                                                0
+                                            };
+                                        continue;
+                                    }
+                                    KeyCode::Left | KeyCode::BackTab => {
+                                        self.permission_selected =
+                                            if self.permission_selected > 0 {
+                                                self.permission_selected - 1
+                                            } else {
+                                                max_sel
+                                            };
+                                        continue;
+                                    }
+                                    // Enter: confirm selected option
+                                    KeyCode::Enter => match self.permission_selected {
+                                        0 => {
+                                            if let Some(p) = self.permission.confirm(
+                                                crate::permission::ConfirmOption::Allow,
+                                            ) {
+                                                self.resolve_permission(
+                                                    &p.tool_id,
+                                                    Approval::Allow,
+                                                );
+                                            }
+                                        }
+                                        1 => {
+                                            if let Some(p) = self.permission.deny() {
+                                                self.resolve_permission(
+                                                    &p.tool_id,
+                                                    Approval::Deny,
+                                                );
+                                            }
+                                        }
+                                        2 => {
+                                            if let Some(p) = self.permission.confirm(
+                                                crate::permission::ConfirmOption::Allow,
+                                            ) {
+                                                self.resolve_permission(
+                                                    &p.tool_id,
+                                                    Approval::Allow,
+                                                );
+                                            }
+                                        }
+                                        3 => {
+                                            if let Some(p) = self.permission.confirm(
+                                                crate::permission::ConfirmOption::Edit,
+                                            ) {
+                                                self.resolve_permission(
+                                                    &p.tool_id,
+                                                    Approval::Allow,
+                                                );
+                                            }
+                                        }
+                                        _ => {}
+                                    },
+                                    // Direct key shortcuts (fallback)
+                                    KeyCode::Char('y') => {
                                         if let Some(p) = self.permission.confirm(
                                             crate::permission::ConfirmOption::Allow,
                                         ) {
@@ -1335,8 +1439,6 @@ impl TuiEngine {
                                         if let Some(p) = self.permission.confirm(
                                             crate::permission::ConfirmOption::Allow,
                                         ) {
-                                            // TODO: persist always-allow rule to policy
-                                            // Currently behaves same as Allow for this turn
                                             self.resolve_permission(&p.tool_id, Approval::Allow);
                                         }
                                     }
@@ -1352,7 +1454,7 @@ impl TuiEngine {
                                             self.resolve_permission(&p.tool_id, Approval::Allow);
                                         }
                                     }
-            _ => {}
+                                    _ => {}
                                 }
                                 continue;
                             }
