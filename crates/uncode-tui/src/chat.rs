@@ -806,7 +806,9 @@ impl ChatState {
                                 }
                             }
                             stdout.push_str(&detail);
-                            stdout.push('\n');
+                            if !detail.is_empty() {
+                                stdout.push('\n');
+                            }
                             *expanded = true;
                         }
                         _ => {}
@@ -1411,7 +1413,9 @@ fn apply_tool_progress(entry: &mut ToolGroupEntry, detail: &str) {
                 }
             }
             stdout.push_str(detail);
-            stdout.push('\n');
+            if !detail.is_empty() {
+                stdout.push('\n');
+            }
             *expanded = true;
         }
     }

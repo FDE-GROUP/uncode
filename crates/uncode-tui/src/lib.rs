@@ -846,8 +846,12 @@ impl TuiEngine {
             return;
         };
 
-        let dialog_width = area.width.min(80).max(40);
-        let dialog_height = area.height.min(20).max(10);
+        let dialog_width = area.width.min(80);
+        let dialog_height = area.height.min(20);
+        // Guard against too-small terminals
+        if dialog_width < 40 || dialog_height < 8 {
+            return;
+        }
         let dx = (area.width.saturating_sub(dialog_width)) / 2;
         let dy = (area.height.saturating_sub(dialog_height)) / 2;
         let dialog_rect =
@@ -874,6 +878,7 @@ impl TuiEngine {
             "find" => ("✱", "Find".into()),
             "web_fetch" => ("%", "WebFetch".into()),
             "web_search" => ("◈", "WebSearch".into()),
+            _ if p.tool_name.is_empty() => ("?", "Unknown Tool".to_string()),
             _ => ("⚙", p.tool_name.clone()),
         };
         lines.push(Line::from(vec![
@@ -929,9 +934,11 @@ impl TuiEngine {
                         Style::default().fg(self.theme.ui.footer_text),
                     )));
                     let preview_lines = content.lines().take(10);
+                    let total_lines = content.lines().count();
                     for (i, line) in preview_lines.enumerate() {
-                        let display = if line.len() > dialog_width as usize - 10 {
-                            format!("{}…", &line[..dialog_width as usize - 12])
+                        let max_bytes = (dialog_width as usize).saturating_sub(12);
+                        let display = if let Some((idx, _)) = line.char_indices().nth(max_bytes) {
+                            format!("{}…", &line[..idx])
                         } else {
                             line.to_string()
                         };
@@ -946,9 +953,9 @@ impl TuiEngine {
                             ),
                         ]));
                     }
-                    if content.lines().count() > 10 {
+                    if total_lines > 10 {
                         lines.push(Line::from(Span::styled(
-                            format!("  │  ... {} more lines", content.lines().count() - 10),
+                            format!("  │  ... {} more lines", total_lines - 10),
                             Style::default().fg(self.theme.ui.footer_text),
                         )));
                     }
@@ -1032,8 +1039,12 @@ impl TuiEngine {
 
     /// Render keyboard shortcuts help panel overlay.
     fn render_shortcut_help(&self, f: &mut Frame, area: ratatui::layout::Rect) {
-        let help_width = 60u16;
-        let help_height = 22u16;
+        let help_width = area.width.min(60);
+        let help_height = area.height.min(22);
+        // Guard against too-small terminals
+        if help_width < 40 || help_height < 10 {
+            return;
+        }
         let dx = (area.width.saturating_sub(help_width)) / 2;
         let dy = (area.height.saturating_sub(help_height)) / 2;
         let help_rect =
