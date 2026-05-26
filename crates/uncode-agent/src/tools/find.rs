@@ -46,6 +46,7 @@ impl ToolExecutor for FindTool {
                     tool_call_id: String::new(),
                     execution_env: None,
                     allowed_paths: Vec::new(),
+                    subagent_runner: None,
                 },
             )
             .await?;

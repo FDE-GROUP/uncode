@@ -114,6 +114,21 @@ pub struct ToolContext {
     /// Additional resource paths registered by extensions. `resolve_path()` allows
     /// access to files under these prefixes in addition to the project CWD.
     pub allowed_paths: Vec<std::path::PathBuf>,
+    /// Inline LLM runner for subagent/task tools. `None` → tool cannot spawn subagents.
+    pub subagent_runner: Option<std::sync::Arc<dyn SubagentRunner>>,
+}
+
+/// Inline subagent execution capability injected into ToolContext.
+/// Enables Task/Skill tools to call the LLM with a custom system prompt.
+pub trait SubagentRunner: Send + Sync {
+    fn run_blocking(
+        &self,
+        system_prompt: String,
+        user_prompt: String,
+        model: String,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<String, crate::error::UncodeError>> + Send>,
+    >;
 }
 
 impl std::fmt::Debug for ToolContext {

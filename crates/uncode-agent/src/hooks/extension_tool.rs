@@ -155,6 +155,7 @@ mod tests {
             tool_call_id: "t1".into(),
             execution_env: None,
             allowed_paths: vec![],
+            subagent_runner: None,
         };
         let result = executor
             .execute_with_context(serde_json::json!({"x": 1}), ctx)
