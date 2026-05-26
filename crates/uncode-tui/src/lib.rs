@@ -620,6 +620,32 @@ impl TuiEngine {
         }
     }
 
+    /// Open session store, pushing an error message on failure.
+    fn open_session_store(&mut self) -> Option<uncode_agent::session::store::SessionStore> {
+        let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                self.chat.push_message(chat::ChatMessage::Error {
+                    message: format!("无法获取会话目录: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                return None;
+            }
+        };
+        let store = uncode_agent::session::store::SessionStore::new(session_dir);
+        let rt = tokio::runtime::Handle::current();
+        match rt.block_on(store) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                self.chat.push_message(chat::ChatMessage::Error {
+                    message: format!("创建会话存储失败: {e}"),
+                    category: uncode_core::event::ErrorCategory::Config,
+                });
+                None
+            }
+        }
+    }
+
     /// End of a full agent `run` (not a single inner Turn).
     fn finish_agent_run(&mut self) {
         self.agent_busy = false;
@@ -2191,28 +2217,10 @@ impl TuiEngine {
             });
             return;
         };
-        let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
-            Ok(d) => d,
-            Err(e) => {
-                self.chat.push_message(chat::ChatMessage::Error {
-                    message: format!("无法获取会话目录: {e}"),
-                    category: uncode_core::event::ErrorCategory::Config,
-                });
-                return;
-            }
+        let Some(store) = self.open_session_store() else {
+            return;
         };
-        let store = uncode_agent::session::store::SessionStore::new(session_dir);
         let rt = tokio::runtime::Handle::current();
-        let store = match rt.block_on(store) {
-            Ok(s) => s,
-            Err(e) => {
-                self.chat.push_message(chat::ChatMessage::Error {
-                    message: format!("创建会话存储失败: {e}"),
-                    category: uncode_core::event::ErrorCategory::Config,
-                });
-                return;
-            }
-        };
         match rt.block_on(uncode_agent::branch_summarization::branch_with_summary(
             &store,
             &self.session_id,
