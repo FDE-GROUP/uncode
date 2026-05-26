@@ -35,7 +35,7 @@ Three-layer dependency graph aligned with Pi architecture:
 uncode-cli (entry point, clap arg parsing)
 ├── uncode-tui (ratatui + crossterm, conversation-driven terminal UI)
 ├── uncode-platform (axum REST backend)
-└── uncode-rpc (JSON-RPC, planned)
+└── uncode-rpc (JSON-RPC server, event bridge)
         │
     uncode-agent (full-stack engine: loop + harness + session + tools + compaction + skills)
         ├── uncode-ai (LLM abstraction: Api trait + 4 providers + models + messages + streaming)

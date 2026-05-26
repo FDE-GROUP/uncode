@@ -71,12 +71,13 @@ cargo run -p uncode-cli
 crates/
 ├── uncode-shared/        # 错误 + 配置 + GuardrailConfig + EvolutionEngine
 ├── uncode-ai/            # LLM 驱动层（4 协议）
-├── uncode-core/          # 共享类型：AgentEvent(32变体) + SessionEntry + AgentStep
+├── uncode-core/          # 共享类型：AgentEvent(36变体) + SessionEntry + AgentStep
 ├── uncode-agent/         # Agent 引擎
 │   ├── cognition/        #   认知层：上下文·提示词·不确定性·分层记忆
 │   ├── decision/         #   决策层：提案·防火墙·裁决·执行·审计·评估·反馈
 │   └── harness.rs        #   编排器
 ├── uncode-extensions/    # WASM 扩展运行时
+├── uncode-rpc/            # JSON-RPC 2.0 服务端
 ├── uncode-tui/           # 终端 UI
 ├── uncode-platform/      # Web 服务（规划中）
 └── uncode-cli/           # 命令行入口
