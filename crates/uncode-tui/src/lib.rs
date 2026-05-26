@@ -1412,7 +1412,7 @@ impl TuiEngine {
                                 let max_sel = if has_edit { 3usize } else { 2usize };
 
                                 match key_event.code {
-                                    // Arrow navigation: reset countdown on interaction
+                                    // Arrow navigation: clear countdown, wait for explicit confirm
                                     KeyCode::Right | KeyCode::Tab => {
                                         self.permission_selected =
                                             if self.permission_selected < max_sel {
@@ -1420,7 +1420,7 @@ impl TuiEngine {
                                             } else {
                                                 0
                                             };
-                                        self.permission_started_at = Some(std::time::Instant::now());
+                                        self.permission_started_at = None;
                                         continue;
                                     }
                                     KeyCode::Left | KeyCode::BackTab => {
@@ -1430,7 +1430,7 @@ impl TuiEngine {
                                             } else {
                                                 max_sel
                                             };
-                                        self.permission_started_at = Some(std::time::Instant::now());
+                                        self.permission_started_at = None;
                                         continue;
                                     }
                                     // Enter: confirm selected option
