@@ -682,6 +682,7 @@ async fn test_bash_cancelled_via_context_kills_command() {
                 execution_env: None,
                 allowed_paths: Vec::new(),
                 subagent_runner: None,
+                current_model: None,
             },
         )
         .await
@@ -795,6 +796,7 @@ async fn test_bash_exit_code_on_failure_via_context() {
                 execution_env: None,
                 allowed_paths: Vec::new(),
                 subagent_runner: None,
+                current_model: None,
             },
         )
         .await
@@ -887,6 +889,7 @@ async fn test_read_uses_injected_execution_env() {
                 execution_env: Some(env.clone()),
                 allowed_paths: Vec::new(),
                 subagent_runner: None,
+                current_model: None,
             },
         )
         .await
@@ -918,6 +921,7 @@ async fn test_ls_uses_injected_execution_env_list_dir() {
                 execution_env: Some(env),
                 allowed_paths: Vec::new(),
                 subagent_runner: None,
+                current_model: None,
             },
         )
         .await
@@ -963,6 +967,7 @@ async fn test_grep_native_backend_details_when_no_rg() {
                 execution_env: None,
                 allowed_paths: Vec::new(),
                 subagent_runner: None,
+                current_model: None,
             },
         )
         .await
@@ -993,6 +998,7 @@ async fn test_grep_ripgrep_backend_when_rg_present() {
                 execution_env: None,
                 allowed_paths: Vec::new(),
                 subagent_runner: None,
+                current_model: None,
             },
         )
         .await
@@ -1031,6 +1037,7 @@ async fn test_write_tool_result_details_bytes_written() {
                 execution_env: None,
                 allowed_paths: Vec::new(),
                 subagent_runner: None,
+                current_model: None,
             },
         )
         .await

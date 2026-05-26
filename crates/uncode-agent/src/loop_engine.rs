@@ -140,6 +140,7 @@ async fn execute_prepared_tool_shared(
             api_registry: api_registry.clone(),
             model_registry: model_registry.clone(),
         })),
+        current_model: model_registry.all_models().first().map(|m| m.id.clone()),
     };
 
     let mut tool_result = if let Some(exec) = executor {

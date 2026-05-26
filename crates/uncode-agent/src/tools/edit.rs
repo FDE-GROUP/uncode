@@ -83,6 +83,7 @@ impl ToolExecutor for EditTool {
                     execution_env: None,
                     allowed_paths: Vec::new(),
                     subagent_runner: None,
+                    current_model: None,
                 },
             )
             .await?;
