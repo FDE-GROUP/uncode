@@ -12,6 +12,7 @@ pub mod flag;
 pub mod header_footer;
 pub mod hook_types;
 pub mod hooks;
+#[cfg(feature = "wasm")]
 pub mod loader;
 pub mod manager;
 pub mod message_renderer;

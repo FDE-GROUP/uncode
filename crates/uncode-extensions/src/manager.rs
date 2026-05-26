@@ -21,6 +21,7 @@ pub struct ExtensionManager {
     registry: Arc<HookRegistry>,
     api: Arc<ExtensionApi>,
     state: ExtensionStateTracker,
+    #[cfg(feature = "wasm")]
     engine: Option<super::wasm::WasmEngine>,
     global_dir: PathBuf,
     project_dir: Option<PathBuf>,
@@ -37,6 +38,7 @@ impl ExtensionManager {
         global_dir: PathBuf,
         project_dir: Option<PathBuf>,
     ) -> Self {
+        #[cfg(feature = "wasm")]
         let engine = match super::wasm::WasmEngine::new() {
             Ok(e) => Some(e),
             Err(e) => {
@@ -48,6 +50,7 @@ impl ExtensionManager {
             registry,
             api,
             state: ExtensionStateTracker::new(),
+            #[cfg(feature = "wasm")]
             engine,
             global_dir,
             project_dir,
@@ -57,6 +60,7 @@ impl ExtensionManager {
     /// Scan both global and project directories, load all discovered extensions.
     ///
     /// Project-level extensions take priority over global ones with the same name.
+    #[cfg(feature = "wasm")]
     pub fn discover_and_load_all(&self) -> DiscoveryReport {
         let mut discovered: HashMap<String, (PathBuf, ExtensionSource)> = HashMap::new();
 
@@ -86,6 +90,7 @@ impl ExtensionManager {
     }
 
     /// Load a single extension from a `.wasm` file.
+    #[cfg(feature = "wasm")]
     pub fn load_single(&self, wasm_path: &Path, source: ExtensionSource) -> Result<String, String> {
         let wasm_bytes = std::fs::read(wasm_path)
             .map_err(|e| format!("cannot read {}: {e}", wasm_path.display()))?;
@@ -157,6 +162,7 @@ impl ExtensionManager {
     }
 
     /// Reload an extension: unload the old instance and load fresh from disk.
+    #[cfg(feature = "wasm")]
     pub fn reload(&self, name: &str) -> Result<(), String> {
         let record = self
             .state
@@ -212,6 +218,7 @@ impl ExtensionManager {
     }
 
     /// Enable a previously disabled extension: reload from disk.
+    #[cfg(feature = "wasm")]
     pub fn enable(&self, name: &str) -> Result<(), String> {
         let record = self
             .state
@@ -239,6 +246,7 @@ impl ExtensionManager {
 }
 
 /// Scan a directory for `.wasm` files and add to the discovered map.
+#[cfg(feature = "wasm")]
 fn scan_wasm_files(
     dir: &Path,
     source: ExtensionSource,
@@ -266,6 +274,7 @@ fn scan_wasm_files(
 }
 
 /// Resolve lifecycle hooks from manifest.
+#[cfg(feature = "wasm")]
 fn resolve_hooks(manifest: &super::wasm::ExtensionManifest) -> Vec<LifecycleHook> {
     if manifest.hooks.is_empty() {
         vec![
