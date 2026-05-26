@@ -927,6 +927,7 @@ impl ChatState {
                 self.messages
                     .retain(|m| !matches!(m, ChatMessage::QueuedMessage { text: t } if t == &text));
                 if self.messages.len() != before {
+                    self.focused_card = None;
                     // Rebuild line_counts to match new messages indices
                     self.line_counts = self
                         .messages
