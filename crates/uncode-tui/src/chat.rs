@@ -1961,12 +1961,28 @@ fn render_tool_call(
     if expanded && let Some(res) = result {
         let renderer = renderers.get(tool_name);
         let result_lines = renderer.render_result(args, res, width, theme);
+        let max_show = 20; // preview lines when collapsed
+        let total = result_lines.len();
+        let show_all = total <= max_show;
         let prefix_span = Span::styled("  \u{23bf}  ", Style::default().fg(theme.ui.footer_text));
-        for rl in result_lines {
-            // Prepend ⎿ prefix to each result line
+        let limit = if show_all { total } else { max_show };
+        for (i, rl) in result_lines.into_iter().enumerate() {
+            if i >= limit {
+                break;
+            }
             let mut spans = vec![prefix_span.clone()];
             spans.extend(rl.spans);
             lines.push(Line::from(spans));
+        }
+        // Collapse hint when truncated
+        if !show_all {
+            lines.push(Line::from(vec![
+                Span::styled("     \u{2026} ", Style::default().fg(theme.ui.footer_text)),
+                Span::styled(
+                    format!("+{} more lines (Space to expand)", total - max_show),
+                    Style::default().fg(theme.ui.footer_text),
+                ),
+            ]));
         }
     }
 
@@ -2074,6 +2090,7 @@ fn render_bash(
     if expanded && !stdout.is_empty() {
         let all_lines: Vec<&str> = stdout.lines().collect();
         let max_show = 20;
+        let total = all_lines.len();
         let prefix_span = Span::styled("  \u{23bf}  ", Style::default().fg(theme.ui.footer_text));
 
         for line in all_lines.iter().take(max_show) {
@@ -2082,11 +2099,11 @@ fn render_bash(
                 Span::styled(line.to_string(), Style::default().fg(theme.bash.stdout)),
             ]));
         }
-        if all_lines.len() > max_show {
+        if total > max_show {
             lines.push(Line::from(vec![
                 Span::styled("     \u{2026} ", Style::default().fg(theme.ui.footer_text)),
                 Span::styled(
-                    format!("+{} lines (ctrl+o to expand)", all_lines.len() - max_show),
+                    format!("+{} more lines (Space to expand)", total - max_show),
                     Style::default().fg(theme.ui.footer_text),
                 ),
             ]));
