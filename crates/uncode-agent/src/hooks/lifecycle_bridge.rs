@@ -473,3 +473,155 @@ impl ExtensionLifecycleBridge {
         self.registry.fire(LifecycleHook::UserBash, &ctx).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use uncode_core::message::Message;
+    use uncode_extensions::hooks::HookRegistry;
+
+    fn make_bridge() -> ExtensionLifecycleBridge {
+        let registry = Arc::new(HookRegistry::new());
+        let api = ExtensionApi::new(registry);
+        ExtensionLifecycleBridge::new(api)
+    }
+
+    // ── Construction tests ──
+
+    #[tokio::test]
+    async fn test_new_constructs() {
+        let _bridge = make_bridge();
+    }
+
+    #[tokio::test]
+    async fn test_from_arc() {
+        let api = Arc::new(ExtensionApi::new(Arc::new(HookRegistry::new())));
+        let bridge = ExtensionLifecycleBridge::from_arc(api);
+        let _api: &ExtensionApi = bridge.api();
+    }
+
+    #[tokio::test]
+    async fn test_registry_accessor() {
+        let bridge = make_bridge();
+        let _registry: &Arc<HookRegistry> = bridge.registry();
+    }
+
+    // ── Session lifecycle ──
+
+    #[tokio::test]
+    async fn test_fire_session_start() {
+        let bridge = make_bridge();
+        let result = bridge.fire_session_start("s1", "new conversation").await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    #[tokio::test]
+    async fn test_fire_session_end() {
+        let bridge = make_bridge();
+        let result = bridge.fire_session_end("s1").await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    #[tokio::test]
+    async fn test_fire_session_shutdown() {
+        let bridge = make_bridge();
+        let result = bridge.fire_session_shutdown("s1", "shutting down").await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    // ── Turn lifecycle ──
+
+    #[tokio::test]
+    async fn test_fire_turn_start() {
+        let bridge = make_bridge();
+        let result = bridge.fire_turn_start("s1", 1).await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    #[tokio::test]
+    async fn test_fire_turn_end() {
+        let bridge = make_bridge();
+        let result = bridge.fire_turn_end("s1", 1).await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    // ── Message lifecycle ──
+
+    #[tokio::test]
+    async fn test_fire_message_received() {
+        let bridge = make_bridge();
+        let result = bridge
+            .fire_message_received("s1", &Message::user("hi"))
+            .await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    #[tokio::test]
+    async fn test_fire_message_sending() {
+        let bridge = make_bridge();
+        let result = bridge
+            .fire_message_sending("s1", &Message::user("hi"))
+            .await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    // ── Agent lifecycle ──
+
+    #[tokio::test]
+    async fn test_fire_before_agent_start() {
+        let bridge = make_bridge();
+        let result = bridge.fire_before_agent_start("s1", "hello").await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    #[tokio::test]
+    async fn test_fire_agent_start() {
+        let bridge = make_bridge();
+        let result = bridge.fire_agent_start("s1").await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    #[tokio::test]
+    async fn test_fire_agent_end() {
+        let bridge = make_bridge();
+        let result = bridge.fire_agent_end("s1").await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    // ── Provider/Model ──
+
+    #[tokio::test]
+    async fn test_fire_before_provider_request() {
+        let bridge = make_bridge();
+        let result = bridge
+            .fire_before_provider_request("s1", &serde_json::json!({"model": "test"}))
+            .await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    #[tokio::test]
+    async fn test_fire_model_select() {
+        let bridge = make_bridge();
+        let result = bridge.fire_model_select("s1", "deepseek-v3", None).await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    // ── Tool lifecycle ──
+
+    #[tokio::test]
+    async fn test_fire_tool_call_before() {
+        let bridge = make_bridge();
+        let result = bridge
+            .fire_tool_call_before("s1", "read", &serde_json::json!({"path": "x"}))
+            .await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+
+    #[tokio::test]
+    async fn test_fire_tool_call_after() {
+        let bridge = make_bridge();
+        let result = bridge.fire_tool_call_after("s1", "read", true).await;
+        assert!(matches!(result, HookResult::Continue));
+    }
+}
