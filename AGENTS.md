@@ -61,7 +61,7 @@ New vendors are added via `ProviderPreset` declarations in `uncode-ai/src/provid
 
 ### Tool System
 
-9 tools in `uncode-agent/src/tools/`: read, write, edit, grep, find, ls, bash, web_fetch, web_search. Each implements `ToolExecutor` trait. File tools use `normalize_path()` + `resolve_path()` for sandbox enforcement — paths must resolve within CWD. Tools are registered via `ToolRegistry` with `ToolHooks` (before/after) for permission gating and result patching.
+9 builtin tools in `uncode-agent/src/tools/`: read, write, edit, grep, find, ls, bash, web_fetch, web_search. Plus 3 extended tools: question (user interaction with options), skill (load skill instructions), task (inline subagent LLM calls). Each implements `ToolExecutor` trait. File tools use `normalize_path()` + `resolve_path()` for sandbox enforcement — paths must resolve within CWD. Tools are registered via `ToolRegistry` with `ToolHooks` (before/after) for permission gating and result patching.
 
 ### Agent Loop
 
@@ -74,11 +74,12 @@ Implements the paradigm defined in [`docs/agent-archi/`](docs/agent-archi/README
 | Layer | Module | Status |
 |:---|:---|:---:|
 | **认知层** | `uncode-agent/src/cognition/` (WM → EM → memory manager) | ✅ 实现 |
-| **语义防火墙** | `uncode-agent/src/decision/firewall.rs` (P→V→N) | ✅ 已实现：DeclarativeNormalizer 对接本体，OntologyConstraintRule 校验 preconditions |
-| **决策层** | `uncode-agent/src/decision/` (proposal → adjudication → execution → audit) | ⚠️ 管线已是前门控模式，但 ActionProposal 缺少上下文字段，需补全并发射细粒度事件 |
-| **治理层** | `uncode-shared/src/guardrails.rs` + `uncode-core/src/event.rs` + `AgentHarness` | ⚠️ GuardrailConfig 已定义但未运行时加载；EventRouter 未接入主循环 |
+| **语义防火墙** | `uncode-agent/src/decision/firewall.rs` (P→V→N) | ✅ 已实现：DeclarativeNormalizer 对接本体（PathField 路径自动解析），OntologyConstraintRule 校验 preconditions + entity invariants（含 extends 继承），ModelCapabilityRule vision 能力检测 |
+| **决策层** | `uncode-agent/src/decision/` (proposal → adjudication → execution → audit) | ✅ 管线已完整：Adjudicator + EffectBasedPolicy + CostBudgetPolicy + 6-policy 裁决链 |
+| **治理层** | `uncode-agent/src/governance/` + `uncode-core/src/event.rs` + `AgentHarness` | ✅ 已实现：GuardrailConfig 运行时加载（harness.rs:115） + EventRouter 接入主循环 + PhaseStateMachine（6 状态） + EventBridge（JSON-RPC） |
+| **本体层** | `uncode-ontology/` (6 源文件, 75 测试) | ✅ 全部 6 要素实现（EntityDef/ActionDef/FieldDef/Constraint/Effect/LinkDef）+ ReasoningRule（5 条）+ OntologyVersion + to_json_schema() 桥接 |
 
-**核心缺口**：`uncode-ontology` 已实现完整六大要素（EntityDef / ActionDef / FieldDef / Constraint / Effect / LinkDef）+ ReasoningRule（5 条内置）。工具权限已通过 `ExecutionCategory` 和 `OntologyConstraintRule` 对接本体，但 `GuardrailConfig` 尚未在运行时加载。剩余缺口：本体版本管理。详见重构计划和技术方案。
+**核心缺口**：`uncode-ontology` 已实现完整六大要素（EntityDef / ActionDef / FieldDef / Constraint / Effect / LinkDef）+ ReasoningRule（5 条内置）。工具权限已通过 `ExecutionCategory` 和 `OntologyConstraintRule` 对接本体，`GuardrailConfig` 已在运行时加载并通过 `set_guardrail_config()` 注入。剩余缺口：本体版本演化引擎（EvolutionEngine 延后到 Phase 2）、Question/Skill/Task 工具尚未在本体建模、ReasoningRule 推理引擎未在生产路径中触发。详见重构计划和技术方案。
 
 ### Compaction
 
