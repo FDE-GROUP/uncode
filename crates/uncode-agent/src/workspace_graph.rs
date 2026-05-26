@@ -250,13 +250,15 @@ pub fn build_graph(root: &Path, config: &BundleConfig) -> WorkspaceGraph {
             continue;
         }
 
-        // Skip ignored directories
+        // Skip ignored directories (match any path component)
         let relative = path.strip_prefix(root).unwrap_or(path);
         let relative_str = relative.to_string_lossy();
-        if ignore_dirs.iter().any(|dir| {
-            relative_str.starts_with(&format!("{dir}/"))
-                || relative_str.starts_with(&format!("{dir}\\"))
-        }) {
+        let is_ignored = ignore_dirs.iter().any(|dir| {
+            relative_str == *dir
+                || relative_str.starts_with(&format!("{dir}/"))
+                || relative_str.contains(&format!("/{dir}/"))
+        });
+        if is_ignored {
             continue;
         }
 
