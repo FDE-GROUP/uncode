@@ -620,6 +620,7 @@ impl TuiEngine {
             if let Some(p) = self.permission.deny() {
                 self.resolve_permission(&p.tool_id, Approval::Deny);
             }
+            self.permission_started_at = None;
             return;
         }
         if self.agent_busy {
@@ -661,7 +662,13 @@ impl TuiEngine {
                     .confirm(crate::permission::ConfirmOption::Allow)
                 {
                     self.resolve_permission(&p.tool_id, Approval::Allow);
+                } else {
+                    self.permission_started_at = None;
                 }
+            }
+            // Defensive: clear timer if permission was externally resolved
+            if !self.permission.has_pending() {
+                self.permission_started_at = None;
             }
         }
         self.tick = self.tick.wrapping_add(1);
@@ -1494,6 +1501,10 @@ impl TuiEngine {
                                         }
                                     }
                                     _ => {}
+                                }
+                                // Clear countdown timer if permission was resolved
+                                if !self.permission.has_pending() {
+                                    self.permission_started_at = None;
                                 }
                                 continue;
                             }
