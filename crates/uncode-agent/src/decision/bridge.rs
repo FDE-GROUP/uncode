@@ -245,12 +245,12 @@ pub struct ModelCapabilityRule {
 
 impl ModelCapabilityRule {
     pub fn new(
-        ontology: uncode_ontology::TypeRegistry,
+        ontology: &uncode_ontology::TypeRegistry,
         models: Arc<Vec<Model>>,
         current_model: Arc<Model>,
     ) -> Self {
         Self {
-            ontology,
+            ontology: ontology.clone(),
             models,
             current_model,
         }

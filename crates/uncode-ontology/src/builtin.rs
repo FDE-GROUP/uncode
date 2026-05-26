@@ -42,8 +42,8 @@ static CODING_AGENT_ONTOLOGY: std::sync::LazyLock<TypeRegistry> = std::sync::Laz
 
 /// Build the complete coding agent domain ontology (cached).
 #[inline]
-pub fn coding_agent_ontology() -> TypeRegistry {
-    CODING_AGENT_ONTOLOGY.clone()
+pub fn coding_agent_ontology() -> &'static TypeRegistry {
+    &CODING_AGENT_ONTOLOGY
 }
 
 fn entity_file() -> EntityDef {
@@ -580,20 +580,18 @@ static SYSTEM_RESOURCE_ONTOLOGY: std::sync::LazyLock<TypeRegistry> =
 
 /// Build the system resource ontology — LLM, Provider, Capability (cached).
 #[inline]
-pub fn system_resource_ontology() -> TypeRegistry {
-    SYSTEM_RESOURCE_ONTOLOGY.clone()
+pub fn system_resource_ontology() -> &'static TypeRegistry {
+    &SYSTEM_RESOURCE_ONTOLOGY
 }
 
 static FULL_ONTOLOGY: std::sync::LazyLock<TypeRegistry> = std::sync::LazyLock::new(|| {
-    let domain = coding_agent_ontology();
-    let system = system_resource_ontology();
-    domain.merge(&system)
+    (*CODING_AGENT_ONTOLOGY).clone().merge(&SYSTEM_RESOURCE_ONTOLOGY)
 });
 
 /// Build the full ontology — domain + system resource (cached).
 #[inline]
-pub fn full_ontology() -> TypeRegistry {
-    FULL_ONTOLOGY.clone()
+pub fn full_ontology() -> &'static TypeRegistry {
+    &FULL_ONTOLOGY
 }
 
 fn entity_llm() -> EntityDef {
