@@ -314,6 +314,9 @@ async fn main() -> anyhow::Result<()> {
     let guardrail_config = uncode_shared::guardrails::GuardrailConfig::load_from_dir(&cwd);
     agent.set_guardrail_config(guardrail_config);
 
+    // Respect user-configured max_tokens, default to model's declared value
+    agent.set_max_tokens(Some(config.max_tokens));
+
     // --mode rpc: start JSON-RPC server on stdio
     if cli.mode == "rpc" {
         return run_rpc_mode(session_store, model_registry, agent).await;

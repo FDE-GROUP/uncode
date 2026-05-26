@@ -322,6 +322,8 @@ pub struct AgentLoop {
     extension_bridge: Option<crate::hooks::ExtensionLifecycleBridge>,
     /// 护栏配置 — 从 .uncode/guardrails.json 加载
     guardrail_config: std::sync::Mutex<uncode_shared::guardrails::GuardrailConfig>,
+    /// 用户配置的 max_tokens 覆盖值（None = 使用模型声明值）
+    max_tokens: Option<u32>,
     /// 事件路由器 — 治理层 sync dispatch + async hook dispatch
     event_router: Arc<std::sync::Mutex<uncode_core::event::EventRouter>>,
     /// Turn-level phase state machine — governance observability
@@ -355,6 +357,19 @@ impl AgentLoop {
     pub fn with_compaction_config(mut self, config: CompactionConfig) -> Self {
         self.compaction_config = config;
         self
+    }
+
+    /// Override max_output_tokens for LLM requests.
+    ///
+    /// `None` means use the model's declared `max_output_tokens`.
+    pub fn with_max_tokens(mut self, max_tokens: Option<u32>) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
+    /// Set max_output_tokens override (mutable variant for post-construction use).
+    pub fn set_max_tokens(&mut self, max_tokens: Option<u32>) {
+        self.max_tokens = max_tokens;
     }
 
     /// Set skill registry for expanding `/skill-name` commands in steering messages.
@@ -440,6 +455,7 @@ impl AgentLoop {
             guardrail_config: std::sync::Mutex::new(
                 uncode_shared::guardrails::GuardrailConfig::default(),
             ),
+            max_tokens: None,
             event_router: Arc::new(std::sync::Mutex::new(uncode_core::event::EventRouter::new())),
             phase_sm: std::sync::Mutex::new(crate::governance::PhaseStateMachine::new()),
         }
@@ -1461,7 +1477,7 @@ impl AgentLoop {
                 let options = StreamOptions {
                     api_key,
                     temperature: Some(0.7),
-                    max_tokens: Some(8192),
+                    max_tokens: Some(self.max_tokens.unwrap_or(model.max_output_tokens)),
                     thinking_level,
                     session_id: Some(session_id.clone()),
                     on_payload: on_payload_cb,
@@ -1820,6 +1836,16 @@ impl AgentLoop {
                             if !assistant_content.is_empty() {
                                 let mut msg = Message::new(Role::Assistant, assistant_content);
                                 msg.stop_reason = Some(reason);
+                                if reason == uncode_ai::api_types::StopReason::Length {
+                                    self.emit(AgentEvent::Error {
+                                        category: uncode_core::event::ErrorCategory::Llm,
+                                        message: format!(
+                                            "response truncated at {} output tokens",
+                                            turn_output_tokens
+                                        ),
+                                        recoverable: true,
+                                    });
+                                }
                                 msg.usage = Some(UsageInfo {
                                     input_tokens: turn_input_tokens,
                                     output_tokens: turn_output_tokens,
@@ -2889,5 +2915,27 @@ mod setter_tests {
     async fn test_load_custom_policies() {
         let agent = make_loop().await;
         agent.load_custom_policies();
+    }
+
+    #[tokio::test]
+    async fn test_set_max_tokens() {
+        let mut agent = make_loop().await;
+        agent.set_max_tokens(Some(4096));
+    }
+
+    #[tokio::test]
+    async fn test_with_max_tokens_builder() {
+        let registry = Arc::new(ToolRegistry::new());
+        let agent = AgentLoop::new(
+            Arc::new(ApiRegistry::default()),
+            Arc::new(ModelRegistry::default()),
+            HashMap::new(),
+            registry,
+            Arc::new(SessionStore::new_memory().await.expect("store")),
+            "prompt".into(),
+            "model".into(),
+        )
+        .with_max_tokens(Some(16384));
+        let _ = agent;
     }
 }
