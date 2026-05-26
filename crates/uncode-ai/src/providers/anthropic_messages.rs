@@ -111,7 +111,7 @@ fn build_anthropic_body(model: &Model, context: &Context, options: &StreamOption
     let mut body = serde_json::json!({
         "model": model.id,
         "messages": messages,
-        "max_tokens": options.max_tokens.unwrap_or(4096),
+        "max_tokens": options.max_tokens.unwrap_or(model.max_output_tokens),
         "stream": true,
     });
 

@@ -316,6 +316,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Respect user-configured max_tokens, default to model's declared value
     agent.set_max_tokens(Some(config.max_tokens));
+    agent.set_temperature(config.temperature);
 
     // --mode rpc: start JSON-RPC server on stdio
     if cli.mode == "rpc" {
