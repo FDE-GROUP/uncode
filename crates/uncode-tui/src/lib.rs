@@ -31,7 +31,7 @@ pub mod ui_channel;
 pub mod welcome;
 pub mod widget;
 
-use crate::chat::ChatState;
+use crate::chat::{ChatMessage, ChatState};
 use crate::complete::CompletionEngine;
 use crate::dialog::DialogOverlay;
 use crate::dialog_channel::DialogBridge;
@@ -668,6 +668,17 @@ impl TuiEngine {
         self.footer.end_turn();
         self.footer.clear_run_turn();
         self.current_cancel = None;
+
+        // 长 assistant 输出完成后滚动到开头
+        if let Some(ChatMessage::Assistant { .. }) = self.chat.messages.last() {
+            let last_idx = self.chat.messages.len().saturating_sub(1);
+            let start = self.chat.message_start_line(last_idx);
+            let total = self.chat.total_lines();
+            if total > start && total.saturating_sub(start) > 40 {
+                self.chat.scroll_offset = start;
+                self.chat.auto_scroll = false;
+            }
+        }
     }
 
     /// ESC 键处理：按优先级 — 拒绝权限 → 中断 Agent → 清除焦点 → 关闭覆盖层 → 关闭 Overlay
