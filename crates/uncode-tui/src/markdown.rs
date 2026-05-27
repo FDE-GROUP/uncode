@@ -236,6 +236,11 @@ impl<'a> RenderContext<'a> {
             }
 
             Node::Heading(heading) => {
+                // 标题前加空行（除文档开头外），提升长文可导航性
+                if !self.lines.is_empty() && self.lines.last().is_some_and(|l| !l.spans.is_empty())
+                {
+                    self.lines.push(Line::from(""));
+                }
                 self.current_style = Style::default().fg(self.theme.markdown.heading).bold();
                 for child in &heading.children {
                     self.render_inline(child);
@@ -244,16 +249,23 @@ impl<'a> RenderContext<'a> {
                 self.flush_line();
                 match heading.depth {
                     1 => {
-                        let n = w.clamp(3, 60);
+                        let n = w.clamp(3, 80);
                         self.lines.push(Line::from(Span::styled(
-                            "═".repeat(n),
+                            "━".repeat(n),
                             Style::default().fg(self.theme.markdown.heading),
                         )));
                     }
                     2 => {
-                        let n = w.clamp(3, 60);
+                        let n = w.clamp(3, 80);
                         self.lines.push(Line::from(Span::styled(
-                            "─".repeat(n),
+                            "━".repeat(n),
+                            Style::default().fg(self.theme.markdown.heading),
+                        )));
+                    }
+                    3 => {
+                        let n = w.clamp(2, 40);
+                        self.lines.push(Line::from(Span::styled(
+                            "╌".repeat(n),
                             Style::default().fg(self.theme.markdown.heading),
                         )));
                     }
@@ -843,7 +855,7 @@ mod tests {
         let md = "# Title\n";
         let lines = render_markdown_with_theme(md, &test_theme(), None);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
-        assert!(combined.contains('═'), "H1 should have ═ separator");
+        assert!(combined.contains('━'), "H1 should have ━ separator");
     }
 
     #[test]
@@ -851,7 +863,7 @@ mod tests {
         let md = "## Section\n";
         let lines = render_markdown_with_theme(md, &test_theme(), None);
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
-        assert!(combined.contains('─'), "H2 should have ─ separator");
+        assert!(combined.contains('━'), "H2 should have ━ separator");
     }
 
     #[test]
