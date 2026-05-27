@@ -140,6 +140,9 @@ fn build_request_body(model: &Model, context: &Context, options: &StreamOptions)
     if model.compat.supports_usage_in_streaming {
         body["stream_options"] = serde_json::json!({"include_usage": true});
     }
+    if model.compat.supports_tool_stream {
+        body["tool_stream"] = serde_json::json!(true);
+    }
 
     if let Some(mt) = options.max_tokens {
         let field = match model.compat.max_tokens_field {
