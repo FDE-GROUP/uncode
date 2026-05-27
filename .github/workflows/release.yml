@@ -44,34 +44,35 @@ jobs:
           name: uncode-${{ github.ref_name }}-x86_64-unknown-linux-gnu
           path: target/release/uncode-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
 
-  release:
+  release-public:
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    environment: release
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: uncode-${{ github.ref_name }}-x86_64-unknown-linux-gnu
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: ${{ github.ref_name }}
-          body: |
-            ## uncode ${{ github.ref_name }}
+      - name: Create public GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --repo FDE-GROUP/uncode \
+            --title "${{ github.ref_name }}" \
+            --notes "## uncode ${{ github.ref_name }}
 
-            Alpha internal test release.
+          Alpha internal test release. Built from [FDE-GROUP/uncodenow](https://github.com/FDE-GROUP/uncodenow).
 
-            ### Install
+          ### Install
 
-            ```bash
-            tar xzf uncode-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
-            ./uncode --help
-            ```
+          \`\`\`bash
+          tar xzf uncode-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+          ./uncode --help
+          \`\`\`
 
-            ### Prerequisites
-            - Linux x86_64
-            - Rust 1.91+ for building from source
-          files: uncode-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
-          prerelease: true
+          ### Prerequisites
+          - Linux x86_64
+          - Rust 1.91+ for building from source" \
+            --prerelease \
+            uncode-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
