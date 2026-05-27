@@ -1049,11 +1049,42 @@ impl AgentLoop {
                 let mut fields = std::collections::HashMap::new();
                 fields.insert("path".into(), serde_json::Value::String(path.clone()));
                 fields.insert("exists".into(), serde_json::Value::Bool(true));
+                fields.insert(
+                    "module".into(),
+                    serde_json::Value::String(infer_module(path)),
+                );
+                fields.insert("modified_in_session".into(), serde_json::Value::Bool(false));
+                fields.insert("last_modified_turn".into(), serde_json::Value::Null);
                 reg.insert(uncode_ontology::EntityInstance {
                     type_id: uncode_ontology::TypeId::from("File"),
                     id: path.clone(),
                     fields,
                 });
+            }
+            // 注入 Module 实例
+            {
+                let files = reg.list_by_type(&uncode_ontology::TypeId::from("File"));
+                let mut seen_modules = std::collections::HashSet::new();
+                let mut module_counts: std::collections::HashMap<String, usize> =
+                    std::collections::HashMap::new();
+                for f in &files {
+                    let module = f.field("module").and_then(|v| v.as_str()).unwrap_or("");
+                    if !module.is_empty() {
+                        seen_modules.insert(module.to_string());
+                        *module_counts.entry(module.to_string()).or_default() += 1;
+                    }
+                }
+                for module in &seen_modules {
+                    let count = module_counts.get(module).copied().unwrap_or(0);
+                    let mut mf = std::collections::HashMap::new();
+                    mf.insert("name".into(), serde_json::Value::String(module.clone()));
+                    mf.insert("file_count".into(), serde_json::Value::Number(count.into()));
+                    reg.insert(uncode_ontology::EntityInstance {
+                        type_id: uncode_ontology::TypeId::from("Module"),
+                        id: module.clone(),
+                        fields: mf,
+                    });
+                }
             }
         }
         built
@@ -1062,23 +1093,76 @@ impl AgentLoop {
         if let Some(ctx) = self.build_cognition_context() {
             built.messages.insert(1, Message::system(ctx));
         }
-        // 实例级文件清单：在 workspace graph 之后、用户消息之前
+        // 上下文注入：目录树 + 修改追踪
         {
             let reg = safe_lock(&self.instance_registry, "instance_registry");
             let files = reg.list_by_type(&uncode_ontology::TypeId::from("File"));
+
+            // ── 目录树 ──
             if !files.is_empty() {
-                let listing = files
+                let tree = if files.len() <= 50 {
+                    build_directory_tree(&files)
+                } else {
+                    // 大项目：仅根目录文件
+                    let root_files: Vec<_> = files
+                        .iter()
+                        .filter(|f| {
+                            f.field("module")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .is_empty()
+                        })
+                        .map(|f| f.id.as_str())
+                        .collect();
+                    if root_files.is_empty() {
+                        String::new()
+                    } else {
+                        root_files
+                            .iter()
+                            .map(|p| format!("  {}", p))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    }
+                };
+                if !tree.is_empty() {
+                    let msg = Message::system(format!("## Workspace Structure\n\n{tree}"));
+                    let pos = if built.messages.len() > 2 {
+                        3
+                    } else {
+                        built.messages.len()
+                    };
+                    built.messages.insert(pos, msg);
+                }
+            }
+
+            // ── Session 修改追踪 ──
+            let modified: Vec<_> = files
+                .iter()
+                .filter(|f| {
+                    f.field("modified_in_session")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                })
+                .collect();
+            if !modified.is_empty() {
+                let changes = modified
                     .iter()
-                    .map(|inst| format!("  {}", inst.id))
-                    .take(30)
+                    .map(|f| {
+                        let turn = f
+                            .field("last_modified_turn")
+                            .and_then(|v| v.as_u64())
+                            .map(|t| format!(" (turn {t})"))
+                            .unwrap_or_default();
+                        format!("  {}{}", f.id, turn)
+                    })
                     .collect::<Vec<_>>()
                     .join("\n");
                 let msg = Message::system(format!(
-                    "## Workspace Files\n\n当前工作区包含以下文件：\n{listing}"
+                    "## Session Changes ({} modified)\n\n{changes}",
+                    modified.len()
                 ));
-                // 插入在 cognition context 之后，用户消息之前
-                let pos = if built.messages.len() > 1 {
-                    2
+                let pos = if built.messages.len() > 3 {
+                    4
                 } else {
                     built.messages.len()
                 };
@@ -2432,6 +2516,24 @@ impl AgentLoop {
                                                     "exists".into(),
                                                     serde_json::Value::Bool(true),
                                                 );
+                                                fields.insert(
+                                                    "module".into(),
+                                                    serde_json::Value::String(infer_module(&path)),
+                                                );
+                                                let is_modifying =
+                                                    name == "write" || name == "edit";
+                                                fields.insert(
+                                                    "modified_in_session".into(),
+                                                    serde_json::Value::Bool(is_modifying),
+                                                );
+                                                fields.insert(
+                                                    "last_modified_turn".into(),
+                                                    if is_modifying {
+                                                        serde_json::json!(turn)
+                                                    } else {
+                                                        serde_json::Value::Null
+                                                    },
+                                                );
                                                 reg.insert(uncode_ontology::EntityInstance {
                                                     type_id: uncode_ontology::TypeId::from("File"),
                                                     id: path,
@@ -3207,4 +3309,64 @@ mod setter_tests {
         assert!(notice.contains("⚠️"));
         assert!(notice.contains("truncated"));
     }
+}
+
+// ── 上下文辅助函数 ──
+
+/// 从文件路径推断其所属模块（父目录）。
+/// "src/auth/login.rs" → "src/auth", "Cargo.toml" → "" (root)
+fn infer_module(path: &str) -> String {
+    std::path::Path::new(path)
+        .parent()
+        .and_then(|p| p.to_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_default()
+}
+
+/// 从 File 实例列表构建目录树字符串。
+fn build_directory_tree(files: &[&uncode_ontology::EntityInstance]) -> String {
+    use std::collections::BTreeMap;
+
+    let mut tree: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for f in files {
+        let module = f.field("module").and_then(|v| v.as_str()).unwrap_or("");
+        let filename = std::path::Path::new(&f.id)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&f.id);
+        tree.entry(module.to_string())
+            .or_default()
+            .push(filename.to_string());
+    }
+
+    let mut result = String::new();
+    let mut modules: Vec<&String> = tree.keys().collect();
+    modules.sort_unstable();
+
+    // 根目录文件先列
+    if let Some(root_files) = tree.get("") {
+        let mut rf: Vec<&String> = root_files.iter().collect();
+        rf.sort_unstable();
+        for name in &rf {
+            result.push_str(&format!("  {name}\n"));
+        }
+    }
+
+    // 子目录
+    for module in modules {
+        if module.is_empty() {
+            continue;
+        }
+        result.push_str(&format!("{module}/\n"));
+        if let Some(entries) = tree.get(module) {
+            let mut sorted: Vec<&String> = entries.iter().collect();
+            sorted.sort_unstable();
+            for name in &sorted {
+                result.push_str(&format!("  {name}\n"));
+            }
+        }
+    }
+
+    result
 }
