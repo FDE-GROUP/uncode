@@ -85,7 +85,10 @@ fn build_chat_messages(context: &Context, compat: &CompatConfig) -> Vec<Value> {
                     }
                 });
 
-                m["reasoning_content"] = Value::String(thinking_parts.join("\n"));
+                if !thinking_parts.is_empty() && !tool_calls.is_empty() {
+                    // DeepSeek: 有工具调用的回合必须回传 reasoning_content
+                    m["reasoning_content"] = Value::String(thinking_parts.join("\n"));
+                }
 
                 if !tool_calls.is_empty() {
                     m["tool_calls"] = Value::Array(tool_calls);
@@ -634,7 +637,8 @@ mod build_functions_tests {
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0]["role"], "assistant");
         assert_eq!(msgs[0]["content"], "result");
-        assert_eq!(msgs[0]["reasoning_content"], "reasoning");
+        // reasoning_content 仅在工具调用回合回传（无 ToolCall = 不发送）
+        assert!(msgs[0].get("reasoning_content").is_none());
     }
 
     #[test]
