@@ -1035,12 +1035,22 @@ impl AgentLoop {
                     code: 5099,
                 })
             })?;
+        let mut workspace_graph_text = String::new();
         if let Some(ref cache) = self.graph_cache {
             let graph = cache.get_or_build(cwd).await;
             if !graph.nodes.is_empty() {
                 let bundle = crate::workspace_graph::select_bundle(&graph, &[], "", cache.config());
                 if !bundle.is_empty() {
-                    built.messages.insert(0, bundle.to_system_message());
+                    workspace_graph_text = bundle
+                        .to_system_message()
+                        .content
+                        .into_iter()
+                        .filter_map(|c| match c {
+                            uncode_ai::message::ContentBlock::Text { text } => Some(text),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
                 }
             }
             // 从 WorkspaceGraph 注入 File 实例（零额外 I/O）
@@ -1092,10 +1102,17 @@ impl AgentLoop {
         built
             .messages
             .insert(0, Message::system(self.system_prompt.clone()));
-        if let Some(ctx) = self.build_cognition_context() {
-            built.messages.insert(1, Message::system(ctx));
+
+        // 合并动态上下文为单一 system message（position 1），保持前缀稳定利于 KV cache
+        let mut dynamic_context = String::new();
+        if !workspace_graph_text.is_empty() {
+            dynamic_context.push_str(&workspace_graph_text);
+            dynamic_context.push_str("\n\n");
         }
-        // 上下文注入：目录树 + 修改追踪
+        if let Some(ctx) = self.build_cognition_context() {
+            dynamic_context.push_str(&ctx);
+            dynamic_context.push_str("\n\n");
+        }
         {
             let reg = safe_lock(&self.instance_registry, "instance_registry");
             let files = reg.list_by_type(&uncode_ontology::TypeId::from("File"));
@@ -1105,7 +1122,6 @@ impl AgentLoop {
                 let tree = if files.len() <= 50 {
                     build_directory_tree(&files)
                 } else {
-                    // 大项目：仅根目录文件
                     let root_files: Vec<_> = files
                         .iter()
                         .filter(|f| {
@@ -1127,13 +1143,9 @@ impl AgentLoop {
                     }
                 };
                 if !tree.is_empty() {
-                    let msg = Message::system(format!("## Workspace Structure\n\n{tree}"));
-                    let pos = if built.messages.len() > 2 {
-                        3
-                    } else {
-                        built.messages.len()
-                    };
-                    built.messages.insert(pos, msg);
+                    dynamic_context.push_str("## Workspace Structure\n\n");
+                    dynamic_context.push_str(&tree);
+                    dynamic_context.push('\n');
                 }
             }
 
@@ -1143,34 +1155,27 @@ impl AgentLoop {
                 .filter(|f| f.field("last_tool").and_then(|v| v.as_str()).is_some())
                 .collect();
             if !operated.is_empty() {
-                let changes = operated
-                    .iter()
-                    .map(|f| {
-                        let status = f
-                            .field("last_tool_status")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let tool = f.field("last_tool").and_then(|v| v.as_str()).unwrap_or("");
-                        let turn = f
-                            .field("last_modified_turn")
-                            .and_then(|v| v.as_u64())
-                            .map(|t| format!(" (turn {t})"))
-                            .unwrap_or_default();
-                        format!("  {status} {tool} {} {turn}", f.id)
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                let msg = Message::system(format!(
-                    "## Session Changes ({} files)\n\n{changes}",
+                dynamic_context.push_str(&format!(
+                    "## Session Changes ({} files)\n\n",
                     operated.len()
                 ));
-                let pos = if built.messages.len() > 3 {
-                    4
-                } else {
-                    built.messages.len()
-                };
-                built.messages.insert(pos, msg);
+                for f in &operated {
+                    let status = f
+                        .field("last_tool_status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let tool = f.field("last_tool").and_then(|v| v.as_str()).unwrap_or("");
+                    let turn = f
+                        .field("last_modified_turn")
+                        .and_then(|v| v.as_u64())
+                        .map(|t| format!(" (turn {t})"))
+                        .unwrap_or_default();
+                    dynamic_context.push_str(&format!("  {status} {tool} {} {turn}\n", f.id));
+                }
             }
+        }
+        if !dynamic_context.is_empty() {
+            built.messages.insert(1, Message::system(dynamic_context));
         }
 
         // 诊断日志：确认注入生效
