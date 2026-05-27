@@ -832,6 +832,30 @@ impl TuiEngine {
 
         let content = Paragraph::new(lines);
         f.render_widget(content, area);
+
+        // 滚动位置指示器：内容超出视口时显示百分比
+        if total_lines > visible_height && self.chat.scroll_offset > 0 {
+            let pct = ((self.chat.scroll_offset as f64 / (total_lines - visible_height) as f64)
+                * 100.0) as usize;
+            let indicator = format!(" [{pct}%] ↑↓ PgUp/PgDn ");
+            let indicator_width = indicator.len() as u16;
+            if area.width > indicator_width + 1 {
+                let pos = ratatui::layout::Rect::new(
+                    area.x + area.width - indicator_width,
+                    area.y + area.height.saturating_sub(1),
+                    indicator_width,
+                    1,
+                );
+                f.render_widget(
+                    Paragraph::new(indicator).style(
+                        Style::default()
+                            .fg(self.theme.ui.footer_text)
+                            .bg(Color::Rgb(24, 24, 27)),
+                    ),
+                    pos,
+                );
+            }
+        }
     }
 
     fn render_status(&self, f: &mut Frame, area: ratatui::layout::Rect) {
