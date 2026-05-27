@@ -133,6 +133,7 @@ fn build_request_body(model: &Model, context: &Context, options: &StreamOptions)
         "model": model.id,
         "messages": messages,
         "stream": true,
+        "stream_options": {"include_usage": true},
     });
 
     if let Some(mt) = options.max_tokens {
@@ -152,6 +153,8 @@ fn build_request_body(model: &Model, context: &Context, options: &StreamOptions)
         body["store"] = serde_json::json!(true);
     }
     if let Some(ref sid) = options.session_id {
+        // KVCache 隔离：用 session_id 作为 user_id
+        body["user_id"] = serde_json::json!(sid);
         if model.compat.send_session_affinity_headers || model.compat.supports_long_cache_retention
         {
             body["prompt_cache_key"] = serde_json::json!(sid);
@@ -369,6 +372,7 @@ fn extract_usage(event: &Value) -> Option<StreamEvent> {
             output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
             cache_hit_tokens: usage["prompt_cache_hit_tokens"].as_u64(),
             cache_miss_tokens: usage["prompt_cache_miss_tokens"].as_u64(),
+            reasoning_tokens: usage["completion_tokens_details"]["reasoning_tokens"].as_u64(),
         })
     })
 }

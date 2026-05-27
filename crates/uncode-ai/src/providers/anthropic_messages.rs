@@ -287,6 +287,7 @@ fn parse_anthropic_chunk(text: &str, state: &mut AnthropicToolState) -> Vec<Stre
                         events.push(StreamEvent::Usage(UsageInfo {
                             cache_hit_tokens: None,
                             cache_miss_tokens: None,
+                            reasoning_tokens: None,
                             input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
                             output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
                         }));
@@ -306,6 +307,7 @@ fn parse_anthropic_chunk(text: &str, state: &mut AnthropicToolState) -> Vec<Stre
                         events.push(StreamEvent::Usage(UsageInfo {
                             cache_hit_tokens: None,
                             cache_miss_tokens: None,
+                            reasoning_tokens: None,
                             input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
                             output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
                         }));

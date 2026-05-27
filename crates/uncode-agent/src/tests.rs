@@ -480,7 +480,10 @@ mod tests {
     async fn test_agent_loop_text_only() {
         let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
             StreamEvent::TextDelta("Hello!".into()),
-            StreamEvent::Usage(uncode_ai::LlmUsageInfo { cache_hit_tokens: None, cache_miss_tokens: None,
+            StreamEvent::Usage(uncode_ai::LlmUsageInfo {
+                cache_hit_tokens: None,
+                cache_miss_tokens: None,
+                reasoning_tokens: None,
                 input_tokens: 10,
                 output_tokens: 5,
             }),
@@ -528,7 +531,10 @@ mod tests {
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "world"}),
                 })),
-                StreamEvent::Usage(uncode_ai::LlmUsageInfo { cache_hit_tokens: None, cache_miss_tokens: None,
+                StreamEvent::Usage(uncode_ai::LlmUsageInfo {
+                    cache_hit_tokens: None,
+                    cache_miss_tokens: None,
+                    reasoning_tokens: None,
                     input_tokens: 20,
                     output_tokens: 10,
                 }),
@@ -538,7 +544,10 @@ mod tests {
             ],
             vec![
                 StreamEvent::TextDelta("Done!".into()),
-                StreamEvent::Usage(uncode_ai::LlmUsageInfo { cache_hit_tokens: None, cache_miss_tokens: None,
+                StreamEvent::Usage(uncode_ai::LlmUsageInfo {
+                    cache_hit_tokens: None,
+                    cache_miss_tokens: None,
+                    reasoning_tokens: None,
                     input_tokens: 30,
                     output_tokens: 8,
                 }),
@@ -1817,7 +1826,10 @@ mod tests {
     async fn test_phase_transition_text_only_turn() {
         let (api_reg, model_reg, api_keys) = make_registries(vec![vec![
             StreamEvent::TextDelta("Hello!".into()),
-            StreamEvent::Usage(uncode_ai::LlmUsageInfo { cache_hit_tokens: None, cache_miss_tokens: None,
+            StreamEvent::Usage(uncode_ai::LlmUsageInfo {
+                cache_hit_tokens: None,
+                cache_miss_tokens: None,
+                reasoning_tokens: None,
                 input_tokens: 10,
                 output_tokens: 5,
             }),
@@ -1874,7 +1886,10 @@ mod tests {
                     name: "echo".into(),
                     arguments: serde_json::json!({"text": "world"}),
                 })),
-                StreamEvent::Usage(uncode_ai::LlmUsageInfo { cache_hit_tokens: None, cache_miss_tokens: None,
+                StreamEvent::Usage(uncode_ai::LlmUsageInfo {
+                    cache_hit_tokens: None,
+                    cache_miss_tokens: None,
+                    reasoning_tokens: None,
                     input_tokens: 20,
                     output_tokens: 10,
                 }),
@@ -1884,7 +1899,10 @@ mod tests {
             ],
             vec![
                 StreamEvent::TextDelta("Done!".into()),
-                StreamEvent::Usage(uncode_ai::LlmUsageInfo { cache_hit_tokens: None, cache_miss_tokens: None,
+                StreamEvent::Usage(uncode_ai::LlmUsageInfo {
+                    cache_hit_tokens: None,
+                    cache_miss_tokens: None,
+                    reasoning_tokens: None,
                     input_tokens: 30,
                     output_tokens: 8,
                 }),
