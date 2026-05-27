@@ -1169,6 +1169,28 @@ impl AgentLoop {
                 built.messages.insert(pos, msg);
             }
         }
+
+        // 诊断日志：确认注入生效
+        {
+            let reg = safe_lock(&self.instance_registry, "instance_registry");
+            let files = reg.list_by_type(&uncode_ontology::TypeId::from("File"));
+            let modules = reg.list_by_type(&uncode_ontology::TypeId::from("Module"));
+            let modified = files
+                .iter()
+                .filter(|f| {
+                    f.field("modified_in_session")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+                })
+                .count();
+            tracing::info!(
+                files = files.len(),
+                modules = modules.len(),
+                modified,
+                "injected workspace context"
+            );
+        }
+
         Ok(built)
     }
 
@@ -3369,4 +3391,70 @@ fn build_directory_tree(files: &[&uncode_ontology::EntityInstance]) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_infer_module_nested() {
+        assert_eq!(super::infer_module("src/auth/login.rs"), "src/auth");
+        assert_eq!(super::infer_module("a/b/c/d.rs"), "a/b/c");
+    }
+
+    #[test]
+    fn test_infer_module_root() {
+        assert_eq!(super::infer_module("Cargo.toml"), "");
+        assert_eq!(super::infer_module("README.md"), "");
+    }
+
+    #[test]
+    fn test_infer_module_single_dir() {
+        assert_eq!(super::infer_module("foo.rs"), "");
+    }
+
+    fn make_file(path: &str, module: &str) -> uncode_ontology::EntityInstance {
+        let mut fields = HashMap::new();
+        fields.insert("path".into(), serde_json::Value::String(path.into()));
+        fields.insert("module".into(), serde_json::Value::String(module.into()));
+        uncode_ontology::EntityInstance {
+            type_id: uncode_ontology::TypeId::from("File"),
+            id: path.into(),
+            fields,
+        }
+    }
+
+    #[test]
+    fn test_build_tree_simple() {
+        let a = make_file("Cargo.toml", "");
+        let b = make_file("src/main.rs", "src");
+        let c = make_file("src/auth/login.rs", "src/auth");
+        let files = vec![&a, &b, &c];
+        let tree = build_directory_tree(&files);
+        assert!(tree.contains("Cargo.toml"));
+        assert!(tree.contains("src/"));
+        assert!(tree.contains("  main.rs"));
+        assert!(tree.contains("src/auth/"));
+        assert!(tree.contains("  login.rs"));
+    }
+
+    #[test]
+    fn test_build_tree_empty() {
+        let files: Vec<&uncode_ontology::EntityInstance> = vec![];
+        let tree = build_directory_tree(&files);
+        assert!(tree.is_empty());
+    }
+
+    #[test]
+    fn test_build_tree_root_only() {
+        let a = make_file("Cargo.toml", "");
+        let b = make_file("README.md", "");
+        let files = vec![&a, &b];
+        let tree = build_directory_tree(&files);
+        assert!(tree.contains("Cargo.toml"));
+        assert!(tree.contains("README.md"));
+        assert!(!tree.contains("/"));
+    }
 }
