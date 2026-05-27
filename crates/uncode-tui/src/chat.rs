@@ -536,7 +536,10 @@ impl ChatState {
             let focused = self.focused_card == Some(idx);
 
             // Incremental path: streaming append, width unchanged, text grew
+            // Skip incremental for Assistant — markdown reflow can change prefix
+            let is_assistant = matches!(self.messages[idx], ChatMessage::Assistant { .. });
             let can_incremental = is_last
+                && !is_assistant
                 && self.line_counts.get(idx).is_some_and(|e| {
                     e.cached_lines.is_some()
                         && e.cached_text_len > 0
