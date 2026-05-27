@@ -367,11 +367,17 @@ fn flush_tool_calls(state: &mut StreamState) -> Vec<StreamEvent> {
 
 fn extract_usage(event: &Value) -> Option<StreamEvent> {
     event.get("usage").map(|usage| {
+        // DeepSeek: prompt_cache_hit_tokens / prompt_cache_miss_tokens
+        // GLM: prompt_tokens_details.cached_tokens
+        let cache_hit = usage["prompt_cache_hit_tokens"]
+            .as_u64()
+            .or_else(|| usage["prompt_tokens_details"]["cached_tokens"].as_u64());
+        let cache_miss = usage["prompt_cache_miss_tokens"].as_u64();
         StreamEvent::Usage(UsageInfo {
             input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
             output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
-            cache_hit_tokens: usage["prompt_cache_hit_tokens"].as_u64(),
-            cache_miss_tokens: usage["prompt_cache_miss_tokens"].as_u64(),
+            cache_hit_tokens: cache_hit,
+            cache_miss_tokens: cache_miss,
             reasoning_tokens: usage["completion_tokens_details"]["reasoning_tokens"].as_u64(),
         })
     })
