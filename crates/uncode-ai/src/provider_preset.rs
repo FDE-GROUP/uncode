@@ -53,6 +53,8 @@ pub fn builtin_provider_presets() -> Vec<ProviderPreset> {
                 supports_developer_role: true,
                 done_breaks_stream: true,
                 thinking_format: Some(ThinkingFormat::DeepSeek),
+                supports_clear_thinking: true,
+                requires_reasoning_content_on_assistant_messages: true,
                 ..CompatConfig::default()
             },
             thinking_level_map: HashMap::from([

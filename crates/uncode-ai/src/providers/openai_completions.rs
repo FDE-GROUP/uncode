@@ -85,8 +85,11 @@ fn build_chat_messages(context: &Context, compat: &CompatConfig) -> Vec<Value> {
                     }
                 });
 
-                if !thinking_parts.is_empty() && !tool_calls.is_empty() {
-                    // DeepSeek: 有工具调用的回合必须回传 reasoning_content
+                if !thinking_parts.is_empty()
+                    && (!tool_calls.is_empty()
+                        || compat.requires_reasoning_content_on_assistant_messages)
+                {
+                    // 工具调用回合必须回传；GLM 保留式思考下所有回合必须回传
                     m["reasoning_content"] = Value::String(thinking_parts.join("\n"));
                 }
 
@@ -181,7 +184,12 @@ fn build_request_body(model: &Model, context: &Context, options: &StreamOptions)
 
         match model.effective_thinking_format() {
             Some(ThinkingFormat::DeepSeek) => {
-                body["thinking"] = serde_json::json!({"type": "enabled"});
+                if model.compat.supports_clear_thinking {
+                    body["thinking"] =
+                        serde_json::json!({"type": "enabled", "clear_thinking": false});
+                } else {
+                    body["thinking"] = serde_json::json!({"type": "enabled"});
+                }
                 if model.compat.supports_reasoning_effort {
                     let effort = mapped.unwrap_or("high");
                     body["reasoning_effort"] = serde_json::json!(effort);
