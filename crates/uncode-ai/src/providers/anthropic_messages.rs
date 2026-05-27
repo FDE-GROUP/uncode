@@ -285,6 +285,8 @@ fn parse_anthropic_chunk(text: &str, state: &mut AnthropicToolState) -> Vec<Stre
                 Some("message_delta") => {
                     if let Some(usage) = event.get("usage") {
                         events.push(StreamEvent::Usage(UsageInfo {
+                            cache_hit_tokens: None,
+                            cache_miss_tokens: None,
                             input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
                             output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
                         }));
@@ -302,6 +304,8 @@ fn parse_anthropic_chunk(text: &str, state: &mut AnthropicToolState) -> Vec<Stre
                 Some("message_start") => {
                     if let Some(usage) = event["message"].get("usage") {
                         events.push(StreamEvent::Usage(UsageInfo {
+                            cache_hit_tokens: None,
+                            cache_miss_tokens: None,
                             input_tokens: usage["input_tokens"].as_u64().unwrap_or(0),
                             output_tokens: usage["output_tokens"].as_u64().unwrap_or(0),
                         }));

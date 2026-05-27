@@ -1807,6 +1807,8 @@ impl AgentLoop {
                 let mut args_pushed: HashSet<String> = HashSet::new();
                 let mut turn_input_tokens: u64 = 0;
                 let mut turn_output_tokens: u64 = 0;
+                let mut turn_cache_hit_tokens: u64 = 0;
+                let mut turn_cache_miss_tokens: u64 = 0;
                 let mut tool_start_times: HashMap<String, std::time::Instant> = HashMap::new();
                 let mut turn_phase_completed: Vec<String> = Vec::new();
                 let mut turn_phase_issues: Vec<String> = Vec::new();
@@ -1984,6 +1986,8 @@ impl AgentLoop {
                         StreamEvent::Usage(usage) => {
                             turn_input_tokens += usage.input_tokens;
                             turn_output_tokens += usage.output_tokens;
+                            turn_cache_hit_tokens += usage.cache_hit_tokens.unwrap_or(0);
+                            turn_cache_miss_tokens += usage.cache_miss_tokens.unwrap_or(0);
                             total_input_tokens += usage.input_tokens;
                             total_output_tokens += usage.output_tokens;
                         }
@@ -1997,12 +2001,14 @@ impl AgentLoop {
                         }
                         StreamEvent::Done { reason } => {
                             tracing::debug!(
-                                "Done event: reason={:?} thinking={} text={} tool_calls={} pending_executions={}",
+                                "Done event: reason={:?} thinking={} text={} tool_calls={} pending_executions={} cache_hit={} cache_miss={}",
                                 reason,
                                 !current_thinking.is_empty(),
                                 !current_text.is_empty(),
                                 pending_tool_calls.len(),
-                                pending_executions.len()
+                                pending_executions.len(),
+                                turn_cache_hit_tokens,
+                                turn_cache_miss_tokens,
                             );
                             // Warn on orphaned tool calls (stream ended without ToolCallEnd)
                             if !pending_tool_calls.is_empty() {

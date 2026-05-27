@@ -367,6 +367,8 @@ fn extract_usage(event: &Value) -> Option<StreamEvent> {
         StreamEvent::Usage(UsageInfo {
             input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
             output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
+            cache_hit_tokens: usage["prompt_cache_hit_tokens"].as_u64(),
+            cache_miss_tokens: usage["prompt_cache_miss_tokens"].as_u64(),
         })
     })
 }

@@ -33,6 +33,8 @@ pub struct ToolCallEndData {
 pub struct UsageInfo {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub cache_hit_tokens: Option<u64>,
+    pub cache_miss_tokens: Option<u64>,
 }
 
 /// API 协议抽象——每个 API 协议一个实现（openai-completions、anthropic-messages 等）。
@@ -283,6 +285,8 @@ mod tests {
         let events = vec![
             StreamEvent::TextDelta("Answer.".into()),
             StreamEvent::Usage(UsageInfo {
+                cache_hit_tokens: None,
+                cache_miss_tokens: None,
                 input_tokens: 50,
                 output_tokens: 10,
             }),
@@ -315,10 +319,14 @@ mod tests {
         // Two usage events — last one wins
         let events = vec![
             StreamEvent::Usage(UsageInfo {
+                cache_hit_tokens: None,
+                cache_miss_tokens: None,
                 input_tokens: 10,
                 output_tokens: 5,
             }),
             StreamEvent::Usage(UsageInfo {
+                cache_hit_tokens: None,
+                cache_miss_tokens: None,
                 input_tokens: 20,
                 output_tokens: 8,
             }),
