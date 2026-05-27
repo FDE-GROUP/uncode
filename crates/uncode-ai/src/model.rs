@@ -511,7 +511,7 @@ pub fn builtin_models() -> Vec<Model> {
             provider: "xai",
             context_window: 128_000,
             max_output_tokens: 8192,
-            reasoning: true,
+            reasoning: false,
             pricing: ModelPricingPerMillion::default(),
             input_modalities: vec![InputModality::Text],
             headers: HashMap::new(),

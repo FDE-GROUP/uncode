@@ -133,8 +133,10 @@ fn build_request_body(model: &Model, context: &Context, options: &StreamOptions)
         "model": model.id,
         "messages": messages,
         "stream": true,
-        "stream_options": {"include_usage": true},
     });
+    if model.compat.supports_usage_in_streaming {
+        body["stream_options"] = serde_json::json!({"include_usage": true});
+    }
 
     if let Some(mt) = options.max_tokens {
         let field = match model.compat.max_tokens_field {
@@ -153,8 +155,9 @@ fn build_request_body(model: &Model, context: &Context, options: &StreamOptions)
         body["store"] = serde_json::json!(true);
     }
     if let Some(ref sid) = options.session_id {
-        // KVCache 隔离：用 session_id 作为 user_id
-        body["user_id"] = serde_json::json!(sid);
+        if model.compat.supports_user_id {
+            body["user_id"] = serde_json::json!(sid);
+        }
         if model.compat.send_session_affinity_headers || model.compat.supports_long_cache_retention
         {
             body["prompt_cache_key"] = serde_json::json!(sid);
@@ -179,8 +182,10 @@ fn build_request_body(model: &Model, context: &Context, options: &StreamOptions)
         match model.effective_thinking_format() {
             Some(ThinkingFormat::DeepSeek) => {
                 body["thinking"] = serde_json::json!({"type": "enabled"});
-                let effort = mapped.unwrap_or("high");
-                body["reasoning_effort"] = serde_json::json!(effort);
+                if model.compat.supports_reasoning_effort {
+                    let effort = mapped.unwrap_or("high");
+                    body["reasoning_effort"] = serde_json::json!(effort);
+                }
             }
             Some(ThinkingFormat::OpenRouter) => {
                 let effort = mapped.unwrap_or("high");

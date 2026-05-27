@@ -166,6 +166,8 @@ pub struct CompatConfig {
     pub supports_eager_tool_input_streaming: bool,
     #[serde(default)]
     pub supports_cache_control_on_tools: bool,
+    #[serde(default)]
+    pub supports_user_id: bool,
 }
 
 impl Default for CompatConfig {
@@ -187,6 +189,7 @@ impl Default for CompatConfig {
             requires_reasoning_content_on_assistant_messages: false,
             supports_eager_tool_input_streaming: false,
             supports_cache_control_on_tools: false,
+            supports_user_id: false,
         }
     }
 }
@@ -271,6 +274,11 @@ impl CompatConfig {
                 base.supports_cache_control_on_tools,
                 overlay.supports_cache_control_on_tools,
                 d.supports_cache_control_on_tools,
+            ),
+            supports_user_id: pick_bool(
+                base.supports_user_id,
+                overlay.supports_user_id,
+                d.supports_user_id,
             ),
         }
     }

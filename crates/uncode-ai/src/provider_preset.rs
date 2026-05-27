@@ -32,6 +32,9 @@ pub fn builtin_provider_presets() -> Vec<ProviderPreset> {
             compat: CompatConfig {
                 supports_developer_role: false,
                 thinking_format: Some(ThinkingFormat::DeepSeek),
+                supports_reasoning_effort: true,
+                supports_usage_in_streaming: true,
+                supports_user_id: true,
                 ..CompatConfig::default()
             },
             thinking_level_map: HashMap::from([
@@ -68,6 +71,8 @@ pub fn builtin_provider_presets() -> Vec<ProviderPreset> {
                 supports_developer_role: true,
                 send_session_affinity_headers: true,
                 supports_long_cache_retention: true,
+                supports_usage_in_streaming: true,
+                supports_user_id: true,
                 ..CompatConfig::default()
             },
             thinking_level_map: HashMap::new(),
