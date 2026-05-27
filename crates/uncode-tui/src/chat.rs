@@ -434,7 +434,6 @@ impl ChatState {
                 | ChatMessage::Thinking { expanded: e, .. }
                 | ChatMessage::TodoList { expanded: e, .. }
                 | ChatMessage::Custom { expanded: e, .. }
-                | ChatMessage::Assistant { expanded: e, .. }
                     if *e != expanded =>
                 {
                     *e = expanded;

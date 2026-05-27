@@ -816,9 +816,6 @@ impl TuiEngine {
 
         // Step 2: Compute total and auto_scroll
         let total_lines = self.chat.total_lines();
-        if self.chat.scroll_offset + visible_height >= total_lines {
-            self.chat.auto_scroll = true;
-        }
         if self.chat.auto_scroll && total_lines > visible_height {
             self.chat.scroll_offset = total_lines.saturating_sub(visible_height);
         }
