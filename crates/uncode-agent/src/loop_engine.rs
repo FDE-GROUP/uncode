@@ -1974,6 +1974,7 @@ impl AgentLoop {
                                 args_pushed.insert(id.clone());
                             }
 
+                            pending_tool_calls.retain(|(tid, ..)| tid != &id);
                             pending_executions.push((id, name, arguments));
                         }
                         StreamEvent::Usage(usage) => {
