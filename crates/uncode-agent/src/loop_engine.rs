@@ -1689,18 +1689,17 @@ impl AgentLoop {
                         existing_on_payload
                     };
 
-                // 思考模式下 reasoning_content 消耗输出 token 配额，
-                // 使用更大上限避免工具调用参数被截断
+                // 思考模式下 reasoning_content 消耗输出 token 配额。
+                // 不设上限让 API 使用自己的默认值，避免截断。
                 let resolved_max_tokens = if thinking_level.is_some() {
-                    let base = self.max_tokens.unwrap_or(model.max_output_tokens);
-                    if base < 16_384 { 16_384 } else { base }
+                    self.max_tokens
                 } else {
-                    self.max_tokens.unwrap_or(model.max_output_tokens)
+                    self.max_tokens.or(Some(model.max_output_tokens))
                 };
                 let options = StreamOptions {
                     api_key,
                     temperature: Some(self.temperature.unwrap_or(0.7)),
-                    max_tokens: Some(resolved_max_tokens),
+                    max_tokens: resolved_max_tokens,
                     thinking_level,
                     session_id: Some(session_id.clone()),
                     on_payload: on_payload_cb,
