@@ -2218,10 +2218,27 @@ fn render_assistant_msg(
     w: usize,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    let mut lines = if text.is_empty() {
+    // 流式时稳定化 Markdown：自动闭合未结束的代码块，避免闪烁
+    let stabilized: std::borrow::Cow<str>;
+    let render_text = if expanded && text.ends_with("```") {
+        // 代码块已闭合，正常渲染
+        text
+    } else if expanded && text.matches("```").count() % 2 != 0 {
+        // 未闭合代码块 → 临时追加闭合标记
+        stabilized = std::borrow::Cow::Owned(format!("{text}\n```"));
+        stabilized.as_ref()
+    } else {
+        text
+    };
+    let mut lines = if render_text.is_empty() {
         vec![]
     } else if expanded {
-        crate::markdown::render_markdown_with_theme_and_truncation(text, theme, Some(w), false)
+        crate::markdown::render_markdown_with_theme_and_truncation(
+            render_text,
+            theme,
+            Some(w),
+            false,
+        )
     } else {
         crate::markdown::render_markdown_with_theme(text, theme, Some(w))
     };
