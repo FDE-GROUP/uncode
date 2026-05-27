@@ -403,6 +403,16 @@ impl TuiEngine {
         self.model = model;
     }
 
+    /// 设置 TUI 截断/显示配置（来自 `AppConfig.tui`）。
+    /// 应在 `run()` 调用前设置。
+    pub fn set_tui_config(&self, config: uncode_core::config::TuiConfig) {
+        crate::markdown::set_truncation_config(crate::markdown::TruncationConfig {
+            head: config.truncate_head_lines,
+            tail: config.truncate_tail_lines,
+            tool_preview_lines: config.tool_preview_lines,
+        });
+    }
+
     /// Wire TUI confirmation UI to agent-side [`PermissionToolHooks`](uncode_agent::PermissionToolHooks).
     pub fn set_permission_gate(&mut self, gate: Arc<PermissionGate>) {
         self.permission_gate = Some(gate);
@@ -816,6 +826,10 @@ impl TuiEngine {
 
         // Step 2: Compute total and auto_scroll
         let total_lines = self.chat.total_lines();
+        // 用户滚到最底部（2 行以内）→ 恢复自动跟随
+        if self.chat.scroll_offset + visible_height + 2 >= total_lines {
+            self.chat.auto_scroll = true;
+        }
         if self.chat.auto_scroll && total_lines > visible_height {
             self.chat.scroll_offset = total_lines.saturating_sub(visible_height);
         }
