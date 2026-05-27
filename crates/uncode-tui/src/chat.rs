@@ -1636,7 +1636,12 @@ fn render_message(
                 }
             };
             let icon_color = if *active {
-                theme.tool_status.running
+                if text.len() < 100 {
+                    // 短思考时不闪亮色，避免一帧闪烁
+                    theme.ui.footer_text
+                } else {
+                    theme.tool_status.running
+                }
             } else {
                 theme.tool_status.success
             };
