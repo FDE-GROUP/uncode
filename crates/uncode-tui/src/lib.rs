@@ -31,7 +31,7 @@ pub mod ui_channel;
 pub mod welcome;
 pub mod widget;
 
-use crate::chat::{ChatMessage, ChatState};
+use crate::chat::ChatState;
 use crate::complete::CompletionEngine;
 use crate::dialog::DialogOverlay;
 use crate::dialog_channel::DialogBridge;
@@ -831,21 +831,7 @@ impl TuiEngine {
             self.chat.auto_scroll = true;
         }
         if self.chat.auto_scroll && total_lines > visible_height {
-            let target = total_lines.saturating_sub(visible_height);
-            // 如果最后一条 assistant 消息超过视口高度，
-            // 滚动到该消息的顶部而非全局底部，让用户从开头阅读
-            if let Some(ChatMessage::Assistant { .. }) = self.chat.messages.last() {
-                let last_idx = self.chat.messages.len().saturating_sub(1);
-                let last_start = self.chat.message_start_line(last_idx);
-                let last_height = target.saturating_sub(last_start);
-                if last_height > visible_height / 2 && last_height < visible_height * 3 {
-                    self.chat.scroll_offset = last_start;
-                } else {
-                    self.chat.scroll_offset = target;
-                }
-            } else {
-                self.chat.scroll_offset = target;
-            }
+            self.chat.scroll_offset = total_lines.saturating_sub(visible_height);
         }
 
         // Step 3: Find visible message range via binary search
