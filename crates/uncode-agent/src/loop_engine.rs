@@ -1055,6 +1055,8 @@ impl AgentLoop {
                 );
                 fields.insert("modified_in_session".into(), serde_json::Value::Bool(false));
                 fields.insert("last_modified_turn".into(), serde_json::Value::Null);
+                fields.insert("last_tool_status".into(), serde_json::Value::Null);
+                fields.insert("last_tool".into(), serde_json::Value::Null);
                 reg.insert(uncode_ontology::EntityInstance {
                     type_id: uncode_ontology::TypeId::from("File"),
                     id: path.clone(),
@@ -1135,31 +1137,32 @@ impl AgentLoop {
                 }
             }
 
-            // ── Session 修改追踪 ──
-            let modified: Vec<_> = files
+            // ── Session 操作追踪 ──
+            let operated: Vec<_> = files
                 .iter()
-                .filter(|f| {
-                    f.field("modified_in_session")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false)
-                })
+                .filter(|f| f.field("last_tool").and_then(|v| v.as_str()).is_some())
                 .collect();
-            if !modified.is_empty() {
-                let changes = modified
+            if !operated.is_empty() {
+                let changes = operated
                     .iter()
                     .map(|f| {
+                        let status = f
+                            .field("last_tool_status")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let tool = f.field("last_tool").and_then(|v| v.as_str()).unwrap_or("");
                         let turn = f
                             .field("last_modified_turn")
                             .and_then(|v| v.as_u64())
                             .map(|t| format!(" (turn {t})"))
                             .unwrap_or_default();
-                        format!("  {}{}", f.id, turn)
+                        format!("  {status} {tool} {} {turn}", f.id)
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
                 let msg = Message::system(format!(
-                    "## Session Changes ({} modified)\n\n{changes}",
-                    modified.len()
+                    "## Session Changes ({} files)\n\n{changes}",
+                    operated.len()
                 ));
                 let pos = if built.messages.len() > 3 {
                     4
@@ -2525,51 +2528,60 @@ impl AgentLoop {
                                         should_terminate = false;
                                     }
 
-                                    // 更新实例注册表：注册工具操作的文件路径
-                                    if !is_error {
-                                        if let Some(args) = args_by_id.get(id) {
-                                            let file_path = args
-                                                .get("path")
-                                                .and_then(|v| v.as_str())
-                                                .map(|s| s.to_string());
-                                            if let Some(path) = file_path {
-                                                let mut reg = safe_lock(
-                                                    &self.instance_registry,
-                                                    "instance_registry",
-                                                );
-                                                let mut fields = std::collections::HashMap::new();
-                                                fields.insert(
-                                                    "path".into(),
-                                                    serde_json::Value::String(path.clone()),
-                                                );
-                                                fields.insert(
-                                                    "exists".into(),
-                                                    serde_json::Value::Bool(true),
-                                                );
-                                                fields.insert(
-                                                    "module".into(),
-                                                    serde_json::Value::String(infer_module(&path)),
-                                                );
-                                                let is_modifying =
-                                                    name == "write" || name == "edit";
-                                                fields.insert(
-                                                    "modified_in_session".into(),
-                                                    serde_json::Value::Bool(is_modifying),
-                                                );
-                                                fields.insert(
-                                                    "last_modified_turn".into(),
-                                                    if is_modifying {
-                                                        serde_json::json!(turn)
-                                                    } else {
-                                                        serde_json::Value::Null
-                                                    },
-                                                );
-                                                reg.insert(uncode_ontology::EntityInstance {
-                                                    type_id: uncode_ontology::TypeId::from("File"),
-                                                    id: path,
-                                                    fields,
-                                                });
-                                            }
+                                    // 更新实例注册表：注册工具操作的文件路径及状态
+                                    if let Some(args) = args_by_id.get(id) {
+                                        let file_path = args
+                                            .get("path")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| s.to_string());
+                                        if let Some(path) = file_path {
+                                            let mut reg = safe_lock(
+                                                &self.instance_registry,
+                                                "instance_registry",
+                                            );
+                                            let mut fields = std::collections::HashMap::new();
+                                            fields.insert(
+                                                "path".into(),
+                                                serde_json::Value::String(path.clone()),
+                                            );
+                                            fields.insert(
+                                                "exists".into(),
+                                                serde_json::Value::Bool(true),
+                                            );
+                                            fields.insert(
+                                                "module".into(),
+                                                serde_json::Value::String(infer_module(&path)),
+                                            );
+                                            let is_modifying = name == "write" || name == "edit";
+                                            fields.insert(
+                                                "modified_in_session".into(),
+                                                serde_json::Value::Bool(is_modifying && !is_error),
+                                            );
+                                            fields.insert(
+                                                "last_modified_turn".into(),
+                                                if is_modifying && !is_error {
+                                                    serde_json::json!(turn)
+                                                } else {
+                                                    serde_json::Value::Null
+                                                },
+                                            );
+                                            fields.insert(
+                                                "last_tool_status".into(),
+                                                if is_error {
+                                                    serde_json::Value::String("❌".into())
+                                                } else {
+                                                    serde_json::Value::String("✅".into())
+                                                },
+                                            );
+                                            fields.insert(
+                                                "last_tool".into(),
+                                                serde_json::Value::String(name.clone()),
+                                            );
+                                            reg.insert(uncode_ontology::EntityInstance {
+                                                type_id: uncode_ontology::TypeId::from("File"),
+                                                id: path,
+                                                fields,
+                                            });
                                         }
                                     }
                                 }
