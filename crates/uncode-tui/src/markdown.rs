@@ -2,13 +2,45 @@ use markdown::mdast::{self, Node};
 use markdown::to_mdast;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
+use std::sync::OnceLock;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::theme::Theme;
 
-const TRUNCATE_HEAD: usize = 200;
-const TRUNCATE_TAIL: usize = 100;
+/// 截断配置 —— 可通过 TuiConfig 运行时设置，未设置时使用以下默认值。
+#[derive(Debug, Clone)]
+pub struct TruncationConfig {
+    /// 截断时保留的头部行数
+    pub head: usize,
+    /// 截断时保留的尾部行数
+    pub tail: usize,
+    /// 折叠时工具输出预览行数
+    pub tool_preview_lines: usize,
+}
+
+impl Default for TruncationConfig {
+    fn default() -> Self {
+        Self {
+            head: 500,
+            tail: 300,
+            tool_preview_lines: 20,
+        }
+    }
+}
+
+/// 全局截断配置，由 TuiEngine 初始化时设置。
+static TRUNCATION_CONFIG: OnceLock<TruncationConfig> = OnceLock::new();
+
+/// 设置全局截断配置（在 TUI 初始化时调用一次）。
+pub fn set_truncation_config(config: TruncationConfig) {
+    let _ = TRUNCATION_CONFIG.set(config);
+}
+
+/// 获取当前截断配置，未设置时返回默认值。
+pub fn truncation_config() -> &'static TruncationConfig {
+    TRUNCATION_CONFIG.get_or_init(TruncationConfig::default)
+}
 
 pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     render_markdown_with_theme(text, &Theme::default(), None)
@@ -41,7 +73,8 @@ pub fn render_markdown_with_theme_and_truncation(
     ctx.render_node(&ast);
     let lines = ctx.finish();
     if truncate {
-        truncate_lines(lines, TRUNCATE_HEAD, TRUNCATE_TAIL, theme)
+        let cfg = truncation_config();
+        truncate_lines(lines, cfg.head, cfg.tail, theme)
     } else {
         lines
     }
@@ -66,8 +99,8 @@ fn truncate_lines(
 
     let mut out = lines;
     out.push(Line::from(Span::styled(
-        format!("  ... ({omitted} lines omitted) ..."),
-        Style::default().fg(theme.ui.footer_text),
+        format!("  ⋯ ({omitted} lines hidden — Space to expand, - to collapse all)"),
+        Style::default().fg(theme.tool_status.await_confirm),
     )));
     out.extend(tail_part);
     out
@@ -212,9 +245,31 @@ impl<'a> RenderContext<'a> {
                 }
             }
 
-            self.current_line
-                .push(Span::styled(word.to_string(), style));
-            self.current_width += word_w;
+            // 如果单个词超出 max_width（CJK 文本无空格），按字符断行
+            if word_w > max && max > 0 {
+                let mut chunk = String::new();
+                let mut chunk_w = 0usize;
+                for grapheme in word.graphemes(true) {
+                    let cw = UnicodeWidthStr::width(grapheme);
+                    if chunk_w + cw > max && !chunk.is_empty() {
+                        self.current_line
+                            .push(Span::styled(std::mem::take(&mut chunk), style));
+                        self.current_width += chunk_w;
+                        self.flush_line();
+                        chunk_w = 0;
+                    }
+                    chunk.push_str(grapheme);
+                    chunk_w += cw;
+                }
+                if !chunk.is_empty() {
+                    self.current_line.push(Span::styled(chunk, style));
+                    self.current_width += chunk_w;
+                }
+            } else {
+                self.current_line
+                    .push(Span::styled(word.to_string(), style));
+                self.current_width += word_w;
+            }
         }
     }
 
@@ -777,20 +832,21 @@ mod tests {
 
     #[test]
     fn test_truncation_long_output() {
-        let md: String = (0..200).map(|i| format!("line {i}\n\n")).collect();
+        // 生成 600 行，足够触发截断（默认 head=500, tail=300, 阈值 805）
+        let md: String = (0..600).map(|i| format!("line {i}\n\n")).collect();
         let lines = render_markdown_with_theme(&md, &test_theme(), None);
         assert!(
-            lines.len() < 320,
+            lines.len() < 820,
             "should truncate long output, got {} lines",
             lines.len()
         );
         let combined: String = lines.iter().map(|l| l.to_string()).collect();
         assert!(
-            combined.contains("lines omitted"),
+            combined.contains("lines hidden"),
             "should show truncation notice"
         );
         assert!(combined.contains("line 0"), "should keep first line");
-        assert!(combined.contains("line 199"), "should keep last line");
+        assert!(combined.contains("line 599"), "should keep last line");
     }
 
     #[test]
@@ -798,7 +854,7 @@ mod tests {
         let md = "short\ncontent\n";
         let lines = render_markdown_with_theme(md, &test_theme(), None);
         assert!(
-            !lines.iter().any(|l| l.to_string().contains("omitted")),
+            !lines.iter().any(|l| l.to_string().contains("hidden")),
             "short output should not be truncated"
         );
     }
