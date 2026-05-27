@@ -1970,7 +1970,7 @@ fn render_tool_call(
     if expanded && let Some(res) = result {
         let renderer = renderers.get(tool_name);
         let result_lines = renderer.render_result(args, res, width, theme);
-        let max_show = 20; // preview lines when collapsed
+        let max_show = crate::markdown::truncation_config().tool_preview_lines; // 从配置读取
         let total = result_lines.len();
         let show_all = total <= max_show;
         let prefix_span = Span::styled("  \u{23bf}  ", Style::default().fg(theme.ui.footer_text));
@@ -2088,7 +2088,7 @@ fn render_bash(
     // Output lines: ⎿ prefix
     if expanded && !stdout.is_empty() {
         let all_lines: Vec<&str> = stdout.lines().collect();
-        let max_show = 20;
+        let max_show = crate::markdown::truncation_config().tool_preview_lines; // 从配置读取
         let total = all_lines.len();
         let prefix_span = Span::styled("  \u{23bf}  ", Style::default().fg(theme.ui.footer_text));
 
@@ -2218,13 +2218,15 @@ fn render_assistant_msg(
     w: usize,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    // 流式时稳定化 Markdown：自动闭合未结束的代码块，避免闪烁
+    // 流式时稳定化 Markdown：仅计数行首的 ``` 作为代码块标记
+    let unclosed_fence = text
+        .lines()
+        .filter(|l| l.trim_start().starts_with("```"))
+        .count()
+        % 2
+        != 0;
     let stabilized: std::borrow::Cow<str>;
-    let render_text = if expanded && text.ends_with("```") {
-        // 代码块已闭合，正常渲染
-        text
-    } else if expanded && text.matches("```").count() % 2 != 0 {
-        // 未闭合代码块 → 临时追加闭合标记
+    let render_text = if expanded && unclosed_fence {
         stabilized = std::borrow::Cow::Owned(format!("{text}\n```"));
         stabilized.as_ref()
     } else {
@@ -2256,7 +2258,7 @@ fn render_assistant_msg(
         if total > 305 {
             let prefix = if focused { "▸ " } else { "  " };
             lines.push(Line::from(Span::styled(
-                format!("{prefix}... ({total} lines total, Space to expand)"),
+                format!("{prefix}⋯ ({total} lines total, Space to expand, - to collapse all)"),
                 Style::default().fg(theme.tool_status.await_confirm),
             )));
         }
@@ -2304,13 +2306,16 @@ fn duration_text(ms: u64) -> String {
     }
 }
 
-/// Render a truncation hint line ("... +N more (Space to expand)").
+/// Render a truncation hint line ("⋯ +N more (Space to expand)").
 fn truncation_hint_line(total: usize, max_show: usize, theme: &Theme) -> Line<'static> {
     Line::from(vec![
-        Span::styled("     \u{2026} ", Style::default().fg(theme.ui.footer_text)),
+        Span::styled(
+            "     \u{22ef} ",
+            Style::default().fg(theme.tool_status.await_confirm),
+        ),
         Span::styled(
             format!("+{} more lines (Space to expand)", total - max_show),
-            Style::default().fg(theme.ui.footer_text),
+            Style::default().fg(theme.tool_status.await_confirm),
         ),
     ])
 }
