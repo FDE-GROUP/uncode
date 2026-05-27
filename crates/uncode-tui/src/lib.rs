@@ -312,6 +312,8 @@ pub struct TuiEngine {
     custom_indicator: Option<crate::custom_layout::CustomIndicator>,
     /// Pending question from agent (Question tool).
     pending_question: Option<Box<uncode_core::event::QuestionRequestData>>,
+    /// Selected option indices for the current question (multi-select when multiple=true).
+    question_selected: std::collections::HashSet<usize>,
     /// Shortcut help overlay visible state.
     show_shortcut_help: bool,
     /// Selected button index in permission dialog (0=Allow, 1=Reject, 2=Always, 3=Edit).
@@ -382,6 +384,7 @@ impl TuiEngine {
             custom_footer: None,
             custom_indicator: None,
             pending_question: None,
+            question_selected: std::collections::HashSet::new(),
             show_shortcut_help: false,
             permission_selected: 0,
             permission_started_at: None,
@@ -747,6 +750,16 @@ impl TuiEngine {
             idx += 1;
             if above_lines > 0 {
                 idx += 1;
+            }
+
+            // Question dialog: overlay when pending
+            if self.pending_question.is_some() {
+                self.render_question_dialog(f, f.area());
+                self.render_status(f, chunks[idx]);
+                idx += 1;
+                if above_lines > 0 {
+                    idx += 1;
+                }
             }
             self.editor
                 .render(f, chunks[idx], self.theme.ui.footer_text);
@@ -1145,6 +1158,81 @@ impl TuiEngine {
         );
     }
 
+    /// Render question dialog — shows the agent's question with selectable options.
+    fn render_question_dialog(&self, f: &mut Frame, area: ratatui::layout::Rect) {
+        let Some(ref q) = self.pending_question else {
+            return;
+        };
+        if q.questions.is_empty() {
+            return;
+        }
+        // Show first question only (multi-question can be extended later)
+        let question = &q.questions[0];
+
+        let dialog_width = area.width.min(70);
+        let line_count = 4 + question.options.len() as u16;
+        let dialog_height = area.height.min(line_count + 3);
+        if dialog_width < 30 || dialog_height < 6 {
+            return;
+        }
+        let dx = (area.width.saturating_sub(dialog_width)) / 2;
+        let dy = (area.height.saturating_sub(dialog_height)) / 2;
+        let dialog_rect =
+            ratatui::layout::Rect::new(area.x + dx, area.y + dy, dialog_width, dialog_height);
+
+        let color = self.theme.tool_status.await_confirm;
+        let block = ratatui::widgets::Block::bordered()
+            .border_style(Style::default().fg(color))
+            .title(format!(" {} — {}", q.title, question.header))
+            .style(Style::default().bg(Color::Rgb(24, 24, 27)));
+        f.render_widget(ratatui::widgets::Clear, dialog_rect);
+        let inner = block.inner(dialog_rect);
+        f.render_widget(block, dialog_rect);
+
+        let mut lines: Vec<ratatui::text::Line> = Vec::new();
+        lines.push(Line::styled(
+            &question.question,
+            Style::default().fg(Color::White),
+        ));
+        lines.push(Line::default()); // blank line
+        for (i, opt) in question.options.iter().enumerate() {
+            let marker = if self.question_selected.contains(&i) {
+                "●"
+            } else {
+                "○"
+            };
+            let prefix = if question.multiple {
+                format!(" {marker} ")
+            } else {
+                format!(
+                    " {} ",
+                    if self.question_selected.contains(&i) {
+                        "▶"
+                    } else {
+                        " "
+                    }
+                )
+            };
+            lines.push(Line::from(vec![
+                Span::styled(prefix, Style::default().fg(color)),
+                Span::styled(&opt.label, Style::default().fg(Color::White)),
+                Span::styled(
+                    format!("  ({})", opt.description),
+                    Style::default().fg(Color::Gray),
+                ),
+            ]));
+        }
+        lines.push(Line::default());
+        lines.push(Line::styled(
+            "Enter 确认  ↑↓ 选择  Space 切换",
+            Style::default().fg(Color::Gray),
+        ));
+
+        let visible: Vec<ratatui::text::Line> =
+            lines.into_iter().map(ratatui::text::Line::from).collect();
+        f.render_widget(Paragraph::new(visible), inner);
+    }
+
     /// Render keyboard shortcuts help panel overlay.
     fn render_shortcut_help(&self, f: &mut Frame, area: ratatui::layout::Rect) {
         let help_width = area.width.min(60);
@@ -1539,6 +1627,75 @@ impl TuiEngine {
                                 // Clear countdown timer if permission was resolved
                                 if !self.permission.has_pending() {
                                     self.permission_started_at = None;
+                                }
+                                continue;
+                            }
+
+                            // Question dialog: navigate options and confirm
+                            if self.pending_question.is_some() {
+                                let q = self.pending_question.as_ref().unwrap();
+                                if let Some(question) = q.questions.first() {
+                                    let max = question.options.len().saturating_sub(1);
+                                    match key_event.code {
+                                        KeyCode::Enter | KeyCode::Char('y') => {
+                                            let answers: Vec<Vec<String>> = vec![question
+                                                .options
+                                                .iter()
+                                                .enumerate()
+                                                .filter(|(i, _)| {
+                                                    self.question_selected.contains(i)
+                                                })
+                                                .map(|(_, opt)| opt.label.clone())
+                                                .collect()];
+                                            let id = q.tool_call_id.clone();
+                                            self.pending_question = None;
+                                            self.question_selected.clear();
+                                            uncode_agent::tools::question_registry::resolve(
+                                                &id, answers,
+                                            );
+                                        }
+                                        KeyCode::Char('n') | KeyCode::Esc => {
+                                            let id = q.tool_call_id.clone();
+                                            self.pending_question = None;
+                                            self.question_selected.clear();
+                                            uncode_agent::tools::question_registry::resolve(
+                                                &id,
+                                                vec![vec!["dismissed".into()]],
+                                            );
+                                        }
+                                        KeyCode::Up => {
+                                            if let Some(&sel) = self.question_selected.iter().next() {
+                                                if sel > 0 {
+                                                    self.question_selected.clear();
+                                                    self.question_selected.insert(sel - 1);
+                                                }
+                                            } else {
+                                                self.question_selected.insert(max);
+                                            }
+                                        }
+                                        KeyCode::Down => {
+                                            if let Some(&sel) = self.question_selected.iter().next() {
+                                                if sel < max {
+                                                    self.question_selected.clear();
+                                                    self.question_selected.insert(sel + 1);
+                                                }
+                                            } else {
+                                                self.question_selected.insert(0);
+                                            }
+                                        }
+                                        KeyCode::Char(' ') if question.multiple => {
+                                            if let Some(&sel) =
+                                                self.question_selected.iter().next()
+                                            {
+                                                if self.question_selected.contains(&sel) {
+                                                    self.question_selected.remove(&sel);
+                                                } else {
+                                                    self.question_selected.insert(sel);
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
                                 }
                                 continue;
                             }
