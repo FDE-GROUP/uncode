@@ -321,6 +321,8 @@ pub struct TuiEngine {
     /// When the permission dialog appeared (for 20s auto-approve countdown).
     permission_started_at: Option<std::time::Instant>,
     cwd: std::path::PathBuf,
+    /// Whether we already warned about broadcast lag this run.
+    lag_warning_shown: bool,
 }
 
 impl TuiEngine {
@@ -389,6 +391,7 @@ impl TuiEngine {
             permission_selected: 0,
             permission_started_at: None,
             cwd: std::env::current_dir().unwrap_or_default(),
+            lag_warning_shown: false,
         }
     }
 
@@ -637,20 +640,8 @@ impl TuiEngine {
 
     /// Open session store, pushing an error message on failure.
     fn open_session_store(&mut self) -> Option<uncode_agent::session::store::SessionStore> {
-        let session_dir = match uncode_agent::session::store::SessionStore::default_dir() {
-            Ok(d) => d,
-            Err(e) => {
-                self.chat.push_message(chat::ChatMessage::Error {
-                    message: format!("无法获取会话目录: {e}"),
-                    category: uncode_core::event::ErrorCategory::Config,
-                });
-                return None;
-            }
-        };
-        let store = uncode_agent::session::store::SessionStore::new(session_dir);
-        let rt = tokio::runtime::Handle::current();
-        match rt.block_on(store) {
-            Ok(s) => Some(s),
+        match self.try_open_session_store() {
+            Ok(store) => Some(store),
             Err(e) => {
                 self.chat.push_message(chat::ChatMessage::Error {
                     message: format!("创建会话存储失败: {e}"),
@@ -661,6 +652,47 @@ impl TuiEngine {
         }
     }
 
+    /// Open session store without mutating chat (for background reconciliation).
+    fn try_open_session_store(&self) -> Result<uncode_agent::session::store::SessionStore, String> {
+        let session_dir = uncode_agent::session::store::SessionStore::default_dir()
+            .map_err(|e| format!("无法获取会话目录: {e}"))?;
+        let store = uncode_agent::session::store::SessionStore::new(session_dir);
+        tokio::runtime::Handle::current()
+            .block_on(store)
+            .map_err(|e| format!("创建会话存储失败: {e}"))
+    }
+
+    /// Reconcile trailing assistant text from persisted session after lag or turn end.
+    fn sync_trailing_assistant_from_session(&mut self) {
+        if self.session_id.is_empty() {
+            return;
+        }
+        let store = match self.try_open_session_store() {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::debug!("session sync skipped: {e}");
+                return;
+            }
+        };
+        let rt = tokio::runtime::Handle::current();
+        let entries = match rt.block_on(store.load_entries(&self.session_id)) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::debug!("session sync load failed: {e}");
+                return;
+            }
+        };
+        let Some(text) = chat::last_assistant_text_from_entries(&entries) else {
+            return;
+        };
+        if self.chat.reconcile_trailing_assistant_text(&text) {
+            tracing::info!(
+                len = text.len(),
+                "reconciled trailing assistant from session store"
+            );
+        }
+    }
+
     /// End of a full agent `run` (not a single inner Turn).
     fn finish_agent_run(&mut self) {
         self.agent_busy = false;
@@ -668,6 +700,7 @@ impl TuiEngine {
         self.footer.end_turn();
         self.footer.clear_run_turn();
         self.current_cancel = None;
+        self.lag_warning_shown = false;
     }
 
     /// ESC 键处理：按优先级 — 拒绝权限 → 中断 Agent → 清除焦点 → 关闭覆盖层 → 关闭 Overlay
@@ -831,26 +864,17 @@ impl TuiEngine {
         }
         if self.chat.auto_scroll && total_lines > visible_height {
             let target = total_lines.saturating_sub(visible_height);
-            // 最后一条 Assistant 消息超过 3/4 屏 → 滚到消息顶部
-            if let Some(chat::ChatMessage::Assistant { .. }) = self.chat.messages.last() {
-                let last_idx = self.chat.messages.len().saturating_sub(1);
-                let msg_start = self.chat.message_start_line(last_idx);
-                let msg_height = total_lines.saturating_sub(msg_start);
-                if msg_height > visible_height * 3 / 4 {
-                    self.chat.scroll_offset = msg_start;
-                    // 一条消息没占满全屏 → 看完后滚到底即可恢复跟随
-                    if msg_start + visible_height >= total_lines {
-                        self.chat.auto_scroll = true;
-                    }
+            // 流式 Assistant：跟随本条消息底部，但不滚到本条之前的旧内容之上。
+            // （钉在 msg_start 会导致视口冻结在开头，新 token 在屏外增长，结束时跳到底只剩首尾）
+            if self.agent_busy {
+                if let Some(msg_start) = self.chat.active_streaming_assistant_start_line() {
+                    self.chat.scroll_offset = target.max(msg_start);
                 } else {
                     self.chat.scroll_offset = target;
                 }
             } else {
                 self.chat.scroll_offset = target;
             }
-        }
-        if self.chat.auto_scroll && total_lines > visible_height {
-            self.chat.scroll_offset = total_lines.saturating_sub(visible_height);
         }
 
         // Step 3: Find visible message range via binary search
@@ -1486,16 +1510,42 @@ impl TuiEngine {
             crossterm::terminal::SetTitle("UnCode Now"),
         );
         loop {
-            if let Err(e) = terminal.draw(|f| self.render(f)) {
-                eprintln!("terminal draw failed: {e}");
-                break;
+            let poll_timeout = if self.agent_busy {
+                std::time::Duration::ZERO
+            } else {
+                std::time::Duration::from_millis(50)
+            };
+
+            // Agent 忙时优先 drain 已到达的事件，避免 UI poll 阻塞导致 Lagged
+            if self.agent_busy {
+                match event_rx.try_recv() {
+                    Ok(first) => {
+                        let is_run_finished = self.process_agent_event_batch(&mut event_rx, first);
+                        if is_run_finished {
+                            self.flush_queue(&on_submit);
+                        }
+                        if self.quit_requested {
+                            break;
+                        }
+                        if let Err(e) = terminal.draw(|f| self.render(f)) {
+                            eprintln!("terminal draw failed: {e}");
+                            break;
+                        }
+                        continue;
+                    }
+                    Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                        self.on_agent_events_lagged(n);
+                    }
+                    Err(broadcast::error::TryRecvError::Closed) => break,
+                    Err(broadcast::error::TryRecvError::Empty) => {}
+                }
             }
 
             tokio::select! {
                 biased;
                 ui_result = async {
                     loop {
-                        let poll_ok = event::poll(std::time::Duration::from_millis(50));
+                        let poll_ok = event::poll(poll_timeout);
                         if poll_ok.is_err() {
                             return Err::<Event, std::io::Error>(std::io::Error::other(
                                 "terminal poll failed",
@@ -2012,16 +2062,18 @@ impl TuiEngine {
                         _ => {}
                     }
                 }
-                Ok(event) = event_rx.recv() => {
-                    let is_run_finished = matches!(
-                        event,
-                        AgentEvent::SessionEnd { .. }
-                            | AgentEvent::AgentInterrupted { .. }
-                            | AgentEvent::AgentSettled { .. }
-                    );
-                    self.handle_event(event);
-                    if is_run_finished {
-                        self.flush_queue(&on_submit);
+                agent_result = event_rx.recv() => {
+                    match agent_result {
+                        Ok(first) => {
+                            let is_run_finished = self.process_agent_event_batch(&mut event_rx, first);
+                            if is_run_finished {
+                                self.flush_queue(&on_submit);
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            self.on_agent_events_lagged(n);
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
                     }
                 }
                 // Poll dialog bridge for extension-initiated dialogs
@@ -2158,6 +2210,10 @@ impl TuiEngine {
                 }
             }
             if self.quit_requested {
+                break;
+            }
+            if let Err(e) = terminal.draw(|f| self.render(f)) {
+                eprintln!("terminal draw failed: {e}");
                 break;
             }
         }
@@ -2878,10 +2934,56 @@ impl TuiEngine {
         }
     }
 
+    fn process_agent_event_batch(
+        &mut self,
+        event_rx: &mut broadcast::Receiver<AgentEvent>,
+        first: AgentEvent,
+    ) -> bool {
+        let mut batch = vec![first];
+        loop {
+            match event_rx.try_recv() {
+                Ok(event) => batch.push(event),
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    self.on_agent_events_lagged(n);
+                }
+                Err(broadcast::error::TryRecvError::Empty) => break,
+                Err(broadcast::error::TryRecvError::Closed) => break,
+            }
+        }
+        let is_run_finished = batch.iter().any(|event| {
+            matches!(
+                event,
+                AgentEvent::SessionEnd { .. }
+                    | AgentEvent::AgentInterrupted { .. }
+                    | AgentEvent::AgentSettled { .. }
+            )
+        });
+        for event in batch {
+            self.handle_event(event);
+        }
+        is_run_finished
+    }
+
+    fn on_agent_events_lagged(&mut self, skipped: u64) {
+        tracing::warn!("TUI lagged {skipped} agent events; chat text may be incomplete");
+        self.chat.invalidate_all();
+        self.sync_trailing_assistant_from_session();
+        if !self.lag_warning_shown {
+            self.lag_warning_shown = true;
+            self.chat.push_message(chat::ChatMessage::Summary {
+                completed: vec![format!(
+                    "⚠ 显示落后 {skipped} 个事件，部分内容可能缺失。工具执行期间输出过多时会发生。"
+                )],
+                next_steps: vec![],
+            });
+        }
+    }
+
     fn handle_event(&mut self, event: AgentEvent) {
         match &event {
             AgentEvent::SessionStart { session_id, .. } => {
                 self.session_id = session_id.clone();
+                self.lag_warning_shown = false;
             }
             AgentEvent::TurnStart { turn } => {
                 self.agent_busy = true;
@@ -2892,8 +2994,10 @@ impl TuiEngine {
                 // Per-turn usage only; keep agent_busy until SessionEnd (multi-turn ReAct).
                 self.footer.update_usage(usage);
                 self.activity = AgentActivity::Idle;
+                self.sync_trailing_assistant_from_session();
             }
             AgentEvent::SessionEnd { data } => {
+                self.sync_trailing_assistant_from_session();
                 self.finish_agent_run();
                 self.footer.update_usage(&data.total_tokens);
             }

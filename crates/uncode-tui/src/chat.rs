@@ -466,6 +466,79 @@ impl ChatState {
         self.prefix_sum.get(idx).copied().unwrap_or(0)
     }
 
+    /// Last [`ChatMessage::Assistant`] index (may be followed by `TodoList`, etc.).
+    pub fn trailing_assistant_index(&self) -> Option<usize> {
+        self.messages
+            .iter()
+            .rposition(|m| matches!(m, ChatMessage::Assistant { .. }))
+    }
+
+    /// Global line index where the trailing assistant message begins.
+    pub fn trailing_assistant_start_line(&self) -> Option<usize> {
+        Some(self.message_start_line(self.trailing_assistant_index()?))
+    }
+
+    /// Assistant bubble that should receive streaming text (post-tool continuation when tools follow).
+    pub fn active_streaming_assistant_index(&self) -> Option<usize> {
+        self.append_target_assistant_index()
+            .or_else(|| self.trailing_assistant_index())
+    }
+
+    /// Global line index where the active streaming assistant message begins.
+    pub fn active_streaming_assistant_start_line(&self) -> Option<usize> {
+        Some(self.message_start_line(self.active_streaming_assistant_index()?))
+    }
+
+    /// Replace trailing assistant text when session store has a longer authoritative copy (lag recovery).
+    pub fn reconcile_trailing_assistant_text(&mut self, authoritative: &str) -> bool {
+        if authoritative.is_empty() {
+            return false;
+        }
+        let Some(idx) = self.trailing_assistant_index() else {
+            return false;
+        };
+        let ChatMessage::Assistant { text, .. } = &mut self.messages[idx] else {
+            return false;
+        };
+        if authoritative.len() <= text.len() {
+            return false;
+        }
+        *text = authoritative.to_string();
+        self.invalidate(idx);
+        true
+    }
+
+    /// Where new assistant text should go: same bubble when only TodoList follows;
+    /// new bubble after tools when a tool group sits between assistant segments.
+    fn append_target_assistant_index(&self) -> Option<usize> {
+        let idx = self.trailing_assistant_index()?;
+        let after = idx + 1;
+        if after >= self.messages.len() {
+            return Some(idx);
+        }
+        match &self.messages[after] {
+            ChatMessage::TodoList { .. } => Some(idx),
+            ChatMessage::ToolTurnGroup { .. }
+            | ChatMessage::ToolCall { .. }
+            | ChatMessage::BashExecution { .. } => self.assistant_after_tools_index(after),
+            _ => Some(idx),
+        }
+    }
+
+    fn assistant_after_tools_index(&self, from: usize) -> Option<usize> {
+        for (i, msg) in self.messages.iter().enumerate().skip(from) {
+            match msg {
+                ChatMessage::Assistant { .. } => return Some(i),
+                ChatMessage::ToolTurnGroup { .. }
+                | ChatMessage::ToolCall { .. }
+                | ChatMessage::BashExecution { .. }
+                | ChatMessage::TodoList { .. } => continue,
+                _ => break,
+            }
+        }
+        None
+    }
+
     /// Push a new message, keeping cache vectors in sync
     pub fn push_message(&mut self, msg: ChatMessage) {
         self.messages.push(msg);
@@ -478,17 +551,19 @@ impl ChatState {
         self.prefix_dirty = true;
     }
 
-    /// Rebuild prefix sum from line_counts
+    /// Rebuild prefix sum from line_counts.
+    /// `prefix_sum[i]` = global line index where message `i` content starts (separator lines sit at `start - 1` for `i > 0`).
     fn recompute_prefix_sum(&mut self) {
         self.prefix_sum.clear();
-        self.prefix_sum.push(0);
         let mut acc = 0usize;
-        // Each message adds a separator blank line (except the first)
         for (i, entry) in self.line_counts.iter().enumerate() {
-            let sep = if i > 0 { 1 } else { 0 };
-            acc += sep + entry.line_count;
+            if i > 0 {
+                acc += 1;
+            }
             self.prefix_sum.push(acc);
+            acc += entry.line_count;
         }
+        self.prefix_sum.push(acc);
         self.prefix_dirty = false;
     }
 
@@ -534,6 +609,7 @@ impl ChatState {
 
             let is_last = idx == self.messages.len() - 1;
             let focused = self.focused_card == Some(idx);
+            let is_streaming_assistant = self.active_streaming_assistant_index() == Some(idx);
 
             // Incremental path: streaming append, width unchanged, text grew
             // Skip incremental for Assistant — markdown reflow can change prefix
@@ -571,8 +647,8 @@ impl ChatState {
                 )
             };
 
-            // Streaming cursor for active assistant
-            if is_last
+            // Streaming cursor for active assistant (TodoList 可能在末尾；工具后为新气泡)
+            if is_streaming_assistant
                 && agent_busy
                 && let ChatMessage::Assistant { text, .. } = &self.messages[idx]
                 && !text.is_empty()
@@ -1130,22 +1206,27 @@ impl ChatState {
         None
     }
 
-    /// 追加 Assistant 文本
+    /// 追加 Assistant 文本（TodoList 后仍追加到同一气泡；工具后追加到新气泡）
     fn append_assistant_text(&mut self, content: &str) {
-        if let Some(ChatMessage::Assistant { text, .. }) = self.messages.last_mut() {
-            text.push_str(content);
-            self.invalidate(self.messages.len() - 1);
+        if let Some(idx) = self.append_target_assistant_index() {
+            if let ChatMessage::Assistant { text, .. } = &mut self.messages[idx] {
+                text.push_str(content);
+                self.invalidate(idx);
+            }
         } else {
             self.push_message(ChatMessage::Assistant {
                 text: content.to_string(),
                 expanded: true,
             });
         }
-        // Extract todos from streamed text in real-time so the plan
-        // appears before tool results rather than only at turn end.
-        let text = match self.messages.last() {
-            Some(ChatMessage::Assistant { text, .. }) => text.as_str(),
-            _ => return,
+        let text =
+            self.active_streaming_assistant_index()
+                .and_then(|idx| match &self.messages[idx] {
+                    ChatMessage::Assistant { text, .. } => Some(text.as_str()),
+                    _ => None,
+                });
+        let Some(text) = text else {
+            return;
         };
         let items = parse_markdown_todos(text);
         if !items.is_empty() {
@@ -2095,14 +2176,15 @@ fn render_bash(
         let total = all_lines.len();
         let prefix_span = Span::styled("  \u{23bf}  ", Style::default().fg(theme.ui.footer_text));
 
-        for line in all_lines.iter().take(max_show) {
+        let skip = total.saturating_sub(max_show);
+        if skip > 0 {
+            lines.push(truncation_hint_line_above(total, max_show, theme));
+        }
+        for line in all_lines.iter().skip(skip) {
             lines.push(Line::from(vec![
                 prefix_span.clone(),
                 Span::styled(line.to_string(), Style::default().fg(theme.bash.stdout)),
             ]));
-        }
-        if total > max_show {
-            lines.push(truncation_hint_line(total, max_show, theme));
         }
     }
 
@@ -2300,6 +2382,33 @@ fn duration_text(ms: u64) -> String {
     }
 }
 
+/// Last assistant message text blocks from persisted session entries.
+pub fn last_assistant_text_from_entries(
+    entries: &[uncode_core::session::SessionEntry],
+) -> Option<String> {
+    use uncode_core::message::{ContentBlock, Role};
+    use uncode_core::session::SessionEntry;
+
+    entries.iter().rev().find_map(|entry| {
+        let SessionEntry::Message(msg) = entry else {
+            return None;
+        };
+        if msg.role != Role::Assistant {
+            return None;
+        }
+        let text: String = msg
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        if text.is_empty() { None } else { Some(text) }
+    })
+}
+
 /// Render a truncation hint line ("⋯ +N more (Space to expand)").
 fn truncation_hint_line(total: usize, max_show: usize, theme: &Theme) -> Line<'static> {
     Line::from(vec![
@@ -2309,6 +2418,20 @@ fn truncation_hint_line(total: usize, max_show: usize, theme: &Theme) -> Line<'s
         ),
         Span::styled(
             format!("+{} more lines (Space to expand)", total - max_show),
+            Style::default().fg(theme.tool_status.await_confirm),
+        ),
+    ])
+}
+
+/// Render a truncation hint when head lines were omitted (streaming bash tail).
+fn truncation_hint_line_above(total: usize, max_show: usize, theme: &Theme) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(
+            "     \u{22ef} ",
+            Style::default().fg(theme.tool_status.await_confirm),
+        ),
+        Span::styled(
+            format!("{} earlier lines (Space to expand)", total - max_show),
             Style::default().fg(theme.tool_status.await_confirm),
         ),
     ])
@@ -2370,6 +2493,127 @@ mod tests {
         } else {
             panic!("Expected Assistant message");
         }
+    }
+
+    #[test]
+    fn test_trailing_assistant_index_skips_todo_after() {
+        let mut state = ChatState::new();
+        state.handle_event(make_text_delta("## Plan\n- [ ] step one"));
+        assert_eq!(state.trailing_assistant_index(), Some(0));
+        assert_eq!(state.messages.len(), 2);
+        assert!(matches!(
+            state.messages.last(),
+            Some(ChatMessage::TodoList { .. })
+        ));
+        assert_eq!(state.trailing_assistant_index(), Some(0));
+    }
+
+    #[test]
+    fn test_append_after_todo_stays_on_same_assistant() {
+        let mut state = ChatState::new();
+        state.handle_event(make_text_delta("## Plan\n- [ ] step one"));
+        assert_eq!(state.messages.len(), 2);
+        state.handle_event(make_text_delta("\ncontinued"));
+        assert_eq!(
+            state.messages.len(),
+            2,
+            "must not spawn a second Assistant after TodoList"
+        );
+        if let ChatMessage::Assistant { text, .. } = &state.messages[0] {
+            assert!(text.contains("continued"));
+            assert!(text.contains("- [ ] step one"));
+        } else {
+            panic!("Expected Assistant at index 0");
+        }
+    }
+
+    #[test]
+    fn test_append_after_tool_creates_new_assistant() {
+        let mut state = ChatState::new();
+        state.handle_event(make_text_delta("before"));
+        state.handle_event(AgentEvent::ToolCallStart {
+            tool_id: "t1".into(),
+            tool_name: "read".into(),
+            arguments_summary: "src/main.rs".into(),
+        });
+        state.handle_event(AgentEvent::ToolCallEnd {
+            data: Box::new(ToolCallEndEventData {
+                tool_id: "t1".into(),
+                tool_name: "read".into(),
+                arguments: r#"{"path":"src/main.rs"}"#.into(),
+                status: ToolCallStatus::Success,
+                duration_ms: 42,
+                output_size: Some(1024),
+                result_summary: Some("file contents...".into()),
+                is_error: false,
+                title: None,
+                metadata: None,
+            }),
+        });
+        assert_eq!(state.messages.len(), 2);
+        state.handle_event(make_text_delta("after"));
+        assert_eq!(
+            state.messages.len(),
+            3,
+            "post-tool text must land in a new Assistant bubble"
+        );
+        if let ChatMessage::Assistant { text, .. } = &state.messages[0] {
+            assert_eq!(text, "before");
+        } else {
+            panic!("Expected Assistant at index 0");
+        }
+        if let ChatMessage::Assistant { text, .. } = &state.messages[2] {
+            assert_eq!(text, "after");
+        } else {
+            panic!("Expected post-tool Assistant at index 2");
+        }
+    }
+
+    #[test]
+    fn test_reconcile_trailing_assistant_text() {
+        let mut state = ChatState::new();
+        state.push_message(ChatMessage::Assistant {
+            text: "Hello".into(),
+            expanded: true,
+        });
+        assert!(!state.reconcile_trailing_assistant_text("Hi"));
+        assert!(state.reconcile_trailing_assistant_text("Hello world"));
+        if let ChatMessage::Assistant { text, .. } = &state.messages[0] {
+            assert_eq!(text, "Hello world");
+        } else {
+            panic!("Expected Assistant");
+        }
+    }
+
+    #[test]
+    fn test_render_bash_stdout_shows_tail() {
+        let theme = Theme::default_dark();
+        let stdout: String = (0..50)
+            .map(|i| format!("line{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let lines = render_bash(
+            "cargo test",
+            "run tests",
+            ".",
+            &None,
+            &stdout,
+            &None,
+            true,
+            true,
+            false,
+            &theme,
+            0,
+        );
+        let combined: String = lines.iter().map(|l| l.to_string()).collect();
+        assert!(
+            combined.contains("line49"),
+            "truncated bash output should show the tail: {combined}"
+        );
+        assert!(
+            !combined.contains("line0"),
+            "truncated bash output should omit the head: {combined}"
+        );
     }
 
     #[test]

@@ -838,6 +838,9 @@ async fn main() -> anyhow::Result<()> {
         tui.set_available_models(model_ids);
         tui.set_default_model(model.clone());
 
+        // 设置 TUI 截断/显示配置（来自 AppConfig.tui）
+        tui.set_tui_config(config.tui.clone());
+
         // Flush pending extension command/shortcut registrations into the TUI
         for (name, desc, handler) in pending_commands.lock().drain(..) {
             tui.register_slash_command(&name, &desc, handler);

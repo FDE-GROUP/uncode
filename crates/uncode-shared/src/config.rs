@@ -24,6 +24,8 @@ pub struct AppConfig {
     pub permissions: PermissionConfig,
     #[serde(default)]
     pub compaction: CompactionConfig,
+    #[serde(default)]
+    pub tui: TuiConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +79,7 @@ impl Default for AppConfig {
             tools: ToolsConfig::default(),
             permissions: PermissionConfig::default(),
             compaction: CompactionConfig::default(),
+            tui: TuiConfig::default(),
         }
     }
 }
@@ -403,6 +406,42 @@ fn default_reserve_tokens() -> u64 {
     16384
 }
 
+// ── TUI 配置 ──
+
+/// TUI 显示配置：截断行数、折叠阈值等。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TuiConfig {
+    /// Markdown 渲染截断时保留的头部行数。默认 500（原硬编码 200）。
+    #[serde(default = "default_truncate_head")]
+    pub truncate_head_lines: usize,
+    /// Markdown 渲染截断时保留的尾部行数。默认 300（原硬编码 100）。
+    #[serde(default = "default_truncate_tail")]
+    pub truncate_tail_lines: usize,
+    /// 消息折叠时工具输出预览行数。默认 20。
+    #[serde(default = "default_tool_preview_lines")]
+    pub tool_preview_lines: usize,
+}
+
+impl Default for TuiConfig {
+    fn default() -> Self {
+        Self {
+            truncate_head_lines: default_truncate_head(),
+            truncate_tail_lines: default_truncate_tail(),
+            tool_preview_lines: default_tool_preview_lines(),
+        }
+    }
+}
+
+fn default_truncate_head() -> usize {
+    500
+}
+fn default_truncate_tail() -> usize {
+    300
+}
+fn default_tool_preview_lines() -> usize {
+    20
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -569,5 +608,27 @@ mod tests {
         let deserialized: BashToolConfig = serde_json::from_str(&json).unwrap();
         assert!(deserialized.sandbox);
         assert_eq!(deserialized.sandbox_profile, SandboxProfile::Permissive);
+    }
+
+    #[test]
+    fn test_tui_config_default() {
+        let config = TuiConfig::default();
+        assert_eq!(config.truncate_head_lines, 500);
+        assert_eq!(config.truncate_tail_lines, 300);
+        assert_eq!(config.tool_preview_lines, 20);
+    }
+
+    #[test]
+    fn test_tui_config_serde_roundtrip() {
+        let config = TuiConfig {
+            truncate_head_lines: 1000,
+            truncate_tail_lines: 500,
+            tool_preview_lines: 50,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: TuiConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.truncate_head_lines, 1000);
+        assert_eq!(deserialized.truncate_tail_lines, 500);
+        assert_eq!(deserialized.tool_preview_lines, 50);
     }
 }

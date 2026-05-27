@@ -358,7 +358,7 @@ impl AgentLoop {
         system_prompt: String,
         model_id: String,
     ) -> Self {
-        let (event_tx, _) = broadcast::channel(256);
+        let (event_tx, _) = broadcast::channel(4096);
         Self::with_event_sender(
             api_registry,
             model_registry,
