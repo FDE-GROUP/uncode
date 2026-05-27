@@ -140,6 +140,9 @@ impl AgentHarness {
         agent.set_adjudicator(adjudicator);
         agent.load_custom_policies();
 
+        // 初始化实例注册表 — 注入 Workspace + LLM 实例
+        agent.init_instance_registry(&cwd);
+
         // Register sync hook for blocked-tool enforcement (#461)
         {
             let blocked: Vec<String> = agent

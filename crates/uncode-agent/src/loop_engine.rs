@@ -334,6 +334,8 @@ pub struct AgentLoop {
     adjudicator: std::sync::Mutex<Option<crate::decision::adjudication::Adjudicator>>,
     /// 扩展生命周期桥接 — Extension Runtime Phase 1 (#344)
     extension_bridge: Option<crate::hooks::ExtensionLifecycleBridge>,
+    /// 实例注册表 — 运行时实体实例，驱动遍历推理和上下文注入
+    instance_registry: std::sync::Mutex<uncode_ontology::InstanceRegistry>,
     /// 护栏配置 — 从 .uncode/guardrails.json 加载
     guardrail_config: std::sync::Mutex<uncode_shared::guardrails::GuardrailConfig>,
     /// 用户配置的 max_tokens 覆盖值（None = 使用模型声明值）
@@ -480,6 +482,7 @@ impl AgentLoop {
             temperature: None,
             event_router: Arc::new(std::sync::Mutex::new(uncode_core::event::EventRouter::new())),
             phase_sm: std::sync::Mutex::new(crate::governance::PhaseStateMachine::new()),
+            instance_registry: std::sync::Mutex::new(uncode_ontology::InstanceRegistry::new()),
         }
     }
 
@@ -571,6 +574,35 @@ impl AgentLoop {
     /// 注入护栏配置 — 从 .uncode/guardrails.json 加载
     pub fn set_guardrail_config(&self, config: uncode_shared::guardrails::GuardrailConfig) {
         *safe_lock(&self.guardrail_config, "guardrail_config") = config;
+    }
+
+    /// 初始化实例注册表：注入 Workspace 和 LLM 实例。
+    ///
+    /// 应在 AgentHarness 初始化时调用一次。
+    pub fn init_instance_registry(&self, cwd: &std::path::Path) {
+        let mut reg = safe_lock(&self.instance_registry, "instance_registry");
+
+        // Workspace 实例
+        let mut workspace_fields = std::collections::HashMap::new();
+        workspace_fields.insert(
+            "root".into(),
+            serde_json::Value::String(cwd.to_string_lossy().into()),
+        );
+        reg.insert(uncode_ontology::EntityInstance {
+            type_id: uncode_ontology::TypeId::from("Workspace"),
+            id: cwd.to_string_lossy().into(),
+            fields: workspace_fields,
+        });
+
+        // LLM 实例 — 从 model_registry 导入
+        for model in self.model_registry.all_models() {
+            let fields = crate::decision::bridge::ModelBridge::model_to_fields(&model);
+            reg.insert(uncode_ontology::EntityInstance {
+                type_id: uncode_ontology::TypeId::from("LLM"),
+                id: model.id.clone(),
+                fields,
+            });
+        }
     }
 
     /// 获取护栏配置的快照
@@ -1011,12 +1043,47 @@ impl AgentLoop {
                     built.messages.insert(0, bundle.to_system_message());
                 }
             }
+            // 从 WorkspaceGraph 注入 File 实例（零额外 I/O）
+            let mut reg = safe_lock(&self.instance_registry, "instance_registry");
+            for (path, _hash) in &graph.file_hashes {
+                let mut fields = std::collections::HashMap::new();
+                fields.insert("path".into(), serde_json::Value::String(path.clone()));
+                fields.insert("exists".into(), serde_json::Value::Bool(true));
+                reg.insert(uncode_ontology::EntityInstance {
+                    type_id: uncode_ontology::TypeId::from("File"),
+                    id: path.clone(),
+                    fields,
+                });
+            }
         }
         built
             .messages
             .insert(0, Message::system(self.system_prompt.clone()));
         if let Some(ctx) = self.build_cognition_context() {
             built.messages.insert(1, Message::system(ctx));
+        }
+        // 实例级文件清单：在 workspace graph 之后、用户消息之前
+        {
+            let reg = safe_lock(&self.instance_registry, "instance_registry");
+            let files = reg.list_by_type(&uncode_ontology::TypeId::from("File"));
+            if !files.is_empty() {
+                let listing = files
+                    .iter()
+                    .map(|inst| format!("  {}", inst.id))
+                    .take(30)
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let msg = Message::system(format!(
+                    "## Workspace Files\n\n当前工作区包含以下文件：\n{listing}"
+                ));
+                // 插入在 cognition context 之后，用户消息之前
+                let pos = if built.messages.len() > 1 {
+                    2
+                } else {
+                    built.messages.len()
+                };
+                built.messages.insert(pos, msg);
+            }
         }
         Ok(built)
     }
@@ -2062,6 +2129,15 @@ impl AgentLoop {
                                         == ExecutionMode::Sequential
                                 });
 
+                                // Build tool-id → args map before executions is moved
+                                let args_by_id: std::collections::HashMap<
+                                    String,
+                                    serde_json::Value,
+                                > = executions
+                                    .iter()
+                                    .map(|(id, _, args)| (id.clone(), args.clone()))
+                                    .collect();
+
                                 let mut all_outcomes: Vec<(String, String, ToolResult)> =
                                     if has_sequential {
                                         let mut outcomes = Vec::with_capacity(executions.len());
@@ -2333,6 +2409,36 @@ impl AgentLoop {
                                     // Pi: terminate only if ALL results request it
                                     if !tool_result.terminate {
                                         should_terminate = false;
+                                    }
+
+                                    // 更新实例注册表：注册工具操作的文件路径
+                                    if !is_error {
+                                        if let Some(args) = args_by_id.get(id) {
+                                            let file_path = args
+                                                .get("path")
+                                                .and_then(|v| v.as_str())
+                                                .map(|s| s.to_string());
+                                            if let Some(path) = file_path {
+                                                let mut reg = safe_lock(
+                                                    &self.instance_registry,
+                                                    "instance_registry",
+                                                );
+                                                let mut fields = std::collections::HashMap::new();
+                                                fields.insert(
+                                                    "path".into(),
+                                                    serde_json::Value::String(path.clone()),
+                                                );
+                                                fields.insert(
+                                                    "exists".into(),
+                                                    serde_json::Value::Bool(true),
+                                                );
+                                                reg.insert(uncode_ontology::EntityInstance {
+                                                    type_id: uncode_ontology::TypeId::from("File"),
+                                                    id: path,
+                                                    fields,
+                                                });
+                                            }
+                                        }
                                     }
                                 }
 

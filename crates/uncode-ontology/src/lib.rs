@@ -14,6 +14,7 @@
 
 pub mod builtin;
 pub mod evaluate;
+pub mod instance;
 pub mod reasoner;
 pub mod registry;
 pub mod types;
@@ -21,6 +22,7 @@ pub mod types;
 pub use evaluate::{
     ConstraintResult, CustomRuleFn, evaluate_constraint, evaluate_constraint_with_rules,
 };
+pub use instance::{EntityInstance, InstanceRegistry};
 pub use reasoner::{
     DerivationResult, TraversalResult, evaluate_all_derivations, evaluate_derivation,
     evaluate_traversal,

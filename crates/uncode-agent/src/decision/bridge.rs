@@ -18,6 +18,7 @@ use std::sync::Arc;
 
 use uncode_ai::api_types::InputModality;
 use uncode_ai::model::Model;
+use uncode_ontology::ReasoningRule;
 
 use super::firewall::{ValidationError, ValidationRule, ValidationVerdict};
 use super::types::{DecisionVerdict, ParsedAction};
@@ -65,6 +66,19 @@ impl ModelBridge {
             "pricing_output_per_million".into(),
             serde_json::json!(model.pricing.output),
         );
+
+        // 推导推理：从已知字段计算派生字段
+        let ontology = uncode_ontology::builtin::full_ontology();
+        let derivations: Vec<ReasoningRule> = ontology
+            .reasoning_rules
+            .values()
+            .filter(|r| matches!(r, ReasoningRule::Derivation { .. }))
+            .cloned()
+            .collect();
+        for d in uncode_ontology::evaluate_all_derivations(&derivations, &fields) {
+            fields.insert(d.derived_field, d.value);
+        }
+
         fields
     }
 
