@@ -2244,15 +2244,6 @@ fn render_assistant_msg(
     } else {
         crate::markdown::render_markdown_with_theme(text, theme, Some(w))
     };
-    if !lines.is_empty() {
-        let first = lines.remove(0);
-        let mut new_spans = vec![Span::styled(
-            "UnCode ",
-            Style::default().fg(theme.tool_status.success).bold(),
-        )];
-        new_spans.extend(first.spans);
-        lines.insert(0, Line::from(new_spans));
-    }
     if !expanded {
         let total = text.lines().count();
         if total > 305 {
