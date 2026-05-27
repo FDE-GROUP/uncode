@@ -826,9 +826,28 @@ impl TuiEngine {
 
         // Step 2: Compute total and auto_scroll
         let total_lines = self.chat.total_lines();
-        // 用户滚到最底部（2 行以内）→ 恢复自动跟随
         if self.chat.scroll_offset + visible_height + 2 >= total_lines {
             self.chat.auto_scroll = true;
+        }
+        if self.chat.auto_scroll && total_lines > visible_height {
+            let target = total_lines.saturating_sub(visible_height);
+            // 最后一条 Assistant 消息超过 3/4 屏 → 滚到消息顶部
+            if let Some(chat::ChatMessage::Assistant { .. }) = self.chat.messages.last() {
+                let last_idx = self.chat.messages.len().saturating_sub(1);
+                let msg_start = self.chat.message_start_line(last_idx);
+                let msg_height = total_lines.saturating_sub(msg_start);
+                if msg_height > visible_height * 3 / 4 {
+                    self.chat.scroll_offset = msg_start;
+                    // 一条消息没占满全屏 → 看完后滚到底即可恢复跟随
+                    if msg_start + visible_height >= total_lines {
+                        self.chat.auto_scroll = true;
+                    }
+                } else {
+                    self.chat.scroll_offset = target;
+                }
+            } else {
+                self.chat.scroll_offset = target;
+            }
         }
         if self.chat.auto_scroll && total_lines > visible_height {
             self.chat.scroll_offset = total_lines.saturating_sub(visible_height);
