@@ -2,7 +2,7 @@
 
 Rust 原生 AI Agent Coding 系统。**认知显化与决策驱动设计**范式的参考实现。
 
-[![CI](https://github.com/FDE-GROUP/uncode/actions/workflows/ci.yml/badge.svg)](https://github.com/FDE-GROUP/uncode/actions/workflows/ci.yml)
+
 [![Rust](https://img.shields.io/badge/rust-1.91+-orange.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
